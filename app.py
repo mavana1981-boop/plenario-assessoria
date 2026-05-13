@@ -328,6 +328,47 @@ def save_item():
     finally:
         conn.close()
 
+def _clean_html(raw):
+    if raw is None:
+        return ''
+    s = re.sub(r'<[^>]+>', '', raw, flags=re.S | re.I)
+    s = ihtml.unescape(s)
+    return re.sub(r'\s+', ' ', s, flags=re.S).strip()
+
+@app.route('/destaques/<id_proposicao>')
+@login_required
+def buscar_destaques(id_proposicao):
+    """Busca destaques em tempo real para uma proposição via scraping do site da Câmara."""
+    url = f"https://www.camara.leg.br/pplen/destaques.html?codOrgao=180&codProposicao={id_proposicao}"
+    try:
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
+        html = r.text
+        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, flags=re.S | re.I)
+        destaques = []
+        for row in rows:
+            cols = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, flags=re.S | re.I)
+            if len(cols) < 5:
+                continue
+            numero    = _clean_html(cols[0])
+            autoria   = _clean_html(cols[1])
+            descricao = _clean_html(cols[2])
+            tipo      = _clean_html(cols[3])
+            situacao  = _clean_html(cols[4])
+            if 'DTQ' not in numero.upper():
+                continue
+            destaques.append({
+                'numero':        numero,
+                'autoria':       autoria,
+                'descricao':     descricao,
+                'tipo_destaque': tipo,
+                'situacao':      situacao,
+            })
+        return jsonify({'destaques': destaques, 'total': len(destaques)})
+    except Exception as e:
+        logger.warning(f"Falha ao buscar destaques de {id_proposicao}: {e}")
+        return jsonify({'destaques': [], 'total': 0, 'erro': str(e)})
+
 @app.route('/analisar_ia', methods=['POST'])
 @login_required
 def analisar_ia():
