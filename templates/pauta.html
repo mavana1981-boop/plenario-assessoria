@@ -66,6 +66,7 @@
     .ql-container { font-size: 14px; font-family: 'Segoe UI', Arial, sans-serif; }
     .ql-editor { min-height: 550px; }
     .ql-toolbar.ql-snow, .ql-container.ql-snow { width: 100%; box-sizing: border-box; }
+    .logo-header { width: 80px; height: 50px; object-fit: contain; background: transparent; }
   </style>
 </head>
 
@@ -78,9 +79,9 @@
   <div class="header">
     <div class="container header-wrap d-flex align-items-center justify-content-between">
       <div class="d-flex align-items-center">
-        <div class="header-logos me-3">
-          <img src="/static/logo_minoria.png" alt="Liderança da Minoria" class="logo" onerror="this.style.display='none'">
-          <img src="/static/logo_oposicao.png" alt="Oposição" class="logo-pl mt-2" onerror="this.style.display='none'">
+        <div class="header-logos me-3 d-flex align-items-center gap-2">
+          <img src="/static/logo_minoria.png" alt="Liderança da Minoria" class="logo-header" onerror="this.style.display='none'">
+          <img src="/static/logo_oposicao.png" alt="Oposição" class="logo-header" onerror="this.style.display='none'">
         </div>
         <div class="header-text">
           <h1 class="titulo-app mb-0">Assessoria</h1>
@@ -566,7 +567,7 @@
       </div>
       <div class="modal-body">
 
-        <div class="mb-3">
+        <div class="mb-3" id="select-item-container">
           <label class="form-label fw-bold">Selecione o Item:</label>
           <select class="form-select" id="select-item-msg">
             <option value="">-- Selecione --</option>
@@ -591,6 +592,15 @@
             </button>
             <button class="btn btn-outline-danger btn-sm btn-tipo-msg" data-tipo="votacao">
               <i class="fas fa-vote-yea me-1"></i>Votação Nominal
+            </button>
+            <button class="btn btn-outline-success btn-sm btn-tipo-msg" data-tipo="iniciada">
+              <i class="fas fa-play-circle me-1"></i>Iniciada a Ordem do Dia
+            </button>
+            <button class="btn btn-outline-warning btn-sm btn-tipo-msg" data-tipo="encerrada_ordem">
+              <i class="fas fa-stop-circle me-1"></i>Encerrada a Ordem do Dia
+            </button>
+            <button class="btn btn-outline-dark btn-sm btn-tipo-msg" data-tipo="encerrada_sessao">
+              <i class="fas fa-flag-checkered me-1"></i>Encerrada a Sessão
             </button>
           </div>
         </div>
@@ -679,6 +689,7 @@ Autor: ${itemAtual.autor}
 Relator: ${itemAtual.relator}
 
 *OPOSIÇÃO ORIENTA: ${ori}*`;
+
     } else if (tipoAtual === 'votacao') {
       if (!obj) {
         document.getElementById('preview-msg-container').style.display = 'none';
@@ -696,6 +707,26 @@ _${obj}_ - ${itemAtual.projeto}${linhaDescricao}
 ${itemAtual.ementa}
 
 *OPOSIÇÃO ORIENTA: ${ori}*`;
+
+    } else if (tipoAtual === 'iniciada') {
+      msg =
+`🟢 *INICIADA A ORDEM DO DIA*
+
+A sessão deliberativa foi iniciada no Plenário da Câmara dos Deputados.
+
+Acompanhe a pauta em tempo real.`;
+
+    } else if (tipoAtual === 'encerrada_ordem') {
+      msg =
+`🔴 *ENCERRADA A ORDEM DO DIA*
+
+A Ordem do Dia foi encerrada no Plenário da Câmara dos Deputados.`;
+
+    } else if (tipoAtual === 'encerrada_sessao') {
+      msg =
+`⛔ *ENCERRADA A SESSÃO DELIBERATIVA*
+
+A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
     }
 
     document.getElementById('preview-msg').value = msg;
@@ -714,9 +745,16 @@ ${itemAtual.ementa}
       btn.classList.add('active');
       tipoAtual = btn.dataset.tipo;
       const campoObj = document.getElementById('campo-objeto');
+      const selectContainer = document.getElementById('select-item-container');
+
+      // Tipos que não precisam de item específico
+      const semItem = ['iniciada', 'encerrada_ordem', 'encerrada_sessao'];
+      if (selectContainer) selectContainer.style.display = semItem.includes(tipoAtual) ? 'none' : 'block';
+
       campoObj.style.display = tipoAtual === 'votacao' ? 'block' : 'none';
-      if (tipoAtual === 'apresentacao') {
+      if (tipoAtual !== 'votacao') {
         document.getElementById('input-objeto').value = '';
+        document.getElementById('input-objeto').dataset.descricaoDtq = '';
       }
       gerarMensagem();
     });
