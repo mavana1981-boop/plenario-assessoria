@@ -45,11 +45,14 @@ with app.app_context():
             ordem TEXT,
             resumo_materia TEXT,
             orientacao TEXT,
-            resumo_parecer TEXT)''')
+            resumo_parecer TEXT,
+            saved_by TEXT,
+            saved_at TEXT)''')
         _c.execute('''CREATE TABLE IF NOT EXISTS pauta_cache_db (
             evento_id INTEGER PRIMARY KEY,
             json_pauta TEXT,
-            last_updated TEXT)''')
+            last_updated TEXT,
+            last_saved_by TEXT)''')
         _conn.commit()
         _bcrypt = _Bc()
         for _u in [
@@ -258,14 +261,16 @@ def selecionar_data():
 def view_pauta(evento_id):
     force_reload = request.args.get('force_reload', 'false').lower() == 'true'
     itens, from_cache = fetch_pauta(evento_id, force_reload)
-    last_updated = None
     conn = sqlite3.connect(DB)
     c = conn.cursor()
+    last_updated = None
+    last_saved_user = None
     try:
-        c.execute("SELECT last_updated FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
+        c.execute("SELECT last_updated, last_saved_by FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
         row = c.fetchone()
         if row:
             last_updated = row[0]
+            last_saved_user = row[1]
     except Exception:
         pass
     finally:
@@ -285,7 +290,8 @@ def view_pauta(evento_id):
         evento = {'id': evento_id, 'dataHoraInicio': 'N/D', 'situacao': 'N/D', 'descricao': 'Sessão Deliberativa', 'local': 'Plenário'}
 
     return render_template('pauta.html', evento_id=evento_id, evento=evento, itens=itens,
-                           from_cache=from_cache, user_role=current_user.role, last_updated=last_updated)
+                           from_cache=from_cache, user_role=current_user.role,
+                           last_updated=last_updated, last_saved_user=last_saved_user)
 
 @app.route('/save_item', methods=['POST'])
 @login_required
@@ -298,11 +304,13 @@ def save_item():
     c = conn.cursor()
     try:
         prop_key = f"PROP_{id_principal}"
-        c.execute('INSERT OR REPLACE INTO notas (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer) VALUES (?, ?, ?, ?, ?, ?)',
-                  (prop_key, evento_id, ordem, data.get('resumo_materia', ''), data.get('orientacao', ''), data.get('resumo_parecer', '')))
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        saved_by = current_user.username
+        c.execute('INSERT OR REPLACE INTO notas (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                  (prop_key, evento_id, ordem, data.get('resumo_materia', ''), data.get('orientacao', ''), data.get('resumo_parecer', ''), saved_by, now_str))
         conn.commit()
 
-        # Atualiza o cache persistente com as notas salvas
+        # Atualiza o cache persistente com as notas salvas e usuário
         c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
         row = c.fetchone()
         if row:
@@ -313,9 +321,8 @@ def save_item():
                         item['resumo_materia'] = data.get('resumo_materia', '')
                         item['orientacao']     = data.get('orientacao', '')
                         item['resumo_parecer'] = data.get('resumo_parecer', '')
-                now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                c.execute('UPDATE pauta_cache_db SET json_pauta = ?, last_updated = ? WHERE evento_id = ?',
-                          (json.dumps(itens), now_str, evento_id))
+                c.execute('UPDATE pauta_cache_db SET json_pauta = ?, last_updated = ?, last_saved_by = ? WHERE evento_id = ?',
+                          (json.dumps(itens), now_str, saved_by, evento_id))
                 conn.commit()
             except Exception:
                 pass
