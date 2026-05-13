@@ -141,6 +141,11 @@
         style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
         <i class="fas fa-image me-2"></i>Gerar Infográfico
       </a>
+      <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-mensagens-plenario"
+        style="background:linear-gradient(135deg,#25D366,#128C7E);"
+        data-bs-toggle="modal" data-bs-target="#modalMensagens">
+        <i class="fab fa-whatsapp me-2"></i>Mensagens Plenário
+      </button>
 
       {% if last_updated %}
       <small class="last-updated mb-3">Atualizado em {{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</small>
@@ -520,5 +525,184 @@
       }
     }
   </script>
+
+<!-- MODAL MENSAGENS PLENÁRIO -->
+<div class="modal fade" id="modalMensagens" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#25D366,#128C7E);">
+        <h5 class="modal-title text-white">
+          <i class="fab fa-whatsapp me-2"></i>Mensagens para o Plenário
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <div class="mb-3">
+          <label class="form-label fw-bold">Selecione o Item:</label>
+          <select class="form-select" id="select-item-msg">
+            <option value="">-- Selecione --</option>
+            {% for item in itens %}
+            <option value="{{ loop.index0 }}"
+              data-projeto="{{ item.projeto }}"
+              data-ementa="{{ item.ementa | replace('"','') | truncate(300, True, '') }}"
+              data-autor="{{ item.autor }}"
+              data-relator="{{ item.relator }}"
+              data-orientacao="{{ item.orientacao or '' }}">
+              Item {{ item.ordem }} — {{ item.projeto }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold">Tipo de Mensagem:</label>
+          <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-outline-primary btn-sm btn-tipo-msg" data-tipo="apresentacao">
+              <i class="fas fa-file-alt me-1"></i>Apresentação do Item
+            </button>
+            <button class="btn btn-outline-danger btn-sm btn-tipo-msg" data-tipo="votacao">
+              <i class="fas fa-vote-yea me-1"></i>Votação Nominal
+            </button>
+          </div>
+        </div>
+
+        <div class="mb-3" id="campo-objeto" style="display:none;">
+          <label class="form-label fw-bold">Objeto da Votação:</label>
+          <div class="d-flex gap-2 flex-wrap mb-2">
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Mérito">Mérito</button>
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Substitutivo">Substitutivo</button>
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Requerimento">Requerimento</button>
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="DTQ">DTQ</button>
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Emenda Aglutinativa">Emenda Aglutinativa</button>
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Redação Final">Redação Final</button>
+          </div>
+          <input type="text" class="form-control" id="input-objeto" placeholder="Ou digite o objeto manualmente...">
+        </div>
+
+        <div id="preview-msg-container" style="display:none;">
+          <label class="form-label fw-bold">Mensagem Gerada:</label>
+          <textarea id="preview-msg" class="form-control" rows="12"
+            style="font-family:monospace;font-size:0.88rem;background:#f0fdf4;border:2px solid #25D366;resize:vertical;"></textarea>
+          <div class="d-flex gap-2 mt-2">
+            <button class="btn btn-success btn-sm" id="btn-copiar-msg">
+              <i class="fas fa-copy me-1"></i>Copiar Mensagem
+            </button>
+            <span id="copiado-msg" class="text-success align-self-center" style="display:none;font-size:0.85rem;">✅ Copiado!</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Lógica do modal de mensagens
+  const itensData = [
+    {% for item in itens %}
+    {
+      ordem:      "{{ item.ordem }}",
+      projeto:    "{{ item.projeto }}",
+      ementa:     "{{ item.ementa | replace('"','') | replace('\n',' ') | truncate(400, True, '') }}",
+      autor:      "{{ item.autor | replace('"','') }}",
+      relator:    "{{ item.relator | replace('"','') }}",
+      orientacao: "{{ item.orientacao or '' }}"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ];
+
+  let tipoAtual = null;
+  let itemAtual = null;
+
+  function gerarMensagem() {
+    if (!itemAtual || !tipoAtual) return;
+    const ori = itemAtual.orientacao ? itemAtual.orientacao.toUpperCase() : 'A DEFINIR';
+    const obj = document.getElementById('input-objeto').value.trim();
+    let msg = '';
+
+    if (tipoAtual === 'apresentacao') {
+      msg =
+`*${itemAtual.projeto}*
+
+${itemAtual.ementa}
+
+Autor: ${itemAtual.autor}
+Relator: ${itemAtual.relator}
+
+*OPOSIÇÃO ORIENTA: ${ori}*`;
+    } else if (tipoAtual === 'votacao') {
+      if (!obj) {
+        document.getElementById('preview-msg-container').style.display = 'none';
+        return;
+      }
+      msg =
+`‼ *ATENÇÃO* ‼
+
+*VOTAÇÃO NOMINAL EM PLENÁRIO AGORA*
+
+_${obj}_ - ${itemAtual.projeto}
+
+${itemAtual.ementa}
+
+*OPOSIÇÃO ORIENTA: ${ori}*`;
+    }
+
+    document.getElementById('preview-msg').value = msg;
+    document.getElementById('preview-msg-container').style.display = 'block';
+  }
+
+  document.getElementById('select-item-msg').addEventListener('change', function() {
+    const idx = this.value;
+    itemAtual = idx !== '' ? itensData[parseInt(idx)] : null;
+    gerarMensagem();
+  });
+
+  document.querySelectorAll('.btn-tipo-msg').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.btn-tipo-msg').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      tipoAtual = btn.dataset.tipo;
+      const campoObj = document.getElementById('campo-objeto');
+      campoObj.style.display = tipoAtual === 'votacao' ? 'block' : 'none';
+      if (tipoAtual === 'apresentacao') {
+        document.getElementById('input-objeto').value = '';
+      }
+      gerarMensagem();
+    });
+  });
+
+  document.querySelectorAll('.btn-objeto').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.btn-objeto').forEach(b => b.classList.remove('active','btn-secondary'));
+      btn.classList.add('active');
+      document.getElementById('input-objeto').value = btn.dataset.objeto;
+      gerarMensagem();
+    });
+  });
+
+  document.getElementById('input-objeto').addEventListener('input', gerarMensagem);
+
+  document.getElementById('btn-copiar-msg').addEventListener('click', () => {
+    const txt = document.getElementById('preview-msg').value;
+    navigator.clipboard.writeText(txt).then(() => {
+      const el = document.getElementById('copiado-msg');
+      el.style.display = 'inline';
+      setTimeout(() => { el.style.display = 'none'; }, 2500);
+    });
+  });
+
+  // Reset ao fechar modal
+  document.getElementById('modalMensagens').addEventListener('hidden.bs.modal', () => {
+    tipoAtual = null;
+    itemAtual = null;
+    document.getElementById('select-item-msg').value = '';
+    document.getElementById('campo-objeto').style.display = 'none';
+    document.getElementById('preview-msg-container').style.display = 'none';
+    document.getElementById('input-objeto').value = '';
+    document.querySelectorAll('.btn-tipo-msg, .btn-objeto').forEach(b => b.classList.remove('active'));
+  });
+</script>
+
 </body>
 </html>
