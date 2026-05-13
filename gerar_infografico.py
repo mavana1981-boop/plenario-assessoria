@@ -80,9 +80,12 @@ def gerar_infografico_pdf(evento, itens, logo_minoria_path=None, logo_oposicao_p
         c.setFillColor(colors.white)
         c.rect(0, 0, W, H, fill=1, stroke=0)
 
-        # Faixa superior azul escura
-        c.setFillColor(COR_AZUL_ESCURO)
+        # Faixa superior BRANCA com borda azul embaixo
+        c.setFillColor(colors.white)
         c.rect(0, H - 2.8*cm, W, 2.8*cm, fill=1, stroke=0)
+        c.setStrokeColor(COR_AZUL_ESCURO)
+        c.setLineWidth(2)
+        c.line(0, H - 2.8*cm, W, H - 2.8*cm)
 
         # Logos no cabeçalho
         logo_w = 3.5*cm
