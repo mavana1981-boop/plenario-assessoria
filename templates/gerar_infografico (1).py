@@ -80,14 +80,18 @@ def gerar_infografico_pdf(evento, itens, logo_minoria_path=None, logo_oposicao_p
         c.setFillColor(colors.white)
         c.rect(0, 0, W, H, fill=1, stroke=0)
 
-        # Faixa superior azul escura
-        c.setFillColor(COR_AZUL_ESCURO)
-        c.rect(0, H - 2.8*cm, W, 2.8*cm, fill=1, stroke=0)
+        # Faixa superior branca com borda azul embaixo
+        cab_h = 2.2*cm
+        c.setFillColor(colors.white)
+        c.rect(0, H - cab_h, W, cab_h, fill=1, stroke=0)
+        c.setStrokeColor(COR_AZUL_ESCURO)
+        c.setLineWidth(1.5)
+        c.line(0, H - cab_h, W, H - cab_h)
 
-        # Logos no cabeçalho
-        logo_w = 3.5*cm
-        logo_h = 1.8*cm
-        y_logo = H - 2.5*cm
+        # Logos — mesmo tamanho, lado a lado com título no centro
+        logo_w = 2.8*cm
+        logo_h = 1.6*cm
+        y_logo = H - cab_h + (cab_h - logo_h) / 2
 
         if logo_minoria_path and os.path.exists(logo_minoria_path):
             try:
@@ -105,18 +109,17 @@ def gerar_infografico_pdf(evento, itens, logo_minoria_path=None, logo_oposicao_p
             except Exception:
                 pass
 
-        return H - 3.2*cm  # y inicial após cabeçalho
+        return H - cab_h - 0.3*cm  # y inicial após cabeçalho
 
     def desenhar_titulo(y, evento):
-        # Faixa de título
-        titulo_h = 2.2*cm
+        # Faixa de título abaixo do cabeçalho
+        titulo_h = 1.8*cm
         c.setFillColor(COR_AZUL_CLARO)
         c.rect(MARGIN, y - titulo_h, CONTENT_W, titulo_h, fill=1, stroke=0)
         c.setStrokeColor(COR_AZUL_ESCURO)
-        c.setLineWidth(1.5)
+        c.setLineWidth(1)
         c.rect(MARGIN, y - titulo_h, CONTENT_W, titulo_h, fill=0, stroke=1)
 
-        # Texto do título
         from datetime import datetime
         dt_str = evento.get('dataHoraInicio', '')
         try:
@@ -132,14 +135,22 @@ def gerar_infografico_pdf(evento, itens, logo_minoria_path=None, logo_oposicao_p
         subtitulo = f"Data: {data_fmt}  |  Hora: {hora_fmt}  |  Local: {evento.get('local', '')}"
 
         c.setFillColor(COR_AZUL_ESCURO)
-        c.setFont("Helvetica-Bold", 11)
-        c.drawCentredString(W/2, y - 0.85*cm, titulo)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawCentredString(W/2, y - 0.7*cm, titulo)
 
         c.setFillColor(COR_CINZA)
         c.setFont("Helvetica", 8)
-        c.drawCentredString(W/2, y - 1.5*cm, subtitulo)
+        c.drawCentredString(W/2, y - 1.3*cm, subtitulo)
 
-        return y - titulo_h - 0.3*cm
+        # Título no cabeçalho entre as logos
+        c.setFillColor(COR_AZUL_ESCURO)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawCentredString(W/2, H - 0.9*cm, desc)
+        c.setFont("Helvetica", 7.5)
+        c.setFillColor(COR_CINZA)
+        c.drawCentredString(W/2, H - 1.5*cm, f"Liderança da Minoria — Câmara dos Deputados")
+
+        return y - titulo_h - 0.25*cm
 
     def desenhar_item(c, item, y, page_bottom):
         """Desenha um card de item. Retorna novo y e se precisou de nova página."""
