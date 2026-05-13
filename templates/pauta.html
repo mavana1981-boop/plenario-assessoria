@@ -312,11 +312,10 @@
                 <button class="btn btn-primary btn-sm save-btn"
                         data-ordem="{{ item.ordem }}"
                         data-id-principal="{{ item.id_principal }}">Salvar</button>
-                <small class="text-muted save-info-{{ item.ordem }}" style="font-size:0.8rem;">
-                  {% set key = 'PROP_' ~ item.id_principal %}
-                  {% if item.resumo_materia or item.orientacao %}
+                <small class="text-muted" id="info-salvo-{{ item.ordem }}" style="font-size:0.8rem;">
+                  {% if item.saved_by and item.saved_at %}
                     <i class="fas fa-check-circle text-success me-1"></i>
-                    <span id="info-salvo-{{ item.ordem }}"></span>
+                    Salvo por <strong>{{ item.saved_by }}</strong> em {{ item.saved_at | datetimeformat('%d/%m/%Y %H:%M') }}
                   {% endif %}
                 </small>
               </div>
@@ -442,7 +441,7 @@
             const agora = new Date();
             const horaFmt = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
             const infoEl = document.getElementById(`info-salvo-${ordem}`);
-            if (infoEl) infoEl.textContent = `Salvo em ${horaFmt} por {{ current_user.username }}`;
+            if (infoEl) infoEl.innerHTML = `<i class="fas fa-check-circle text-success me-1"></i>Salvo por <strong>{{ current_user.username }}</strong> em ${horaFmt}`;
 
             // Atualiza cabeçalho da sessão
             const ultimoEl = document.getElementById('ultimo-salvamento');
