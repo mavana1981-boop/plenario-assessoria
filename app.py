@@ -77,10 +77,19 @@ def load_notas():
     conn = sqlite3.connect(DB)
     c = conn.cursor()
     try:
-        c.execute('SELECT item_key, resumo_materia, orientacao, resumo_parecer FROM notas')
-        notas = {row[0]: {'resumo_materia': row[1], 'orientacao': row[2], 'resumo_parecer': row[3]} for row in c.fetchall()}
+        c.execute('SELECT item_key, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at FROM notas')
+        notas = {row[0]: {'resumo_materia': row[1], 'orientacao': row[2], 'resumo_parecer': row[3],
+                          'saved_by': row[4] or '', 'saved_at': row[5] or ''}
+                 for row in c.fetchall()}
     except Exception:
-        notas = {}
+        # Coluna pode não existir ainda — tenta sem saved_by/saved_at
+        try:
+            c.execute('SELECT item_key, resumo_materia, orientacao, resumo_parecer FROM notas')
+            notas = {row[0]: {'resumo_materia': row[1], 'orientacao': row[2], 'resumo_parecer': row[3],
+                              'saved_by': '', 'saved_at': ''}
+                     for row in c.fetchall()}
+        except Exception:
+            notas = {}
     finally:
         conn.close()
     return notas
@@ -151,6 +160,8 @@ def fetch_pauta(evento_id, force_reload=False):
                         item['resumo_materia'] = notas[key].get('resumo_materia', item.get('resumo_materia', ''))
                         item['orientacao']     = notas[key].get('orientacao', item.get('orientacao', ''))
                         item['resumo_parecer'] = notas[key].get('resumo_parecer', item.get('resumo_parecer', ''))
+                        item['saved_by']       = notas[key].get('saved_by', item.get('saved_by', ''))
+                        item['saved_at']       = notas[key].get('saved_at', item.get('saved_at', ''))
                 pauta_cache[cache_key] = {'timestamp': now, 'itens': itens}
                 conn.close()
                 return itens, True
@@ -182,6 +193,8 @@ def fetch_pauta(evento_id, force_reload=False):
                 'resumo_materia': notas.get(key, {}).get('resumo_materia', ''),
                 'orientacao':     notas.get(key, {}).get('orientacao', ''),
                 'resumo_parecer': notas.get(key, {}).get('resumo_parecer', ''),
+                'saved_by':       notas.get(key, {}).get('saved_by', ''),
+                'saved_at':       notas.get(key, {}).get('saved_at', ''),
                 'destaques_emendas': []
             })
 
