@@ -136,6 +136,11 @@
         class="btn btn-outline-success btn-sm mb-3 ms-2" target="_blank" rel="noopener">
         <i class="fas fa-file-export me-2"></i>Exportar resumo
       </a>
+      <a href="{{ url_for('gerar_infografico', evento_id=evento_id) }}"
+        class="btn btn-sm mb-3 ms-2 text-white" target="_blank" rel="noopener"
+        style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
+        <i class="fas fa-image me-2"></i>Gerar Infográfico
+      </a>
 
       {% if last_updated %}
       <small class="last-updated mb-3">Atualizado em {{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</small>
