@@ -162,6 +162,9 @@
                 <strong>Situação:</strong> {{ item.situacao | default('N/D') }} &nbsp;&nbsp;
                 <strong>Relator:</strong> {{ item.relator }}
               </div>
+              <div class="item-info mt-1 text-muted fst-italic" style="font-size:0.82rem; max-width:90%;">
+                {{ item.ementa | truncate(180, True, '...') }}
+              </div>
             </div>
             <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
           </div>
@@ -227,9 +230,9 @@
                 <small class="text-muted">A análise será inserida automaticamente no campo de Resumo/Nota Técnica.</small>
               </div>
 
-              <div class="mt-2 position-relative">
+              <div class="mt-2 position-relative" style="width:100%;">
                 <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
-                <textarea id="editor-resumo-materia-{{ item.ordem }}" class="editable-field">{% if item.resumo_materia %}{{ item.resumo_materia | safe }}{% endif %}</textarea>
+                <textarea id="editor-resumo-materia-{{ item.ordem }}" class="editable-field" style="width:100%; min-height:500px;">{% if item.resumo_materia %}{{ item.resumo_materia | safe }}{% endif %}</textarea>
                 <div id="overlay-{{ item.ordem }}" class="editor-overlay" style="display:none;">
                   <div class="editor-spinner"></div>
                   <p>📄 Modelo analisando a Proposição...<br>🧠 Gerando sugestão de nota técnica...</p>
