@@ -76,23 +76,27 @@
     ⚠️ Ambiente de desenvolvimento — dados e análises podem conter erros.
   </div>
 
-  <div class="header">
+  <div class="header" style="background: #fff !important; border-bottom: 3px solid #1A6B3A; box-shadow: 0 2px 6px rgba(0,0,0,0.08);">
     <div class="container header-wrap d-flex align-items-center justify-content-between">
       <div class="d-flex align-items-center">
-        <div class="header-logos me-3 d-flex align-items-center gap-2">
-          <img src="/static/logo_minoria.png" alt="Liderança da Minoria" class="logo-header" onerror="this.style.display='none'">
-          <img src="/static/logo_oposicao.png" alt="Oposição" class="logo-header" onerror="this.style.display='none'">
+        <div class="header-logos me-3 d-flex align-items-center gap-3">
+          <img src="/static/logo_minoria.png" alt="Liderança da Minoria"
+            style="width:90px;height:55px;object-fit:contain;background:transparent;"
+            onerror="this.style.display='none'">
+          <img src="/static/logo_oposicao.png" alt="Oposição"
+            style="width:90px;height:55px;object-fit:contain;background:transparent;"
+            onerror="this.style.display='none'">
         </div>
         <div class="header-text">
-          <h1 class="titulo-app mb-0">Assessoria</h1>
-          <p class="subtitulo-app mb-0">Plenário da Câmara dos Deputados</p>
+          <h1 class="titulo-app mb-0" style="color:#1A6B3A !important;">Assessoria Plenário</h1>
+          <p class="subtitulo-app mb-0" style="color:#444 !important;">Liderança da Minoria — Câmara dos Deputados</p>
         </div>
       </div>
       <div class="text-end">
-        <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm mb-1">
+        <a href="{{ url_for('logout') }}" class="btn btn-outline-success btn-sm mb-1">
           <i class="fas fa-sign-out-alt me-2"></i>Sair
         </a><br>
-        <small class="text-light">{{ current_user.username }}</small>
+        <small style="color:#444;">{{ current_user.username }}</small>
         {% if current_user.is_authenticated and current_user.role == 'Admin' %}
           <a href="{{ url_for('admin_usuarios') }}" 
             class="btn btn-sm mb-1 ms-1"
