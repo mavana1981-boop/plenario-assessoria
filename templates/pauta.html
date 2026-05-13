@@ -299,6 +299,41 @@
               <button class="btn btn-primary btn-sm save-btn mt-3"
                       data-ordem="{{ item.ordem }}"
                       data-id-principal="{{ item.id_principal }}">Salvar</button>
+
+              <!-- DESTAQUES -->
+              <div class="mt-4">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                  <h6 class="mb-0"><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
+                  <button class="btn btn-outline-warning btn-sm btn-buscar-destaques"
+                          data-id-proposicao="{{ item.id_principal }}"
+                          data-ordem="{{ item.ordem }}">
+                    <i class="fas fa-search me-1"></i>Buscar Destaques
+                  </button>
+                  <span class="spinner-busca-{{ item.ordem }}" style="display:none;">
+                    <span class="spinner-border spinner-border-sm text-warning"></span>
+                    Buscando...
+                  </span>
+                </div>
+                <div id="tabela-destaques-{{ item.ordem }}" style="display:none;">
+                  <div class="table-responsive">
+                    <table class="table table-sm table-striped align-middle">
+                      <thead class="table-warning">
+                        <tr>
+                          <th>Número</th>
+                          <th>Autoria</th>
+                          <th>Descrição</th>
+                          <th>Tipo</th>
+                          <th>Situação</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tbody-destaques-{{ item.ordem }}"></tbody>
+                    </table>
+                  </div>
+                  <div id="sem-destaques-{{ item.ordem }}" class="alert alert-info py-2" style="display:none;">
+                    <i class="fas fa-info-circle me-2"></i>Nenhum destaque em tramitação encontrado para esta proposição.
+                  </div>
+                </div>
+              </div>
             {% endif %}
           </div>
         </div>
@@ -394,6 +429,54 @@
           }
         });
       });
+
+      // Botão Buscar Destaques em tempo real
+      document.querySelectorAll('.btn-buscar-destaques').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const idProp  = btn.dataset.idProposicao;
+          const ordem   = btn.dataset.ordem;
+          const spinner = document.querySelector(`.spinner-busca-${ordem}`);
+          const tabela  = document.getElementById(`tabela-destaques-${ordem}`);
+          const tbody   = document.getElementById(`tbody-destaques-${ordem}`);
+          const semMsg  = document.getElementById(`sem-destaques-${ordem}`);
+
+          btn.disabled = true;
+          spinner.style.display = 'inline-flex';
+          tabela.style.display  = 'none';
+          tbody.innerHTML = '';
+          semMsg.style.display = 'none';
+
+          try {
+            const r = await fetch(`/destaques/${idProp}`);
+            const j = await r.json();
+            tabela.style.display = 'block';
+            if (j.destaques && j.destaques.length > 0) {
+              j.destaques.forEach(d => {
+                const badge = d.situacao.toLowerCase().includes('tramitação')
+                  ? `<span class="badge bg-warning text-dark">${d.situacao}</span>`
+                  : `<span class="badge bg-secondary">${d.situacao}</span>`;
+                tbody.innerHTML += `<tr>
+                  <td><strong>${d.numero}</strong></td>
+                  <td>${d.autoria}</td>
+                  <td>${d.descricao}</td>
+                  <td>${d.tipo_destaque}</td>
+                  <td>${badge}</td>
+                </tr>`;
+              });
+            } else {
+              semMsg.style.display = 'block';
+            }
+          } catch(e) {
+            tabela.style.display = 'block';
+            semMsg.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>Erro: ${e.message}`;
+            semMsg.style.display = 'block';
+          } finally {
+            spinner.style.display = 'none';
+            btn.disabled = false;
+          }
+        });
+      });
+
     });
 
     // Botão Gerar Análise — usa ementa da proposição via Groq
