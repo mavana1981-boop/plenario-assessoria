@@ -582,8 +582,18 @@
                 <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Votação">De Votação</a></li>
               </ul>
             </div>
-            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="DTQ">DTQ</button>
-            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Emenda Aglutinativa">Emenda Aglutinativa</button>
+            <div class="dropdown" id="dropdown-dtq-container">
+              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                id="btnDTQ" data-bs-toggle="dropdown" aria-expanded="false"
+                onclick="carregarDestaquesDTQ()">
+                DTQ
+              </button>
+              <ul class="dropdown-menu" id="menu-dtq" aria-labelledby="btnDTQ">
+                <li><span class="dropdown-item text-muted fst-italic" id="dtq-loading">
+                  <span class="spinner-border spinner-border-sm me-1"></span>Buscando destaques...
+                </span></li>
+              </ul>
+            </div>
             <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Redação Final">Redação Final</button>
           </div>
           <input type="text" class="form-control" id="input-objeto" placeholder="Ou digite o objeto manualmente...">
@@ -611,12 +621,13 @@
   const itensData = [
     {% for item in itens %}
     {
-      ordem:      "{{ item.ordem }}",
-      projeto:    "{{ item.projeto }}",
-      ementa:     "{{ item.ementa | replace('"','') | replace('\n',' ') | truncate(400, True, '') }}",
-      autor:      "{{ item.autor | replace('"','') }}",
-      relator:    "{{ item.relator | replace('"','') }}",
-      orientacao: "{{ item.orientacao or '' }}"
+      ordem:        "{{ item.ordem }}",
+      id_principal: "{{ item.id_principal }}",
+      projeto:      "{{ item.projeto }}",
+      ementa:       "{{ item.ementa | replace('"','') | replace('\n',' ') | truncate(400, True, '') }}",
+      autor:        "{{ item.autor | replace('"','') }}",
+      relator:      "{{ item.relator | replace('"','') }}",
+      orientacao:   "{{ item.orientacao or '' }}"
     }{% if not loop.last %},{% endif %}
     {% endfor %}
   ];
@@ -636,8 +647,8 @@
 
 ${itemAtual.ementa}
 
-_Autor: ${itemAtual.autor}
-Relator: ${itemAtual.relator}_
+Autor: ${itemAtual.autor}
+Relator: ${itemAtual.relator}
 
 *OPOSIÇÃO ORIENTA: ${ori}*`;
     } else if (tipoAtual === 'votacao') {
@@ -645,12 +656,14 @@ Relator: ${itemAtual.relator}_
         document.getElementById('preview-msg-container').style.display = 'none';
         return;
       }
+      const descDtq = document.getElementById('input-objeto').dataset.descricaoDtq || '';
+      const linhaDescricao = descDtq ? `\n${descDtq}` : '';
       msg =
 `‼ *ATENÇÃO* ‼
 
 *VOTAÇÃO NOMINAL EM PLENÁRIO AGORA*
 
-_${obj}_ - ${itemAtual.projeto}
+_${obj}_ - ${itemAtual.projeto}${linhaDescricao}
 
 ${itemAtual.ementa}
 
@@ -712,7 +725,104 @@ ${itemAtual.ementa}
     });
   });
 
-  // Reset ao fechar modal
+  // Carregar destaques para o dropdown DTQ
+  let dtqCarregado = false;
+  async function carregarDestaquesDTQ() {
+    if (!itemAtual || dtqCarregado) return;
+    const menu = document.getElementById('menu-dtq');
+    const loading = document.getElementById('dtq-loading');
+
+    // Descobre id_proposicao do item selecionado
+    const sel = document.getElementById('select-item-msg');
+    const opt = sel.options[sel.selectedIndex];
+    if (!opt || !opt.value) return;
+
+    // Pega id_proposicao dos itensData
+    const idx = parseInt(opt.value);
+    const idProp = itensData[idx]?.id_principal;
+    if (!idProp) {
+      menu.innerHTML = '<li><span class="dropdown-item text-muted">ID da proposição não encontrado.</span></li>';
+      return;
+    }
+
+    loading.style.display = 'block';
+    dtqCarregado = false;
+
+    try {
+      const r = await fetch(`/destaques/${idProp}`);
+      const j = await r.json();
+      menu.innerHTML = '';
+
+      if (j.destaques && j.destaques.length > 0) {
+        // Opção genérica DTQ
+        const liGen = document.createElement('li');
+        liGen.innerHTML = `<a class="dropdown-item btn-objeto-dtq" href="#"
+          data-objeto="DTQ" data-descricao="">DTQ (genérico)</a>`;
+        menu.appendChild(liGen);
+
+        const div = document.createElement('li');
+        div.innerHTML = '<hr class="dropdown-divider">';
+        menu.appendChild(div);
+
+        j.destaques.forEach(d => {
+          const li = document.createElement('li');
+          const label = `${d.numero} — ${d.autoria}`;
+          li.innerHTML = `<a class="dropdown-item btn-objeto-dtq" href="#"
+            data-objeto="DTQ" data-numero="${d.numero}"
+            data-descricao="${d.descricao.replace(/"/g,"'")}"
+            data-autoria="${d.autoria.replace(/"/g,"'")}"
+            title="${d.descricao}">
+            <strong>${d.numero}</strong> — ${d.autoria}<br>
+            <small class="text-muted">${d.descricao.substring(0,80)}${d.descricao.length>80?'...':''}</small>
+          </a>`;
+          menu.appendChild(li);
+        });
+      } else {
+        menu.innerHTML = `<li><span class="dropdown-item text-muted fst-italic">
+          Nenhum destaque encontrado.<br>
+          <a class="dropdown-item btn-objeto-dtq mt-1" href="#" data-objeto="DTQ" data-descricao="">
+            Usar DTQ genérico
+          </a>
+        </span></li>`;
+      }
+
+      // Adiciona listeners nos itens do menu
+      menu.querySelectorAll('.btn-objeto-dtq').forEach(link => {
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          const numero  = link.dataset.numero || '';
+          const descricao = link.dataset.descricao || '';
+          const autoria = link.dataset.autoria || '';
+          const objetoTexto = numero
+            ? `DTQ ${numero} (${autoria})`
+            : 'DTQ';
+
+          document.getElementById('input-objeto').value = objetoTexto;
+
+          // Guarda a descrição para usar na mensagem
+          document.getElementById('input-objeto').dataset.descricaoDtq = descricao;
+          document.getElementById('btnDTQ').classList.add('active','btn-secondary');
+          document.getElementById('btnDTQ').classList.remove('btn-outline-secondary');
+          document.querySelectorAll('.btn-objeto').forEach(b => b.classList.remove('active'));
+          gerarMensagem();
+        });
+      });
+
+      dtqCarregado = true;
+    } catch(e) {
+      menu.innerHTML = `<li><span class="dropdown-item text-danger">Erro ao buscar destaques.</span></li>`;
+    }
+  }
+
+  // Reset dtqCarregado ao trocar de item
+  document.getElementById('select-item-msg').addEventListener('change', function() {
+    dtqCarregado = false;
+    document.getElementById('menu-dtq').innerHTML = `<li><span class="dropdown-item text-muted fst-italic" id="dtq-loading">
+      <span class="spinner-border spinner-border-sm me-1"></span>Buscando destaques...
+    </span></li>`;
+    document.getElementById('btnDTQ').classList.remove('active','btn-secondary');
+    document.getElementById('btnDTQ').classList.add('btn-outline-secondary');
+  });
   document.getElementById('modalMensagens').addEventListener('hidden.bs.modal', () => {
     tipoAtual = null;
     itemAtual = null;
