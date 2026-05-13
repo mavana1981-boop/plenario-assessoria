@@ -172,8 +172,8 @@
                 <strong>Situação:</strong> {{ item.situacao | default('N/D') }} &nbsp;&nbsp;
                 <strong>Relator:</strong> {{ item.relator }}
               </div>
-              <div class="item-info mt-1 text-muted fst-italic" style="font-size:0.82rem; max-width:90%;">
-                {{ item.ementa | truncate(180, True, '...') }}
+              <div class="item-info mt-1 text-muted fst-italic" style="font-size:0.82rem; width:100%; white-space:normal; word-break:break-word;">
+                {{ item.ementa }}
               </div>
             </div>
             <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
