@@ -572,7 +572,16 @@
           <div class="d-flex gap-2 flex-wrap mb-2">
             <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Mérito">Mérito</button>
             <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Substitutivo">Substitutivo</button>
-            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Requerimento">Requerimento</button>
+            <div class="dropdown">
+              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="btnRequerimento" data-bs-toggle="dropdown" aria-expanded="false">
+                Requerimento
+              </button>
+              <ul class="dropdown-menu" aria-labelledby="btnRequerimento">
+                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Urgência">De Urgência</a></li>
+                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Discussão">De Discussão</a></li>
+                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Votação">De Votação</a></li>
+              </ul>
+            </div>
             <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="DTQ">DTQ</button>
             <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Emenda Aglutinativa">Emenda Aglutinativa</button>
             <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Redação Final">Redação Final</button>
@@ -674,9 +683,20 @@ ${itemAtual.ementa}
 
   document.querySelectorAll('.btn-objeto').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.btn-objeto').forEach(b => b.classList.remove('active','btn-secondary'));
+      document.querySelectorAll('.btn-objeto').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById('input-objeto').value = btn.dataset.objeto;
+      gerarMensagem();
+    });
+  });
+
+  document.querySelectorAll('.btn-objeto-req').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.querySelectorAll('.btn-objeto').forEach(b => b.classList.remove('active'));
+      document.getElementById('btnRequerimento').classList.add('active', 'btn-secondary');
+      document.getElementById('btnRequerimento').classList.remove('btn-outline-secondary');
+      document.getElementById('input-objeto').value = link.dataset.objeto;
       gerarMensagem();
     });
   });
