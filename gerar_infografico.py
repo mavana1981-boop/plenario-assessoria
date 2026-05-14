@@ -15,6 +15,7 @@ import textwrap
 # Cores do infográfico
 COR_AZUL_ESCURO   = colors.HexColor("#0D2B5E")
 COR_AZUL_MEDIO    = colors.HexColor("#1a3a6b")
+COR_VERDE         = colors.HexColor("#1A6B3A")
 COR_VERDE         = colors.HexColor("#1A7C3E")
 COR_VERDE_CLARO   = colors.HexColor("#E8F5EE")
 COR_VERMELHO      = colors.HexColor("#8B0000")
@@ -76,25 +77,37 @@ def gerar_infografico_pdf(evento, itens, logo_minoria_path=None, logo_oposicao_p
     def nova_pagina(primeira=False):
         if not primeira:
             c.showPage()
-        # Fundo branco
         c.setFillColor(colors.white)
         c.rect(0, 0, W, H, fill=1, stroke=0)
 
-        # Faixa superior BRANCA com borda azul embaixo
+        # Faixa superior branca com linha verde
+        cab_h = 1.2*cm
         c.setFillColor(colors.white)
-        c.rect(0, H - 2.8*cm, W, 2.8*cm, fill=1, stroke=0)
-        c.setStrokeColor(COR_AZUL_ESCURO)
-        c.setLineWidth(2)
-        c.line(0, H - 2.8*cm, W, H - 2.8*cm)
+        c.rect(0, H - cab_h, W, cab_h, fill=1, stroke=0)
+        c.setStrokeColor(COR_VERDE)
+        c.setLineWidth(1.5)
+        c.line(0, H - cab_h, W, H - cab_h)
 
-        # Logos no cabeçalho
-        logo_w = 3.5*cm
-        logo_h = 1.8*cm
-        y_logo = H - 2.5*cm
+        # Texto no cabeçalho em verde
+        c.setFillColor(COR_VERDE)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawCentredString(W/2, H - 0.85*cm, "Lideranças da Minoria e da Oposição — Câmara dos Deputados")
+
+        # Rodapé com logos do mesmo tamanho + texto
+        rod_h = 1.5*cm
+        c.setFillColor(colors.white)
+        c.rect(0, 0, W, rod_h, fill=1, stroke=0)
+        c.setStrokeColor(COR_VERDE)
+        c.setLineWidth(1)
+        c.line(MARGIN, rod_h, W - MARGIN, rod_h)
+
+        logo_w = 2.0*cm
+        logo_h = 1.1*cm
+        y_rod  = (rod_h - logo_h) / 2
 
         if logo_minoria_path and os.path.exists(logo_minoria_path):
             try:
-                c.drawImage(logo_minoria_path, MARGIN, y_logo,
+                c.drawImage(logo_minoria_path, MARGIN, y_rod,
                            width=logo_w, height=logo_h,
                            preserveAspectRatio=True, mask='auto')
             except Exception:
@@ -102,24 +115,28 @@ def gerar_infografico_pdf(evento, itens, logo_minoria_path=None, logo_oposicao_p
 
         if logo_oposicao_path and os.path.exists(logo_oposicao_path):
             try:
-                c.drawImage(logo_oposicao_path, W - MARGIN - logo_w, y_logo,
+                c.drawImage(logo_oposicao_path, MARGIN + logo_w + 0.2*cm, y_rod,
                            width=logo_w, height=logo_h,
                            preserveAspectRatio=True, mask='auto')
             except Exception:
                 pass
 
-        return H - 3.2*cm  # y inicial após cabeçalho
+        c.setFillColor(COR_CINZA)
+        c.setFont("Helvetica", 7)
+        c.drawCentredString(W/2, 0.55*cm,
+            "Lideranças da Minoria e da Oposição — Plenário / Câmara dos Deputados")
+        c.drawRightString(W - MARGIN, 0.55*cm, f"Pág. {c.getPageNumber()}")
+
+        return H - cab_h - 0.3*cm
 
     def desenhar_titulo(y, evento):
-        # Faixa de título
-        titulo_h = 2.2*cm
+        titulo_h = 1.8*cm
         c.setFillColor(COR_AZUL_CLARO)
         c.rect(MARGIN, y - titulo_h, CONTENT_W, titulo_h, fill=1, stroke=0)
         c.setStrokeColor(COR_AZUL_ESCURO)
-        c.setLineWidth(1.5)
+        c.setLineWidth(1)
         c.rect(MARGIN, y - titulo_h, CONTENT_W, titulo_h, fill=0, stroke=1)
 
-        # Texto do título
         from datetime import datetime
         dt_str = evento.get('dataHoraInicio', '')
         try:
@@ -130,19 +147,24 @@ def gerar_infografico_pdf(evento, itens, logo_minoria_path=None, logo_oposicao_p
             data_fmt = ''
             hora_fmt = ''
 
-        desc = evento.get('descricao', 'Sessão Deliberativa')
+        desc   = evento.get('descricao', 'Sessão Deliberativa')
         titulo = f"Resumo da Pauta — {desc}"
-        subtitulo = f"Data: {data_fmt}  |  Hora: {hora_fmt}  |  Local: {evento.get('local', '')}"
+        subtit = f"Data: {data_fmt}  |  Hora: {hora_fmt}  |  Local: {evento.get('local', '')}"
+
+        # Trunca se necessário
+        max_w = CONTENT_W - 0.4*cm
+        while c.stringWidth(titulo, "Helvetica-Bold", 10) > max_w and len(titulo) > 10:
+            titulo = titulo[:-4] + "..."
 
         c.setFillColor(COR_AZUL_ESCURO)
-        c.setFont("Helvetica-Bold", 11)
-        c.drawCentredString(W/2, y - 0.85*cm, titulo)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawCentredString(W/2, y - 0.7*cm, titulo)
 
         c.setFillColor(COR_CINZA)
         c.setFont("Helvetica", 8)
-        c.drawCentredString(W/2, y - 1.5*cm, subtitulo)
+        c.drawCentredString(W/2, y - 1.35*cm, subtit)
 
-        return y - titulo_h - 0.3*cm
+        return y - titulo_h - 0.25*cm
 
     def desenhar_item(c, item, y, page_bottom):
         """Desenha um card de item. Retorna novo y e se precisou de nova página."""
