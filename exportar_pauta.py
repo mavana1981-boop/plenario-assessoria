@@ -6,7 +6,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.platypus import (
     BaseDocTemplate, PageTemplate, Frame, Paragraph, Spacer,
     Table, TableStyle, PageBreak, HRFlowable
@@ -49,27 +49,67 @@ def _strip(s):
     s = re.sub(r'<[^>]+>', '', s)
     return re.sub(r'\n{3,}', '\n\n', s).strip()
 
-def _header_footer(canvas, doc, logos, h1, h2):
+def _header_footer(canvas, doc, logos, data_s, hora_s, local_s, descricao_s):
     w, h = A4
+    logo_min, logo_op = logos
     canvas.saveState()
-    canvas.setFillColor(COR_VERDE)
-    canvas.rect(0, h-2.0*cm, w, 2.0*cm, fill=1, stroke=0)
-    for path, x in zip(logos, [0.5*cm, w-3.8*cm]):
-        if path and os.path.exists(path):
-            try: canvas.drawImage(path, x, h-1.85*cm, width=3.2*cm, preserveAspectRatio=True, mask='auto')
-            except: pass
+
+    # Fundo branco da faixa do cabeçalho
     canvas.setFillColor(colors.white)
-    canvas.setFont("Helvetica-Bold", 9.5)
-    canvas.drawCentredString(w/2, h-0.9*cm, h1)
+    canvas.rect(0, h - 2.2*cm, w, 2.2*cm, fill=1, stroke=0)
+
+    # Linha verde embaixo
+    canvas.setStrokeColor(COR_VERDE)
+    canvas.setLineWidth(2)
+    canvas.line(0, h - 2.2*cm, w, h - 2.2*cm)
+
+    # Logos do lado esquerdo, mesmo tamanho
+    logo_w = 2.2*cm
+    logo_h = 1.7*cm
+    y_logo = h - 2.0*cm
+
+    x = 0.5*cm
+    for path in [logo_min, logo_op]:
+        if path and os.path.exists(path):
+            try:
+                canvas.drawImage(path, x, y_logo, width=logo_w, height=logo_h,
+                                 preserveAspectRatio=True, mask='auto')
+                x += logo_w + 0.2*cm
+            except Exception:
+                pass
+
+    # Textos do cabeçalho em verde (ao lado direito das logos)
+    tx = 0.5*cm + 2*(logo_w + 0.2*cm) + 0.3*cm
+    canvas.setFillColor(COR_VERDE)
+    canvas.setFont("Helvetica-Bold", 10)
+    canvas.drawString(tx, h - 0.9*cm, "Resumo da Pauta — Sessão Deliberativa do Plenário")
     canvas.setFont("Helvetica", 7.5)
-    canvas.drawCentredString(w/2, h-1.45*cm, h2)
+    canvas.setFillColor(COR_CINZA)
+    canvas.drawString(tx, h - 1.5*cm, f"{data_s}  |  {hora_s}  |  {local_s}")
+
+    # Rodapé
     canvas.setStrokeColor(COR_VERDE)
     canvas.setLineWidth(0.8)
-    canvas.line(1.5*cm, 1.4*cm, w-1.5*cm, 1.4*cm)
+    canvas.line(1.5*cm, 1.4*cm, w - 1.5*cm, 1.4*cm)
+
+    # Logos no rodapé — mesmo tamanho, lado a lado
+    rod_logo_w = 1.5*cm
+    rod_logo_h = 1.0*cm
+    rx = 1.5*cm
+    for path in [logo_min, logo_op]:
+        if path and os.path.exists(path):
+            try:
+                canvas.drawImage(path, rx, 0.2*cm, width=rod_logo_w, height=rod_logo_h,
+                                 preserveAspectRatio=True, mask='auto')
+                rx += rod_logo_w + 0.2*cm
+            except Exception:
+                pass
+
     canvas.setFillColor(COR_CINZA)
     canvas.setFont("Helvetica", 7.5)
-    canvas.drawString(1.6*cm, 0.9*cm, "Liderança da Minoria — Plenário / Câmara dos Deputados")
-    canvas.drawRightString(w-1.6*cm, 0.9*cm, f"Página {doc.page}")
+    canvas.drawCentredString(w/2, 0.9*cm,
+        "Lideranças da Minoria e da Oposição — Plenário / Câmara dos Deputados")
+    canvas.drawRightString(w - 1.6*cm, 0.9*cm, f"Página {doc.page}")
     canvas.restoreState()
 
 class PautaDoc(BaseDocTemplate):
@@ -89,28 +129,39 @@ def _evento(id):
         d = r.json().get("dados", {})
         return {"descricao": d.get("descricao","Sessão Deliberativa"),
                 "dataHoraInicio": d.get("dataHoraInicio",""),
-                "local": d.get("localCamara",{}).get("nome","Plenário") if isinstance(d.get("localCamara"),dict) else "Plenário"}
+                "local": d.get("localCamara",{}).get("nome","Plenário")
+                         if isinstance(d.get("localCamara"),dict) else "Plenário"}
     except: return {"descricao":"Sessão Deliberativa","dataHoraInicio":"","local":"Plenário"}
 
 def _itens(id):
     try:
-        from app import fetch_pauta, pauta_cache
+        from app import fetch_pauta, pauta_cache, load_notas
         k = str(id)
-        if k in pauta_cache: return pauta_cache[k]['itens']
-        its, _ = fetch_pauta(id, force_reload=False)
-        return its if isinstance(its, list) else []
+        if k in pauta_cache:
+            its = pauta_cache[k]['itens']
+        else:
+            its, _ = fetch_pauta(id, force_reload=False)
+            its = its if isinstance(its, list) else []
+        # Reaplica notas do banco
+        notas = load_notas()
+        for item in its:
+            key = f"PROP_{item.get('id_principal','')}"
+            if key in notas:
+                item['resumo_materia'] = notas[key].get('resumo_materia', item.get('resumo_materia',''))
+                item['orientacao']     = notas[key].get('orientacao', item.get('orientacao',''))
+        return its
     except Exception as e:
         current_app.logger.error(f"Erro itens: {e}"); return []
 
 @exportar_bp.route("/<int:evento_id>")
 def exportar_pauta(evento_id):
     try:
-        ev = _evento(evento_id)
+        ev  = _evento(evento_id)
         its = _itens(evento_id)
         if not its: return "Nenhum item encontrado.", 200
 
-        sp = os.path.join(current_app.root_path, "static")
-        logos = [os.path.join(sp,"logo_minoria.png"), os.path.join(sp,"logo_oposicao.png")]
+        sp       = os.path.join(current_app.root_path, "static")
+        logos    = [os.path.join(sp,"logo_minoria.png"), os.path.join(sp,"logo_oposicao.png")]
 
         SS = getSampleStyleSheet()
         N  = ParagraphStyle("N",  parent=SS["Normal"], fontSize=9.5, leading=13, wordWrap="CJK")
@@ -122,21 +173,21 @@ def exportar_pauta(evento_id):
 
         buf = BytesIO()
         doc = PautaDoc(buf, pdf_title=f"Pauta_{evento_id}", pagesize=A4,
-                       leftMargin=1.8*cm, rightMargin=1.8*cm, topMargin=2.4*cm, bottomMargin=2.0*cm)
-        frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height-0.2*cm, id="n")
+                       leftMargin=1.8*cm, rightMargin=1.8*cm, topMargin=2.6*cm, bottomMargin=2.0*cm)
+        frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height - 0.2*cm, id="n")
 
         dt_str = ev.get("dataHoraInicio","")
         data_s, hora_s = _data(dt_str)
-        h1 = "Resumo da Pauta — Sessão Deliberativa do Plenário"
-        h2 = f"{data_s}  |  {hora_s}  |  {ev.get('local','')}"
+        local_s = ev.get("local","")
+        desc_s  = ev.get("descricao","Sessão Deliberativa")
 
         doc.addPageTemplates([PageTemplate(id="m", frames=[frame],
-            onPage=lambda c,d: _header_footer(c,d,logos,h1,h2))])
+            onPage=lambda c,d: _header_footer(c,d,logos,data_s,hora_s,local_s,desc_s))])
 
         story = []
         story.append(Spacer(1,4))
         story.append(Paragraph("Sessão Deliberativa — Plenário da Câmara dos Deputados", T))
-        story.append(Paragraph(f"<b>Data:</b> {data_s} &nbsp; <b>Hora:</b> {hora_s} &nbsp; <b>Local:</b> {ev.get('local','')}", S))
+        story.append(Paragraph(f"<b>Data:</b> {data_s} &nbsp; <b>Hora:</b> {hora_s} &nbsp; <b>Local:</b> {local_s}", S))
         story.append(Spacer(1,8))
         story.append(HRFlowable(width="100%", thickness=1, color=COR_VERDE))
         story.append(Spacer(1,8))
@@ -171,7 +222,7 @@ def exportar_pauta(evento_id):
         # Detalhes
         for it in its:
             ori = (it.get("orientacao") or "").upper()
-            cor_o, bg_o = CORES_ORI.get(ori, (COR_CINZA, COR_CINZA_CLARO))
+            cor_o, _ = CORES_ORI.get(ori, (COR_CINZA, COR_CINZA_CLARO))
 
             ih = Table([[
                 Paragraph(f"<b>Item {it.get('ordem','—')} — {it.get('projeto','')}</b>", H),
