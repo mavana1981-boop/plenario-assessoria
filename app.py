@@ -236,26 +236,33 @@ def buscar_ordem_oficial(evento_id):
 
         soup = BeautifulSoup(r.text, 'html.parser')
 
-        # Busca link do PDF de pauta/ordem do dia
+        # Busca link do PDF de pauta — prioriza texto exato "Pauta"
         pdf_url = None
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            texto = a.get_text(strip=True).lower()
-            if ('pdf' in href.lower() or 'pdf' in texto) and \
-               any(p in href.lower() or p in texto for p in ['pauta', 'ordem', 'inteiro', 'teor']):
-                pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-                break
 
-        # Fallback: busca qualquer link com codteor
-        if not pdf_url:
-            for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
+        # 1ª prioridade: link com texto exatamente "Pauta"
+        for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
+            texto_link = a.get_text(strip=True).lower()
+            if texto_link == 'pauta':
                 href = a['href']
                 pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-                # Força download como PDF
-                if '&tipo=PDF' not in pdf_url and '?tipo=PDF' not in pdf_url:
-                    sep = '&' if '?' in pdf_url else '?'
-                    pdf_url = pdf_url + sep + 'tipo=PDF'
+                sep = '&' if '?' in pdf_url else '?'
+                if 'tipo=PDF' not in pdf_url:
+                    pdf_url += sep + 'tipo=PDF'
+                logger.info(f"PDF de pauta encontrado (texto 'Pauta'): {pdf_url}")
                 break
+
+        # 2ª prioridade: link com texto contendo "pauta" ou "ordem"
+        if not pdf_url:
+            for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
+                texto_link = a.get_text(strip=True).lower()
+                if any(p in texto_link for p in ['pauta', 'ordem do dia']):
+                    href = a['href']
+                    pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                    sep = '&' if '?' in pdf_url else '?'
+                    if 'tipo=PDF' not in pdf_url:
+                        pdf_url += sep + 'tipo=PDF'
+                    logger.info(f"PDF de pauta encontrado (fallback): {pdf_url}")
+                    break
 
         if not pdf_url:
             logger.warning(f"PDF de pauta não encontrado para evento {evento_id}")
@@ -278,36 +285,62 @@ def buscar_ordem_oficial(evento_id):
             texto_total = '\n'.join(p.extract_text() or '' for p in pdf.pages)
 
         # Passo 4: Parseia números de ordem
-        # Padrão PDF: "1. Requerimento nº 1.180..." ou "2\nPROJETO DE LEI Nº 2.766"
-        padroes = [
-            # "1. Requerimento nº 1.180, de 2026"
-            r'^(\d+)[.\s]+(?:Requerimento|Projeto|Proposta|PEC|PLP|MPV|PDL)\s+(?:de Lei\s+)?(?:Complementar\s+)?[nNº°.]*\s*([\d.]+),?\s*de\s+(\d{4})',
-            # "1\nPROJETO DE LEI Nº 2.766, DE 2021"
-            r'^(\d+)\s*\n\s*(?:PROJETO DE LEI|PROPOSTA|REQUERIMENTO)\s+(?:COMPLEMENTAR\s+)?[Nº°]*\s*([\d.]+)[,\s]+(?:DE\s+)?(\d{4})',
-        ]
+        # Formato real do PDF (confirmado):
+        # "1. Requerimento nº 1.180, de 2026, dos Srs. Líderes..."
+        # "2\nPROJETO DE LEI Nº 2.766, DE 2021\n(DO SR. MARCO BERTAIOLLI)"
+        # "3\nPROJETO DE LEI Nº 3.278-A, DE 2021\n(DO SENADO FEDERAL)"
+        # "10\nPROJETO DE LEI COMPLEMENTAR Nº 21, DE 2026"
+        ordem = {}
 
-        for padrao in padroes:
-            for m in re.finditer(padrao, texto_total, re.MULTILINE | re.IGNORECASE):
-                num    = int(m.group(1))
-                numero = m.group(2).replace('.', '')
-                ano    = m.group(3)
-                # Determina sigla pelo contexto
-                trecho = texto_total[max(0, m.start()-5):m.end()+50].upper()
-                if 'REQUERIMENTO' in trecho:
-                    sigla = 'REQ'
-                elif 'COMPLEMENTAR' in trecho:
-                    sigla = 'PLP'
-                elif 'EMENDA À CONSTITUIÇÃO' in trecho or 'PEC' in trecho:
-                    sigla = 'PEC'
-                elif 'MEDIDA PROVISÓRIA' in trecho:
-                    sigla = 'MPV'
-                else:
-                    sigla = 'PL'
-                chave = _normalizar_codigo(f"{sigla} {numero}/{ano}")
+        # Padrão 1: Requerimento (minúsculas, com ponto)
+        # "1. Requerimento nº 1.180, de 2026"
+        for m in re.finditer(
+            r'^(\d+)\.\s+Requerimento\s+n[º°.]?\s*([\d.]+),\s*de\s+(\d{4})',
+            texto_total, re.MULTILINE
+        ):
+            num   = int(m.group(1))
+            num_p = m.group(2).replace('.', '').replace('\xa0', '')
+            ano   = m.group(3)
+            chave = _normalizar_codigo(f"REQ {num_p}/{ano}")
+            if chave not in ordem:
+                ordem[chave] = num
+                logger.info(f"  REQ extraído: {chave} → posição {num}")
+
+        # Padrão 2: PL / PLP / PEC (maiúsculas, número isolado na linha anterior)
+        # "2\nPROJETO DE LEI Nº 2.766, DE 2021"
+        # "10\nPROJETO DE LEI COMPLEMENTAR Nº 21, DE 2026"
+        for m in re.finditer(
+            r'^(\d+)\s*\nPROJETO\s+DE\s+LEI\s*(COMPLEMENTAR)?\s*N[Oo°ºÃ]?\s*([\d.\-]+)[,\s]+DE\s+(\d{4})',
+            texto_total, re.MULTILINE
+        ):
+            num   = int(m.group(1))
+            comp  = bool(m.group(2))
+            num_p = m.group(3).replace('.', '').replace('-A','').replace('-B','')
+            ano   = m.group(4)
+            sigla = 'PLP' if comp else 'PL'
+            chave = _normalizar_codigo(f"{sigla} {num_p}/{ano}")
+            if chave not in ordem:
+                ordem[chave] = num
+                logger.info(f"  {sigla} extraído: {chave} → posição {num}")
+
+        # Padrão 3: PEC
+        for m in re.finditer(
+            r'^(\d+)\s*\nPROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITU',
+            texto_total, re.MULTILINE
+        ):
+            # Busca número/ano na sequência
+            trecho = texto_total[m.end():m.end()+100]
+            mn = re.search(r'N[Oo°.]?\s*(\d+)[,\s]+DE\s+(\d{4})', trecho)
+            if mn:
+                num   = int(m.group(1))
+                num_p = mn.group(1)
+                ano   = mn.group(2)
+                chave = _normalizar_codigo(f"PEC {num_p}/{ano}")
                 if chave not in ordem:
                     ordem[chave] = num
+                    logger.info(f"  PEC extraído: {chave} → posição {num}")
 
-        logger.info(f"Ordem oficial extraída do PDF: {len(ordem)} itens — {dict(list(ordem.items())[:5])}")
+        logger.info(f"Ordem extraída do PDF evento {evento_id}: {len(ordem)} itens — {dict(list(ordem.items())[:5])}")
         return ordem
 
     except ImportError:
@@ -949,15 +982,23 @@ def debug_ordem(evento_id):
             'links': todos_links[:10]
         })
 
-        # Passo 3: tenta baixar o PDF
+        # Passo 3: busca PDF com texto "Pauta" primeiro
         pdf_url = None
         for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
-            href = a['href']
-            pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-            if '&tipo=PDF' not in pdf_url and '?tipo=PDF' not in pdf_url:
-                sep = '&' if '?' in pdf_url else '?'
-                pdf_url = pdf_url + sep + 'tipo=PDF'
-            break
+            if a.get_text(strip=True).lower() == 'pauta':
+                href = a['href']
+                pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                if 'tipo=PDF' not in pdf_url:
+                    pdf_url += ('&' if '?' in pdf_url else '?') + 'tipo=PDF'
+                break
+        # Fallback: primeiro codteor encontrado
+        if not pdf_url:
+            for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
+                href = a['href']
+                pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                if 'tipo=PDF' not in pdf_url:
+                    pdf_url += ('&' if '?' in pdf_url else '?') + 'tipo=PDF'
+                break
 
         resultado['etapas'].append({'etapa': '3_pdf_url', 'url': pdf_url})
 
@@ -978,22 +1019,31 @@ def debug_ordem(evento_id):
                     import pdfplumber
                     from io import BytesIO
                     with pdfplumber.open(BytesIO(rp.content)) as pdf:
-                        texto = '\n'.join(p.extract_text() or '' for p in pdf.pages[:3])
+                        texto = '\n'.join(p.extract_text() or '' for p in pdf.pages)
                     resultado['etapas'].append({
                         'etapa': '5_texto_pdf',
-                        'primeiros_500_chars': texto[:500],
+                        'primeiros_1000_chars': texto[:1000],
                         'total_chars': len(texto)
                     })
-                    # Testa regex
-                    matches = []
-                    for m in re.finditer(r'^(\d+)[.\s]+\S', texto, re.MULTILINE):
-                        matches.append(m.group(0)[:50])
+                    # Testa regex de REQ
+                    matches_req = []
+                    for m in re.finditer(r'^(\d+)\.\s+Requerimento\s+n[º°.]?\s*([\d.]+),\s*de\s+(\d{4})', texto, re.MULTILINE):
+                        matches_req.append(f"pos={m.group(1)} REQ {m.group(2)}/{m.group(3)}")
+                    # Testa regex de PL
+                    matches_pl = []
+                    for m in re.finditer(r'^(\d+)\s*\nPROJETO\s+DE\s+LEI\s*(COMPLEMENTAR)?\s*N[Oo°ºÃ]?\s*([\d.\-]+)[,\s]+DE\s+(\d{4})', texto, re.MULTILINE):
+                        matches_pl.append(f"pos={m.group(1)} {'PLP' if m.group(2) else 'PL'} {m.group(3)}/{m.group(4)}")
+                    # Linhas que começam com número
+                    linhas_num = [l for l in texto.split('\n') if re.match(r'^\d+[\.\s]', l.strip())]
                     resultado['etapas'].append({
-                        'etapa': '6_matches_numeracao',
-                        'matches': matches[:15]
+                        'etapa': '6_debug_regexes',
+                        'matches_req': matches_req,
+                        'matches_pl': matches_pl,
+                        'linhas_com_numero': linhas_num[:20]
                     })
                 except Exception as e:
-                    resultado['etapas'].append({'etapa': '5_erro_pdf', 'erro': str(e)})
+                    import traceback
+                    resultado['etapas'].append({'etapa': '5_erro_pdf', 'erro': str(e), 'tb': traceback.format_exc()[:500]})
 
         # Passo final: resultado da função buscar_ordem_oficial
         ordem = buscar_ordem_oficial(evento_id)
