@@ -570,6 +570,38 @@ def add_usuario():
     finally:
         conn.close()
 
+@app.route('/admin/reset_todas_senhas', methods=['POST'])
+@login_required
+def reset_todas_senhas():
+    if current_user.role != 'Admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    nova_hash = bcrypt.generate_password_hash('123').decode('utf-8')
+    conn = sqlite3.connect(DB)
+    c    = conn.cursor()
+    c.execute('UPDATE users SET password=?', (nova_hash,))
+    affected = c.rowcount
+    conn.commit()
+    conn.close()
+    return jsonify({'message': f'Senha 123 definida para {affected} usuários.'})
+
+@app.route('/admin/usuarios/reset_senha', methods=['POST'])
+@login_required
+def reset_senha():
+    if current_user.role != 'Admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    data       = request.get_json()
+    user_id    = data.get('user_id')
+    nova_senha = data.get('nova_senha', '').strip()
+    if not nova_senha or len(nova_senha) < 3:
+        return jsonify({'error': 'Senha deve ter ao menos 3 caracteres.'}), 400
+    nova_hash = bcrypt.generate_password_hash(nova_senha).decode('utf-8')
+    conn = sqlite3.connect(DB)
+    c    = conn.cursor()
+    c.execute('UPDATE users SET password=? WHERE id=?', (nova_hash, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Senha redefinida!'})
+
 @app.route('/admin/usuarios/update_categoria', methods=['POST'])
 @login_required
 def update_categoria():
