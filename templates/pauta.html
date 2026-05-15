@@ -961,10 +961,10 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
                 <th style="width:35px;">#</th>
                 <th style="width:130px;">Proposição</th>
                 <th>Ementa</th>
-                <th style="width:150px; background:#dceefb;">Orientação PL</th>
-                <th style="width:150px; background:#fde8d8;">Orientação NOVO</th>
-                <th style="width:150px; background:#fdeaea;">Orientação Oposição</th>
-                <th style="width:150px; background:#e8f5ee;">Orientação Minoria</th>
+                <th style="width:150px;">Orientação PL</th>
+                <th style="width:150px;">Orientação NOVO</th>
+                <th style="width:150px;">Orientação Oposição</th>
+                <th style="width:150px;">Orientação Minoria</th>
               </tr>
             </thead>
             <tbody id="tbody-orientacoes"></tbody>
@@ -1007,8 +1007,8 @@ const ORI_OPCOES = ['a favor', 'contra', 'obstrução', 'liberado', 'abstenção
 const ORI_CORES  = {
   'a favor':   '#d4edda',
   'contra':    '#f8d7da',
-  'obstrução': '#f8d7da',
-  'liberado':  '#fff3cd',
+  'obstrução': '#fff3cd',
+  'liberado':  '#cce5ff',
   'abstenção': '#e2e3e5',
   '—':         '#ffffff',
   '':          '#ffffff',
@@ -1026,10 +1026,10 @@ function grupoDoUsuario() {
 }
 
 const COLUNAS = [
-  { grupo: 'PL',       label: 'PL',       bg: '#dceefb' },
-  { grupo: 'NOVO',     label: 'NOVO',     bg: '#fde8d8' },
-  { grupo: 'oposicao', label: 'Oposição', bg: '#fdeaea' },
-  { grupo: 'minoria',  label: 'Minoria',  bg: '#e8f5ee' },
+  { grupo: 'PL',       label: 'PL'       },
+  { grupo: 'NOVO',     label: 'NOVO'     },
+  { grupo: 'oposicao', label: 'Oposição' },
+  { grupo: 'minoria',  label: 'Minoria'  },
 ];
 
 let oriData = {};
@@ -1075,9 +1075,10 @@ function renderizarTabela() {
       const corSelect  = ORI_CORES[salvo.orientacao] || '#fff';
 
       const td = document.createElement('td');
-      td.style.background = col.bg;
+      td.style.background = ORI_CORES[salvo.orientacao] || '#ffffff';
       td.style.padding = '5px';
       td.style.verticalAlign = 'top';
+      td.style.transition = 'background 0.2s';
 
       if (podeEditar) {
         td.innerHTML = `
@@ -1118,7 +1119,13 @@ function renderizarTabela() {
 }
 
 async function salvarOrientacao(id_principal, grupo, orientacao, selectEl) {
-  selectEl.style.background = ORI_CORES[orientacao] || '#fff';
+  const cor = ORI_CORES[orientacao] || '#ffffff';
+  // Muda fundo do select
+  selectEl.style.background = cor;
+  // Muda fundo da célula inteira
+  const td = selectEl.closest('td');
+  if (td) td.style.background = cor;
+
   const key = `${id_principal}|${grupo}`;
   if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
   oriData[key].orientacao = orientacao;
