@@ -570,6 +570,59 @@ def add_usuario():
     finally:
         conn.close()
 
+@app.route('/salvar_orientacoes', methods=['POST'])
+@login_required
+def salvar_orientacoes():
+    """Salva orientações por grupo (PL, NOVO, oposicao, minoria) para cada item."""
+    data      = request.get_json()
+    evento_id = data.get('evento_id')
+    orientacoes = data.get('orientacoes', [])  # [{id_principal, grupo, orientacao, comentario}]
+
+    conn = sqlite3.connect(DB)
+    c    = conn.cursor()
+
+    # Cria tabela se não existir
+    c.execute('''CREATE TABLE IF NOT EXISTS orientacoes_grupo (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        evento_id INTEGER,
+        id_principal TEXT,
+        grupo TEXT,
+        orientacao TEXT,
+        comentario TEXT,
+        saved_by TEXT,
+        saved_at TEXT,
+        UNIQUE(evento_id, id_principal, grupo))''')
+
+    now_str  = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    saved_by = current_user.display_name()
+
+    for ori in orientacoes:
+        c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
+                     (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                  (evento_id, ori.get('id_principal'), ori.get('grupo'),
+                   ori.get('orientacao'), ori.get('comentario', ''), saved_by, now_str))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Orientações salvas!'})
+
+@app.route('/get_orientacoes/<int:evento_id>')
+@login_required
+def get_orientacoes(evento_id):
+    """Retorna orientações salvas para um evento."""
+    conn = sqlite3.connect(DB)
+    c    = conn.cursor()
+    try:
+        c.execute('''SELECT id_principal, grupo, orientacao, comentario, saved_by, saved_at
+                     FROM orientacoes_grupo WHERE evento_id=?''', (evento_id,))
+        rows = c.fetchall()
+        result = [{'id_principal': r[0], 'grupo': r[1], 'orientacao': r[2],
+                   'comentario': r[3], 'saved_by': r[4], 'saved_at': r[5]} for r in rows]
+    except Exception:
+        result = []
+    conn.close()
+    return jsonify(result)
+
 @app.route('/admin/reset_todas_senhas', methods=['POST'])
 @login_required
 def reset_todas_senhas():
