@@ -968,114 +968,90 @@ def exportar_orientacoes_pdf():
 @app.route('/debug_ordem/<int:evento_id>')
 @login_required
 def debug_ordem(evento_id):
-    """Debug da extração de ordem oficial do PDF."""
+    """Debug da extração de ordem oficial do PDF por coordenadas."""
     resultado = {'evento_id': evento_id, 'etapas': []}
-
     try:
         from bs4 import BeautifulSoup
+        import pdfplumber
+        from io import BytesIO
 
-        # Passo 1: página do evento
-        url_evento = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
-        r = requests.get(url_evento, headers={
-            'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'
-        }, timeout=12)
-        resultado['etapas'].append({
-            'etapa': '1_pagina_evento',
-            'status': r.status_code,
-            'tamanho': len(r.text)
-        })
-
+        # 1. Página do evento
+        url = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}, timeout=12)
+        resultado['etapas'].append({'etapa': '1_evento', 'status': r.status_code})
         if not r.ok:
             return jsonify(resultado)
 
-        # Passo 2: busca links de PDF
-        from bs4 import BeautifulSoup
+        # 2. Acha PDF de Pauta
         soup = BeautifulSoup(r.text, 'html.parser')
-        todos_links = []
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            texto = a.get_text(strip=True)
-            if any(p in href.lower() or p in texto.lower()
-                   for p in ['pdf', 'pauta', 'ordem', 'inteiro', 'teor', 'codteor']):
-                todos_links.append({'href': href, 'texto': texto[:60]})
-
-        resultado['etapas'].append({
-            'etapa': '2_links_pdf_encontrados',
-            'total': len(todos_links),
-            'links': todos_links[:10]
-        })
-
-        # Passo 3: busca PDF com texto "Pauta" primeiro
         pdf_url = None
         for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
             if a.get_text(strip=True).lower() == 'pauta':
                 href = a['href']
-                pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-                if 'tipo=PDF' not in pdf_url:
-                    pdf_url += ('&' if '?' in pdf_url else '?') + 'tipo=PDF'
+                pdf_url = (href if href.startswith('http') else f"https://www.camara.leg.br{href}")
+                pdf_url += ('&' if '?' in pdf_url else '?') + 'tipo=PDF'
                 break
-        # Fallback: primeiro codteor encontrado
+        resultado['etapas'].append({'etapa': '2_pdf_url', 'url': pdf_url})
         if not pdf_url:
-            for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
-                href = a['href']
-                pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-                if 'tipo=PDF' not in pdf_url:
-                    pdf_url += ('&' if '?' in pdf_url else '?') + 'tipo=PDF'
-                break
+            return jsonify(resultado)
 
-        resultado['etapas'].append({'etapa': '3_pdf_url', 'url': pdf_url})
+        # 3. Baixa PDF
+        rp = requests.get(pdf_url, headers={'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}, timeout=20)
+        resultado['etapas'].append({'etapa': '3_download', 'status': rp.status_code, 'size': len(rp.content), 'ct': rp.headers.get('Content-Type','')})
+        if not rp.ok:
+            return jsonify(resultado)
 
-        if pdf_url:
-            rp = requests.get(pdf_url, headers={
-                'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'
-            }, timeout=20)
-            resultado['etapas'].append({
-                'etapa': '4_download_pdf',
-                'status': rp.status_code,
-                'content_type': rp.headers.get('Content-Type', ''),
-                'tamanho': len(rp.content)
-            })
-
-            # Tenta extrair texto
-            if rp.ok:
-                try:
-                    import pdfplumber
-                    from io import BytesIO
-                    with pdfplumber.open(BytesIO(rp.content)) as pdf:
-                        texto = '\n'.join(p.extract_text() or '' for p in pdf.pages)
-                    resultado['etapas'].append({
-                        'etapa': '5_texto_pdf',
-                        'primeiros_1000_chars': texto[:1000],
-                        'total_chars': len(texto)
+        # 4. Extrai palavras com coordenadas
+        numeros_centrais = []
+        page_width = 595.0
+        with pdfplumber.open(BytesIO(rp.content)) as pdf:
+            page_width = float(pdf.pages[0].width) if pdf.pages else 595.0
+            for pnum, page in enumerate(pdf.pages):
+                words = page.extract_words(x_tolerance=3, y_tolerance=3)
+                linhas = {}
+                for w in words:
+                    y = round(float(w['top']))
+                    linhas.setdefault(y, []).append(w)
+                ys = sorted(linhas.keys())
+                for i, y in enumerate(ys):
+                    ws = linhas[y]
+                    if len(ws) != 1:
+                        continue
+                    txt = ws[0]['text'].strip()
+                    if not re.match(r'^\d{1,2}$', txt):
+                        continue
+                    num = int(txt)
+                    if num < 1 or num > 30:
+                        continue
+                    x0 = float(ws[0]['x0'])
+                    x1 = float(ws[0]['x1'])
+                    centro = (x0 + x1) / 2
+                    dist_centro = abs(centro - page_width / 2)
+                    margem = page_width * 0.20
+                    # Próximas linhas
+                    prox = ys[i+1:i+6]
+                    bloco = ' '.join(' '.join(w['text'] for w in linhas[ny]) for ny in prox if ny in linhas)
+                    numeros_centrais.append({
+                        'num': num, 'page': pnum+1,
+                        'centro_x': round(centro, 1),
+                        'dist_centro': round(dist_centro, 1),
+                        'margem_max': round(margem, 1),
+                        'centralizado': dist_centro <= margem,
+                        'bloco_seguinte': bloco[:120]
                     })
-                    # Testa regex de REQ
-                    matches_req = []
-                    for m in re.finditer(r'^(\d+)\.\s+Requerimento\s+n[º°.]?\s*([\d.]+),\s*de\s+(\d{4})', texto, re.MULTILINE):
-                        matches_req.append(f"pos={m.group(1)} REQ {m.group(2)}/{m.group(3)}")
-                    # Testa regex de PL
-                    matches_pl = []
-                    for m in re.finditer(r'^(\d+)\s*\nPROJETO\s+DE\s+LEI\s*(COMPLEMENTAR)?\s*N[Oo°ºÃ]?\s*([\d.\-]+)[,\s]+DE\s+(\d{4})', texto, re.MULTILINE):
-                        matches_pl.append(f"pos={m.group(1)} {'PLP' if m.group(2) else 'PL'} {m.group(3)}/{m.group(4)}")
-                    # Linhas que começam com número
-                    linhas_num = [l for l in texto.split('\n') if re.match(r'^\d+[\.\s]', l.strip())]
-                    resultado['etapas'].append({
-                        'etapa': '6_debug_regexes',
-                        'matches_req': matches_req,
-                        'matches_pl': matches_pl,
-                        'linhas_com_numero': linhas_num[:20]
-                    })
-                except Exception as e:
-                    import traceback
-                    resultado['etapas'].append({'etapa': '5_erro_pdf', 'erro': str(e), 'tb': traceback.format_exc()[:500]})
 
-        # Passo final: resultado da função buscar_ordem_oficial
+        resultado['page_width'] = page_width
+        resultado['numeros_encontrados'] = numeros_centrais
+
+        # 5. Resultado final
         ordem = buscar_ordem_oficial(evento_id)
         resultado['ordem_extraida'] = ordem
-        resultado['total_itens_ordem'] = len(ordem)
+        resultado['total'] = len(ordem)
 
     except Exception as e:
-        resultado['erro_geral'] = str(e)
-
+        import traceback
+        resultado['erro'] = str(e)
+        resultado['tb'] = traceback.format_exc()[-500:]
     return jsonify(resultado)
 
 @app.route('/limpar_cache/<int:evento_id>', methods=['POST'])
