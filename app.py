@@ -329,6 +329,25 @@ def buscar_ordem_oficial(evento_id):
                             ordem[chave] = num
                             logger.info(f"  Item {num} (centralizado): {codigo} → {chave}")
 
+        # Fallback para REQ: formato "1. Requerimento nº X.XXX, de AAAA" (não centralizado)
+        if pdf_bytes := rp.content if 'rp' in dir() else None:
+            pass  # já processado acima
+
+        # Extrai REQ do texto bruto (formato com ponto, não centralizado)
+        with pdfplumber.open(BytesIO(rp.content)) as pdf:
+            texto_total = '\n'.join(p.extract_text() or '' for p in pdf.pages)
+        for m in re.finditer(
+            r'^(\d+)\.\s+Requerimento\s+n[º°oa.]?\s*([\d.]+),\s*de\s+(\d{4})',
+            texto_total, re.MULTILINE
+        ):
+            num   = int(m.group(1))
+            num_p = m.group(2).replace('.', '')
+            ano   = m.group(3)
+            chave = _normalizar_codigo(f"REQ {num_p}/{ano}")
+            if chave not in ordem and num <= 30:
+                ordem[chave] = num
+                logger.info(f"  Item {num} (REQ texto): REQ {num_p}/{ano} → {chave}")
+
         logger.info(f"Ordem extraída do PDF evento {evento_id}: {len(ordem)} itens — {dict(list(ordem.items())[:10])}")
         return ordem
 
@@ -366,30 +385,33 @@ def _buscar_ordem_html(evento_id):
 
 def _extrair_codigo_do_bloco(bloco):
     """
-    Extrai o código da proposição do bloco de texto após o número centralizado.
-    Ex: "PROJETO DE LEI Nº 2.766, DE 2021" → "PL 2766/2021"
-        "PROJETO DE LEI COMPLEMENTAR Nº 21, DE 2026" → "PLP 21/2026"
-        "Requerimento nº 1.180, de 2026" → "REQ 1180/2026"
-        "PROPOSTA DE EMENDA À CONSTITUIÇÃO Nº 5" → "PEC 5/XXXX"
+    Extrai código da proposição do bloco de texto após o número centralizado.
+    Padrão real do PDF: "PROJETO DE LEI Nº 2.766, DE 2021"
+                        "PROJETO DE LEI COMPLEMENTAR Nº 21, DE 2026"
+                        "Requerimento nº 1.180, de 2026"
     """
+    # Normaliza caracteres especiais
+    b = bloco.replace('\xa0', ' ').strip()
+
     padroes = [
-        # Requerimento
-        (r'Requerimento\s+n[º°.]?\s*([\d.]+),\s*de\s+(\d{4})', 'REQ'),
+        # Requerimento (minúsculas)
+        (r'Requerimento\s+n[º°oa.]?\s*([\d.]+),\s*de\s+(\d{4})', 'REQ'),
         # PL Complementar
-        (r'PROJETO\s+DE\s+LEI\s+COMPLEMENTAR\s+N[Oo°.]?\s*([\d.]+(?:-[A-Z])?)[,\s]+DE\s+(\d{4})', 'PLP'),
+        (r'PROJETO\s+DE\s+LEI\s+COMPLEMENTAR\s+N[º°oa.]?\s*([\d.]+(?:-[A-Z])?),?\s*DE\s+(\d{4})', 'PLP'),
         # PL simples
-        (r'PROJETO\s+DE\s+LEI\s+N[Oo°.]?\s*([\d.]+(?:-[A-Z])?)[,\s]+DE\s+(\d{4})', 'PL'),
+        (r'PROJETO\s+DE\s+LEI\s+N[º°oa.]?\s*([\d.]+(?:-[A-Z])?),?\s*DE\s+(\d{4})', 'PL'),
         # PEC
-        (r'PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O\s+N[Oo°.]?\s*(\d+)[,\s]+DE\s+(\d{4})', 'PEC'),
+        (r'PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O\s+N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'PEC'),
         # MPV
-        (r'MEDIDA\s+PROVIS[OÓ]RIA\s+N[Oo°.]?\s*(\d+)[,\s]+DE\s+(\d{4})', 'MPV'),
+        (r'MEDIDA\s+PROVIS[OÓ]RIA\s+N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'MPV'),
         # PDL
-        (r'PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO\s+N[Oo°.]?\s*(\d+)[,\s]+DE\s+(\d{4})', 'PDL'),
+        (r'PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO\s+N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'PDL'),
     ]
     for padrao, sigla in padroes:
-        m = re.search(padrao, bloco, re.IGNORECASE)
+        m = re.search(padrao, b, re.IGNORECASE)
         if m:
-            num = re.sub(r'-[A-Z]$', '', m.group(1).replace('.', ''))
+            # Remove pontos e sufixos -A, -B
+            num = re.sub(r'[-–][A-Z]$', '', m.group(1).replace('.', '').replace('\xa0',''))
             ano = m.group(2)
             return f"{sigla} {num}/{ano}"
     return None
