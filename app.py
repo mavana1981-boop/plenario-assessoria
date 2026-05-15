@@ -38,7 +38,14 @@ with app.app_context():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
-            role TEXT NOT NULL)''')
+            role TEXT NOT NULL,
+            categoria TEXT NOT NULL DEFAULT 'geral')''')
+        # Migração: adiciona coluna categoria se não existir
+        try:
+            _c.execute('ALTER TABLE users ADD COLUMN categoria TEXT NOT NULL DEFAULT "geral"')
+            _conn.commit()
+        except Exception:
+            pass
         _c.execute('''CREATE TABLE IF NOT EXISTS notas (
             item_key TEXT PRIMARY KEY,
             evento_id INTEGER,
@@ -55,15 +62,39 @@ with app.app_context():
             last_saved_by TEXT)''')
         _conn.commit()
         _bcrypt = _Bc()
-        for _u in [
-            ('admin',             _bcrypt.generate_password_hash('123').decode('utf-8'), 'Admin'),
-            ('assessor_plenario', _bcrypt.generate_password_hash('123').decode('utf-8'), 'Assessor Plenário'),
-            ('assessor',          _bcrypt.generate_password_hash('123').decode('utf-8'), 'Assessor'),
-        ]:
+        _pw123 = _bcrypt.generate_password_hash('123').decode('utf-8')
+
+        # usuarios padrão + novos — INSERT OR IGNORE (não sobrescreve existentes)
+        _usuarios = [
+            ('admin',             'Admin',            'admin'),
+            ('assessor_plenario', 'Assessor Plenário','minoria'),
+            ('assessor',          'Assessor',         'geral'),
+            ('PL',                'Orientação',       'restrito'),
+            ('NOVO',              'Orientação',       'restrito'),
+            ('marcelo.oliveira',  'Assessor Plenário','minoria'),
+        ]
+        for _un, _role, _cat in _usuarios:
             try:
-                _c.execute('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', _u)
+                _c.execute('INSERT INTO users (username, password, role, categoria) VALUES (?, ?, ?, ?)',
+                           (_un, _pw123, _role, _cat))
             except _sq.IntegrityError:
                 pass
+
+        # Redefine senha 123 para TODOS os usuários existentes
+        _c.execute('UPDATE users SET password=?', (_pw123,))
+
+        # Atualiza categorias dos usuários existentes
+        _cats = {
+            'vinicius.scheffel': 'oposicao', 'lianna.barros': 'oposicao',
+            'marcelo.uvara': 'oposicao', 'elyesley.silva': 'oposicao',
+            'pedro.chaves': 'oposicao',
+            'ulisses.branco': 'minoria', 'eduardo.borba': 'minoria',
+            'luisa.marreco': 'minoria', 'luiz.garibaldi': 'minoria',
+            'luiz.garibaldi': 'minoria', 'assessor_plenario': 'minoria',
+            'marcelo.oliveira': 'minoria',
+        }
+        for _un, _cat in _cats.items():
+            _c.execute('UPDATE users SET categoria=? WHERE username=?', (_cat, _un))
         _conn.commit()
         _conn.close()
         logger.info('✅ Banco inicializado.')
@@ -98,17 +129,23 @@ def load_notas():
 # LOGIN
 # --------------------------------------------------------------------------
 class User(UserMixin):
-    def __init__(self, id, username, role):
-        self.id = id; self.username = username; self.role = role
+    def __init__(self, id, username, role, categoria='geral'):
+        self.id = id; self.username = username; self.role = role; self.categoria = categoria
+
+    def display_name(self):
+        """Nome de exibição com categoria."""
+        if self.categoria in ('oposicao', 'minoria'):
+            return f"{self.username} - {self.categoria}"
+        return self.username
 
 @login_manager.user_loader
 def load_user(user_id):
     conn = sqlite3.connect(DB)
     c = conn.cursor()
-    c.execute('SELECT id, username, role FROM users WHERE id = ?', (user_id,))
+    c.execute('SELECT id, username, role, categoria FROM users WHERE id = ?', (user_id,))
     u = c.fetchone()
     conn.close()
-    return User(u[0], u[1], u[2]) if u else None
+    return User(u[0], u[1], u[2], u[3] if len(u) > 3 else 'geral') if u else None
 
 # --------------------------------------------------------------------------
 # EVENTOS & PAUTA
@@ -247,11 +284,11 @@ def login():
         password = request.form['password']
         conn = sqlite3.connect(DB)
         c = conn.cursor()
-        c.execute('SELECT id, username, password, role FROM users WHERE username = ?', (username,))
+        c.execute('SELECT id, username, password, role, categoria FROM users WHERE username = ?', (username,))
         u = c.fetchone()
         conn.close()
         if u and bcrypt.check_password_hash(u[2], password):
-            login_user(User(u[0], u[1], u[3]))
+            login_user(User(u[0], u[1], u[3], u[4] if len(u) > 4 else 'geral'))
             return redirect(url_for('selecionar_data'))
         flash('Usuário ou senha inválidos.', 'error')
     return render_template('login.html')
@@ -304,6 +341,7 @@ def view_pauta(evento_id):
 
     return render_template('pauta.html', evento_id=evento_id, evento=evento, itens=itens,
                            from_cache=from_cache, user_role=current_user.role,
+                           user_categoria=current_user.categoria,
                            last_updated=last_updated, last_saved_user=last_saved_user)
 
 @app.route('/save_item', methods=['POST'])
@@ -318,7 +356,7 @@ def save_item():
     try:
         prop_key = f"PROP_{id_principal}"
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        saved_by = current_user.username
+        saved_by = current_user.display_name()
         c.execute('INSERT OR REPLACE INTO notas (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                   (prop_key, evento_id, ordem, data.get('resumo_materia', ''), data.get('orientacao', ''), data.get('resumo_parecer', ''), saved_by, now_str))
         conn.commit()
@@ -468,6 +506,32 @@ def export_resumo(evento_id):
 from exportar_pauta import exportar_bp
 app.register_blueprint(exportar_bp)
 
+@app.route('/trocar-senha', methods=['GET', 'POST'])
+@login_required
+def trocar_senha():
+    if request.method == 'POST':
+        data         = request.get_json()
+        senha_atual  = data.get('senha_atual', '')
+        nova_senha   = data.get('nova_senha', '').strip()
+        confirma     = data.get('confirma', '').strip()
+        if not nova_senha or len(nova_senha) < 4:
+            return jsonify({'error': 'Nova senha deve ter ao menos 4 caracteres.'}), 400
+        if nova_senha != confirma:
+            return jsonify({'error': 'Nova senha e confirmação não coincidem.'}), 400
+        conn = sqlite3.connect(DB)
+        c    = conn.cursor()
+        c.execute('SELECT password FROM users WHERE id=?', (current_user.id,))
+        row = c.fetchone()
+        if not row or not bcrypt.check_password_hash(row[0], senha_atual):
+            conn.close()
+            return jsonify({'error': 'Senha atual incorreta.'}), 400
+        nova_hash = bcrypt.generate_password_hash(nova_senha).decode('utf-8')
+        c.execute('UPDATE users SET password=? WHERE id=?', (nova_hash, current_user.id))
+        conn.commit()
+        conn.close()
+        return jsonify({'message': 'Senha alterada com sucesso!'})
+    return render_template('trocar_senha.html')
+
 @app.route('/admin/usuarios')
 @login_required
 def admin_usuarios():
@@ -476,7 +540,7 @@ def admin_usuarios():
         return redirect(url_for('selecionar_data'))
     conn = sqlite3.connect(DB)
     c = conn.cursor()
-    c.execute('SELECT id, username, role FROM users')
+    c.execute('SELECT id, username, role, categoria FROM users ORDER BY id DESC')
     usuarios = c.fetchall()
     conn.close()
     return render_template('admin_usuarios.html', usuarios=usuarios)
@@ -486,23 +550,40 @@ def admin_usuarios():
 def add_usuario():
     if current_user.role != 'Admin':
         return jsonify({'error': 'Acesso negado'}), 403
-    data = request.get_json()
-    username = data.get('username', '').strip()
-    password = data.get('password', '').strip()
-    role     = data.get('role', 'Assessor').strip()
+    data      = request.get_json()
+    username  = data.get('username', '').strip()
+    password  = data.get('password', '').strip()
+    role      = data.get('role', 'Assessor').strip()
+    categoria = data.get('categoria', 'geral').strip()
     if not username or not password:
         return jsonify({'error': 'Usuário e senha obrigatórios'}), 400
     hashed = bcrypt.generate_password_hash(password).decode('utf-8')
     conn = sqlite3.connect(DB)
     c = conn.cursor()
     try:
-        c.execute('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', (username, hashed, role))
+        c.execute('INSERT INTO users (username, password, role, categoria) VALUES (?, ?, ?, ?)',
+                  (username, hashed, role, categoria))
         conn.commit()
         return jsonify({'message': 'Usuário criado!'})
     except sqlite3.IntegrityError:
         return jsonify({'error': 'Usuário já existe'}), 409
     finally:
         conn.close()
+
+@app.route('/admin/usuarios/update_categoria', methods=['POST'])
+@login_required
+def update_categoria():
+    if current_user.role != 'Admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    data      = request.get_json()
+    user_id   = data.get('user_id')
+    categoria = data.get('categoria', 'geral')
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    c.execute('UPDATE users SET categoria=? WHERE id=?', (categoria, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Categoria atualizada!'})
 
 @app.route('/admin/usuarios/delete/<int:user_id>', methods=['POST'])
 @login_required
