@@ -202,7 +202,12 @@
                 <strong>Situação:</strong> {{ item.situacao | default('N/D') }} &nbsp;&nbsp;
                 <strong>Relator:</strong> {{ item.relator }}
               </div>
-              <div class="item-info mt-1 text-muted fst-italic" style="font-size:0.82rem; width:100%; white-space:normal; word-break:break-word;">
+              <div class="item-info mt-1 text-muted fst-italic"
+                   style="font-size:0.82rem; width:100%; white-space:normal; word-break:break-word;"
+                   data-ementa-id="{{ item.id_principal }}"
+                   data-projeto="{{ item.projeto }}"
+                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
+                   data-autor="{{ item.autor | replace('"','&quot;') | truncate(80, True, '') }}">
                 {{ item.ementa }}
               </div>
             </div>
@@ -487,7 +492,21 @@
         });
       });
 
-      // Botão Buscar Destaques em tempo real
+      // Enriquece ementas nos cabeçalhos dos itens com complemento IA
+      (async () => {
+        const ementaEls = document.querySelectorAll('[data-ementa-id]');
+        for (const el of ementaEls) {
+          const idP    = el.dataset.ementaId;
+          const proj   = el.dataset.projeto || '';
+          const ementa = el.dataset.ementa  || '';
+          const autor  = el.dataset.autor   || '';
+          if (!ementa || ementa.length < 10) continue;
+          const enriquecida = await enriquecerEmenta(idP, proj, ementa, autor);
+          if (enriquecida && enriquecida !== ementa) {
+            el.textContent = enriquecida;
+          }
+        }
+      })();
       document.querySelectorAll('.btn-buscar-destaques').forEach(btn => {
         btn.addEventListener('click', async () => {
           const idProp  = btn.dataset.idProposicao;
@@ -693,6 +712,25 @@
     {% endfor %}
   ];
 
+  // Cache de ementas enriquecidas pela IA
+  const ementaCache = {};
+
+  async function enriquecerEmenta(idPrincipal, projeto, ementa, autor) {
+    if (ementaCache[idPrincipal]) return ementaCache[idPrincipal];
+    try {
+      const r = await fetch('/enriquecer_ementa', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({projeto, ementa, autor})
+      });
+      const j = await r.json();
+      ementaCache[idPrincipal] = j.ementa_enriquecida || ementa;
+    } catch(e) {
+      ementaCache[idPrincipal] = ementa;
+    }
+    return ementaCache[idPrincipal];
+  }
+
   let tipoAtual = null;
   let itemAtual = null;
 
@@ -702,27 +740,12 @@
     const obj = document.getElementById('input-objeto').value.trim();
     let msg = '';
 
-    // Verifica se ementa é vaga (menos de 50 chars ou começa com "Requer"/"Autoriza" sem muita info)
+    // Enriquece ementa com IA (original + complemento entre parênteses)
     let ementa = itemAtual.ementa;
-    const ementaVaga = ementa.length < 80 ||
-                       /^(requer|autoriza|dispõe|institui|altera)/i.test(ementa.trim()) && ementa.length < 150;
-
-    if (ementaVaga && tipoAtual !== 'iniciada' && tipoAtual !== 'encerrada_ordem' && tipoAtual !== 'encerrada_sessao') {
-      try {
-        const r = await fetch('/complementar_ementa', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            projeto: itemAtual.projeto,
-            ementa:  itemAtual.ementa,
-            autor:   itemAtual.autor
-          })
-        });
-        const j = await r.json();
-        if (j.complemento && j.complemento.length > 10) {
-          ementa = j.complemento;
-        }
-      } catch(e) { /* usa ementa original */ }
+    if (tipoAtual !== 'iniciada' && tipoAtual !== 'encerrada_ordem' && tipoAtual !== 'encerrada_sessao') {
+      ementa = await enriquecerEmenta(
+        itemAtual.id_principal, itemAtual.projeto, itemAtual.ementa, itemAtual.autor
+      );
     }
 
     if (tipoAtual === 'apresentacao') {
@@ -1069,12 +1092,14 @@ function renderizarTabela() {
   const meuGrupo = grupoDoUsuario();
   tbody.innerHTML = '';
 
-  ITENS_ORI.forEach(item => {
+  ITENS_ORI.forEach(async (item) => {
     const tr = document.createElement('tr');
+    // Enriquece ementa com IA
+    const ementaEnr = await enriquecerEmenta(item.id_principal, item.projeto, item.ementa, '');
     tr.innerHTML = `
       <td class="text-center fw-bold align-top">${item.ordem}</td>
       <td class="align-top"><strong>${item.projeto}</strong></td>
-      <td style="font-size:0.78rem; color:#333; min-width:200px;">${item.ementa}</td>`;
+      <td style="font-size:0.78rem; color:#333; min-width:200px;">${ementaEnr}</td>`;
 
     COLUNAS.forEach(col => {
       const key   = `${item.id_principal}|${col.grupo}`;
