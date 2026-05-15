@@ -180,7 +180,22 @@
           <div class="item-header" data-bs-toggle="collapse" data-bs-target="#col-{{ item.ordem }}-{{ item.id_principal }}" aria-expanded="false">
             <div>
               <i class="fas fa-file-alt text-primary me-2"></i>
-              Item {{ item.ordem }} — {{ item.projeto }} — <strong>Autor:</strong> {{ item.autor }}
+              {% set projeto_display = item.projeto %}
+              {% if 'REQ' in item.projeto or 'RQS' in item.projeto or 'RQU' in item.projeto %}
+                {% set ementa_upper = item.ementa | upper %}
+                {% set pl_ref = '' %}
+                {% for sigla in ['PL ', 'PEC ', 'PLP ', 'PLC ', 'MPV ', 'PDL '] %}
+                  {% if sigla in ementa_upper and pl_ref == '' %}
+                    {% set pos = ementa_upper.find(sigla) %}
+                    {% set trecho = item.ementa[pos:pos+20] %}
+                    {% set pl_ref = trecho.split(' ')[:2] | join(' ') | replace(',','') | replace(';','') | replace('.','') %}
+                  {% endif %}
+                {% endfor %}
+                {% if pl_ref %}
+                  {% set projeto_display = item.projeto ~ ' ao ' ~ pl_ref %}
+                {% endif %}
+              {% endif %}
+              Item {{ item.ordem }} — <strong>{{ projeto_display }}</strong> — <strong>Autor:</strong> {{ item.autor }}
               <span class="badge secao-badge 
                 {{ 'bg-primary' if item.status in ['Proposta em Análise', 'Propostas em Análise'] else 
                    'bg-info' if item.status in ['Proposta Prevista', 'Propostas Previstas'] else 
@@ -930,16 +945,16 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
         </div>
         <div id="ori-conteudo" style="display:none; overflow-x:auto;">
           <table class="table table-bordered table-sm mb-0" id="tabela-orientacoes"
-                 style="font-size:0.82rem; min-width:900px;">
+                 style="font-size:0.82rem; min-width:1000px;">
             <thead>
               <tr style="background:#f0f0f0;">
-                <th style="width:40px;">#</th>
-                <th style="width:140px;">Proposição</th>
-                <th>Apelido / Ementa</th>
-                <th style="width:130px; background:#dceefb;">Orientação PL</th>
-                <th style="width:130px; background:#fde8d8;">Orientação NOVO</th>
-                <th style="width:130px; background:#fdeaea;">Orientação Oposição</th>
-                <th style="width:130px; background:#e8f5ee;">Orientação Minoria</th>
+                <th style="width:35px;">#</th>
+                <th style="width:130px;">Proposição</th>
+                <th>Ementa</th>
+                <th style="width:150px; background:#dceefb;">Orientação PL</th>
+                <th style="width:150px; background:#fde8d8;">Orientação NOVO</th>
+                <th style="width:150px; background:#fdeaea;">Orientação Oposição</th>
+                <th style="width:150px; background:#e8f5ee;">Orientação Minoria</th>
               </tr>
             </thead>
             <tbody id="tbody-orientacoes"></tbody>
@@ -949,8 +964,11 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
       <div class="modal-footer">
         <small class="text-muted me-auto">
           <i class="fas fa-info-circle me-1"></i>
-          Cada grupo edita apenas sua própria coluna. Salvo automaticamente ao selecionar.
+          Cada grupo edita apenas sua coluna. Salvo automaticamente ao selecionar.
         </small>
+        <button class="btn btn-outline-danger btn-sm" onclick="exportarOrientacoesPDF()">
+          <i class="fas fa-file-pdf me-2"></i>Exportar PDF
+        </button>
         <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
       </div>
     </div>
@@ -964,14 +982,13 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
 const USER_CATEGORIA = "{{ user_categoria }}";
 const EVENTO_ID_ORI  = {{ evento_id|safe }};
 
-// Mapa de itens da pauta
 const ITENS_ORI = [
   {% for item in itens %}
   {
     ordem:        "{{ item.ordem }}",
     id_principal: "{{ item.id_principal }}",
     projeto:      "{{ item.projeto }}",
-    ementa:       "{{ item.ementa | replace('"','') | replace('\n',' ') | truncate(120, True, '...') }}"
+    ementa:       {{ item.ementa | tojson }}
   }{% if not loop.last %},{% endif %}
   {% endfor %}
 ];
@@ -984,20 +1001,18 @@ const ORI_CORES  = {
   'liberado':  '#fff3cd',
   'abstenção': '#e2e3e5',
   '—':         '#ffffff',
+  '':          '#ffffff',
 };
 
-// Qual grupo o usuário atual pode editar
 function grupoDoUsuario() {
+  const un = "{{ current_user.username }}".toUpperCase();
   if (USER_CATEGORIA === 'restrito') {
-    // Descobre pelo username qual grupo
-    const un = "{{ current_user.username }}".toUpperCase();
-    if (un === 'PL') return 'PL';
+    if (un === 'PL')   return 'PL';
     if (un === 'NOVO') return 'NOVO';
   }
   if (USER_CATEGORIA === 'oposicao') return 'oposicao';
   if (USER_CATEGORIA === 'minoria')  return 'minoria';
-  if (USER_CATEGORIA === 'admin')    return 'todos';
-  return 'todos'; // geral também vê tudo mas sem editar
+  return 'todos';
 }
 
 const COLUNAS = [
@@ -1007,19 +1022,18 @@ const COLUNAS = [
   { grupo: 'minoria',  label: 'Minoria',  bg: '#e8f5ee' },
 ];
 
-let oriData = {}; // { "id_principal|grupo": {orientacao, comentario} }
+let oriData = {};
 
 async function carregarOrientacoes() {
   document.getElementById('ori-loading').style.display = 'block';
   document.getElementById('ori-conteudo').style.display = 'none';
-
   try {
     const r = await fetch(`/get_orientacoes/${EVENTO_ID_ORI}`);
     const j = await r.json();
     oriData = {};
     j.forEach(o => {
       oriData[`${o.id_principal}|${o.grupo}`] = {
-        orientacao: o.orientacao,
+        orientacao: o.orientacao || '',
         comentario: o.comentario || ''
       };
     });
@@ -1033,54 +1047,57 @@ async function carregarOrientacoes() {
 }
 
 function renderizarTabela() {
-  const tbody     = document.getElementById('tbody-orientacoes');
-  const meuGrupo  = grupoDoUsuario();
+  const tbody    = document.getElementById('tbody-orientacoes');
+  const meuGrupo = grupoDoUsuario();
   tbody.innerHTML = '';
 
   ITENS_ORI.forEach(item => {
     const tr = document.createElement('tr');
-
-    // Número + proposição + ementa
     tr.innerHTML = `
-      <td class="text-center fw-bold">${item.ordem}</td>
-      <td><strong>${item.projeto}</strong></td>
-      <td style="font-size:0.78rem; color:#555;">${item.ementa}</td>`;
+      <td class="text-center fw-bold align-top">${item.ordem}</td>
+      <td class="align-top"><strong>${item.projeto}</strong></td>
+      <td style="font-size:0.78rem; color:#333; min-width:200px;">${item.ementa}</td>`;
 
-    // Colunas de orientação
     COLUNAS.forEach(col => {
-      const key    = `${item.id_principal}|${col.grupo}`;
-      const salvo  = oriData[key] || {orientacao: '', comentario: ''};
+      const key   = `${item.id_principal}|${col.grupo}`;
+      const salvo = oriData[key] || {orientacao: '', comentario: ''};
       const podeEditar = (meuGrupo === 'todos' || meuGrupo === col.grupo);
-      const corFundo = ORI_CORES[salvo.orientacao] || '#fff';
+      const corSelect  = ORI_CORES[salvo.orientacao] || '#fff';
 
       const td = document.createElement('td');
       td.style.background = col.bg;
-      td.style.padding = '4px';
+      td.style.padding = '5px';
+      td.style.verticalAlign = 'top';
 
       if (podeEditar) {
         td.innerHTML = `
           <select class="form-select form-select-sm mb-1"
-                  style="background:${corFundo}; font-size:0.78rem;"
-                  onchange="salvarOrientacao('${item.id_principal}','${col.grupo}',this.value, this)">
+                  style="background:${corSelect}; font-size:0.78rem; font-weight:600;"
+                  onchange="salvarOrientacao('${item.id_principal}','${col.grupo}',this.value,this)">
             <option value="">— selecione —</option>
             ${ORI_OPCOES.map(op =>
-              `<option value="${op}" ${salvo.orientacao === op ? 'selected' : ''}>${op}</option>`
+              `<option value="${op}" ${salvo.orientacao===op?'selected':''}>${op}</option>`
             ).join('')}
           </select>
           <textarea class="form-control form-control-sm"
-                    rows="1" placeholder="Comentário..."
-                    style="font-size:0.72rem; resize:none;"
+                    rows="4"
+                    placeholder="Comentário / justificativa..."
+                    style="font-size:0.75rem; resize:vertical; min-height:80px;"
                     onchange="salvarComentario('${item.id_principal}','${col.grupo}',this.value)"
                     >${salvo.comentario}</textarea>`;
       } else {
-        // Só leitura
-        const badgeCor = salvo.orientacao === 'a favor' ? 'success'
-                       : salvo.orientacao === 'contra' || salvo.orientacao === 'obstrução' ? 'danger'
-                       : salvo.orientacao === 'liberado' ? 'warning'
-                       : 'secondary';
+        const badgeCor = salvo.orientacao === 'a favor' ? '#1A6B3A'
+                       : salvo.orientacao === 'contra' || salvo.orientacao === 'obstrução' ? '#8B0000'
+                       : salvo.orientacao === 'liberado' ? '#7B5C00'
+                       : '#555';
         td.innerHTML = salvo.orientacao
-          ? `<span class="badge bg-${badgeCor} w-100">${salvo.orientacao}</span>
-             ${salvo.comentario ? `<div style="font-size:0.7rem;color:#555;margin-top:2px;">${salvo.comentario}</div>` : ''}`
+          ? `<div style="background:${ORI_CORES[salvo.orientacao]};border-radius:4px;padding:3px 6px;
+                         color:${badgeCor};font-weight:700;font-size:0.78rem;text-align:center;">
+               ${salvo.orientacao}
+             </div>
+             ${salvo.comentario
+               ? `<div style="font-size:0.72rem;color:#555;margin-top:4px;white-space:pre-wrap;">${salvo.comentario}</div>`
+               : ''}`
           : `<span class="text-muted" style="font-size:0.75rem;">—</span>`;
       }
       tr.appendChild(td);
@@ -1091,13 +1108,10 @@ function renderizarTabela() {
 }
 
 async function salvarOrientacao(id_principal, grupo, orientacao, selectEl) {
-  // Atualiza cor do select
   selectEl.style.background = ORI_CORES[orientacao] || '#fff';
-
   const key = `${id_principal}|${grupo}`;
   if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
   oriData[key].orientacao = orientacao;
-
   await _enviarOrientacao(id_principal, grupo);
 }
 
@@ -1105,7 +1119,6 @@ async function salvarComentario(id_principal, grupo, comentario) {
   const key = `${id_principal}|${grupo}`;
   if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
   oriData[key].comentario = comentario;
-
   await _enviarOrientacao(id_principal, grupo);
 }
 
@@ -1127,8 +1140,29 @@ async function _enviarOrientacao(id_principal, grupo) {
       })
     });
   } catch(e) {
-    console.error('Erro ao salvar orientação:', e);
+    console.error('Erro ao salvar:', e);
   }
+}
+
+async function exportarOrientacoesPDF() {
+  // Monta dados para enviar ao servidor
+  const payload = {
+    evento_id: EVENTO_ID_ORI,
+    itens: ITENS_ORI,
+    orientacoes: oriData,
+    colunas: COLUNAS.map(c => ({grupo: c.grupo, label: c.label}))
+  };
+  const r = await fetch('/exportar_orientacoes_pdf', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const blob = await r.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `orientacoes_plenario_${EVENTO_ID_ORI}.pdf`;
+  a.click();
 }
 </script>
 
