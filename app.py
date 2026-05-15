@@ -171,6 +171,34 @@ def fetch_eventos_por_data(data):
         logger.error(f"Erro ao buscar eventos: {e}")
         return []
 
+def extrair_ref_pl(projeto, ementa):
+    """
+    Se for REQ/RQS/RQU, extrai a referência ao PL/PEC/PLP/MPV da ementa
+    e retorna string como 'REQ 2569/2026 ao PL 1811/2026'.
+    """
+    siglas_req = ('REQ', 'RQS', 'RQU', 'REC')
+    if not any(projeto.upper().startswith(s) for s in siglas_req):
+        return projeto
+
+    # Padrões para encontrar referência na ementa
+    padroes = [
+        r'(PL|PEC|PLP|PLC|MPV|PDL|PLV|PDS|PRS)\s*[nNº°\.]*\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})',
+        r'(PL|PEC|PLP|PLC|MPV|PDL|PLV|PDS|PRS)\s+(\d+)/(\d{4})',
+        r'Projeto de Lei\s+[nNº°\.]*\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})',
+    ]
+    ementa_str = str(ementa or '')
+    for padrao in padroes:
+        m = re.search(padrao, ementa_str, re.IGNORECASE)
+        if m:
+            grupos = m.groups()
+            if len(grupos) == 3:
+                sigla, num, ano = grupos
+                return f"{projeto} ao {sigla.upper()} {num}/{ano}"
+            elif len(grupos) == 2:
+                num, ano = grupos
+                return f"{projeto} ao PL {num}/{ano}"
+    return projeto
+
 def fetch_pauta(evento_id, force_reload=False):
     now = datetime.now()
     cache_key = str(evento_id)
@@ -190,8 +218,12 @@ def fetch_pauta(evento_id, force_reload=False):
             row = c.fetchone()
             if row:
                 itens = json.loads(row[0])
-                # Reaplica notas salvas sobre o cache
+                # Reaplica notas e corrige título de REQ
                 for item in itens:
+                    # Garante projeto_display atualizado
+                    if 'projeto_original' not in item:
+                        item['projeto_original'] = item.get('projeto', '')
+                    item['projeto'] = extrair_ref_pl(item['projeto_original'], item.get('ementa', ''))
                     key = f"PROP_{item['id_principal']}"
                     if key in notas:
                         item['resumo_materia'] = notas[key].get('resumo_materia', item.get('resumo_materia', ''))
@@ -218,11 +250,15 @@ def fetch_pauta(evento_id, force_reload=False):
                 continue
             vistos.add(id_p)
             key = f"PROP_{id_p}"
+            codigo_original = item['codigo']
+            ementa_item     = item['ementa']
+            projeto_display = extrair_ref_pl(codigo_original, ementa_item)
             itens.append({
                 'ordem': str(ordem),
                 'id_principal': id_p,
-                'projeto': item['codigo'],
-                'ementa': item['ementa'],
+                'projeto': projeto_display,
+                'projeto_original': codigo_original,
+                'ementa': ementa_item,
                 'autor': item.get('autores', 'N/D'),
                 'relator': item.get('relator', 'Não atribuído'),
                 'situacao': item.get('situacao', 'N/D'),
@@ -687,6 +723,44 @@ def exportar_orientacoes_pdf():
     resp.headers["Content-Type"] = "application/pdf"
     resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
     return resp
+
+@app.route('/complementar_ementa', methods=['POST'])
+@login_required
+def complementar_ementa():
+    """Usa Groq para complementar ementa vaga com resumo do que se trata."""
+    data    = request.get_json()
+    projeto = data.get('projeto', '')
+    ementa  = data.get('ementa', '')
+    autor   = data.get('autor', '')
+
+    groq_key = os.environ.get('GROQ_API_KEY')
+    if not groq_key:
+        return jsonify({'complemento': ementa})
+
+    prompt = f"""Você é um especialista legislativo. Sobre a proposição abaixo, escreva em UMA frase direta (máximo 30 palavras) o que ela trata, de forma clara para leigos.
+Se a ementa já for clara, retorne ela resumida.
+
+Proposição: {projeto}
+Autor: {autor}
+Ementa: {ementa}
+
+Responda APENAS com a frase descritiva, sem introdução, sem aspas."""
+
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+            json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}],
+                  "max_tokens": 80, "temperature": 0.2},
+            timeout=10
+        )
+        if r.ok:
+            complemento = r.json()['choices'][0]['message']['content'].strip()
+            return jsonify({'complemento': complemento})
+    except Exception as e:
+        logger.warning(f"Erro ao complementar ementa: {e}")
+
+    return jsonify({'complemento': ementa})
 
 @app.route('/salvar_orientacoes', methods=['POST'])
 @login_required
