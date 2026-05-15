@@ -211,6 +211,81 @@ def extrair_ref_pl(projeto, ementa):
 
     return projeto_base
 
+def buscar_ordem_oficial(evento_id):
+    """
+    Scrapa a página de Ordem do Dia do Plenário para obter a sequência
+    oficial dos itens. Retorna dict {codigo_normalizado: posicao} ex:
+    {'PL 488/2019': 1, 'REQ 1180/2026': 2, ...}
+    Usa APENAS para reordenar — não altera dados dos itens.
+    """
+    url = f"https://www.camara.leg.br/internet/ordemdodia/ordemDetalheReuniaoPle.asp?codReuniao={evento_id}"
+    try:
+        r = requests.get(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36'
+        }, timeout=12)
+        if not r.ok:
+            logger.warning(f"Ordem do dia indisponível para evento {evento_id}: {r.status_code}")
+            return {}
+
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(r.text, 'html.parser')
+        texto = soup.get_text(separator='\n')
+
+        ordem = {}
+        posicao = 0
+
+        # Padrão: "N - SIGLA NUMERO/ANO" ou "N - SIGLA NUMERO/ANO => SIGLA2 NUMERO2/ANO2"
+        padrao = re.compile(
+            r'^(\d+)\s*[-–]\s*'           # número do item
+            r'([A-Z]+\s+\d+/\d{4})',      # código principal ex: REQ 1180/2026
+            re.MULTILINE
+        )
+        for m in padrao.finditer(texto):
+            num    = int(m.group(1))
+            codigo = m.group(2).strip()
+            # Normaliza: "REQ 1180/2026" -> chave comparável
+            ordem[_normalizar_codigo(codigo)] = num
+            posicao = max(posicao, num)
+
+        logger.info(f"Ordem oficial evento {evento_id}: {len(ordem)} itens encontrados")
+        return ordem
+
+    except Exception as e:
+        logger.warning(f"Erro ao buscar ordem oficial {evento_id}: {e}")
+        return {}
+
+def _normalizar_codigo(codigo):
+    """Normaliza código de proposição para comparação: 'PL 488/2019' -> 'PL488/2019'"""
+    return re.sub(r'\s+', '', codigo.upper().strip())
+
+def reordenar_por_ordem_oficial(itens, ordem_oficial):
+    """
+    Reordena lista de itens conforme ordem oficial do plenário.
+    Itens não encontrados na ordem oficial ficam no final.
+    """
+    if not ordem_oficial:
+        return itens
+
+    def posicao_item(item):
+        cod_norm = _normalizar_codigo(item.get('projeto_original') or item.get('projeto', ''))
+        # Tenta com código base (sem "ao PL X")
+        pos = ordem_oficial.get(cod_norm)
+        if pos is None:
+            # Tenta variações: com/sem espaços, siglas comuns
+            for k in ordem_oficial:
+                if k.startswith(cod_norm[:6]):  # Primeiros chars da sigla+número
+                    pos = ordem_oficial[k]
+                    break
+        return pos if pos is not None else 9999
+
+    itens_ordenados = sorted(itens, key=posicao_item)
+
+    # Atualiza campo 'ordem' conforme nova posição
+    for i, item in enumerate(itens_ordenados, start=1):
+        item['ordem'] = str(i)
+
+    return itens_ordenados
+
 def fetch_pauta(evento_id, force_reload=False):
     now = datetime.now()
     cache_key = str(evento_id)
@@ -285,6 +360,15 @@ def fetch_pauta(evento_id, force_reload=False):
             })
 
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # Reordena conforme ordem oficial da página de Ordem do Dia
+        ordem_oficial = buscar_ordem_oficial(evento_id)
+        if ordem_oficial:
+            itens = reordenar_por_ordem_oficial(itens, ordem_oficial)
+            logger.info(f"✅ Itens reordenados pela ordem oficial do plenário.")
+        else:
+            logger.info("⚠️ Ordem oficial não disponível — mantendo ordem da API.")
+
         c.execute('INSERT OR REPLACE INTO pauta_cache_db (evento_id, json_pauta, last_updated) VALUES (?, ?, ?)',
                   (evento_id, json.dumps(itens), now_str))
         conn.commit()
