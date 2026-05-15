@@ -173,31 +173,43 @@ def fetch_eventos_por_data(data):
 
 def extrair_ref_pl(projeto, ementa):
     """
-    Se for REQ/RQS/RQU, extrai a referência ao PL/PEC/PLP/MPV da ementa
-    e retorna string como 'REQ 2569/2026 ao PL 1811/2026'.
+    Se for REQ/RQS/RQU/REC, extrai a referência ao PL/PEC/PLP/MPV da ementa.
+    Retorna ex: 'REQ 2569/2026 ao PL 1811/2026'
+    É idempotente: se já contém ' ao ', não processa novamente.
     """
-    siglas_req = ('REQ', 'RQS', 'RQU', 'REC')
-    if not any(projeto.upper().startswith(s) for s in siglas_req):
+    # Pega só a parte base do projeto (antes de " ao " se já processado)
+    projeto_base = projeto.split(' ao ')[0].strip()
+
+    siglas_req = ('REQ', 'RQS', 'RQU', 'REC', 'REQ.', 'RQS.')
+    if not any(projeto_base.upper().startswith(s) for s in siglas_req):
         return projeto
 
-    # Padrões para encontrar referência na ementa
-    padroes = [
-        r'(PL|PEC|PLP|PLC|MPV|PDL|PLV|PDS|PRS)\s*[nNº°\.]*\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})',
-        r'(PL|PEC|PLP|PLC|MPV|PDL|PLV|PDS|PRS)\s+(\d+)/(\d{4})',
-        r'Projeto de Lei\s+[nNº°\.]*\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})',
-    ]
     ementa_str = str(ementa or '')
+
+    # Padrões do mais específico para o mais genérico
+    padroes = [
+        # "PL nº 1811/2026" ou "PL 1811/2026"
+        r'\b(PL|PEC|PLP|PLC|MPV|PDL|PLV|PDS|PRS)\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})\b',
+        # "PL 1811, de 2026"
+        r'\b(PL|PEC|PLP|PLC|MPV|PDL|PLV|PDS|PRS)\s+(\d+),?\s*de\s+(\d{4})\b',
+        # "Projeto de Lei nº 1811/2026"
+        r'Projeto de Lei\s+(?:Complementar\s+)?n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})',
+        # "PL1811/2026" sem espaço
+        r'\b(PL|PEC|PLP|PLC|MPV)\s*(\d{3,5})[/\-](\d{4})\b',
+    ]
+
     for padrao in padroes:
         m = re.search(padrao, ementa_str, re.IGNORECASE)
         if m:
             grupos = m.groups()
             if len(grupos) == 3:
                 sigla, num, ano = grupos
-                return f"{projeto} ao {sigla.upper()} {num}/{ano}"
+                return f"{projeto_base} ao {sigla.upper()} {num}/{ano}"
             elif len(grupos) == 2:
                 num, ano = grupos
-                return f"{projeto} ao PL {num}/{ano}"
-    return projeto
+                return f"{projeto_base} ao PL {num}/{ano}"
+
+    return projeto_base
 
 def fetch_pauta(evento_id, force_reload=False):
     now = datetime.now()
@@ -218,11 +230,12 @@ def fetch_pauta(evento_id, force_reload=False):
             row = c.fetchone()
             if row:
                 itens = json.loads(row[0])
-                # Reaplica notas e corrige título de REQ
+                # Reaplica notas e corrige título de REQ sempre
                 for item in itens:
-                    # Garante projeto_display atualizado
-                    if 'projeto_original' not in item:
-                        item['projeto_original'] = item.get('projeto', '')
+                    # projeto_original = código limpo (sem " ao PL...")
+                    orig = item.get('projeto_original') or item.get('projeto', '')
+                    # Garante que projeto_original seja o código base
+                    item['projeto_original'] = orig.split(' ao ')[0].strip()
                     item['projeto'] = extrair_ref_pl(item['projeto_original'], item.get('ementa', ''))
                     key = f"PROP_{item['id_principal']}"
                     if key in notas:
@@ -723,6 +736,46 @@ def exportar_orientacoes_pdf():
     resp.headers["Content-Type"] = "application/pdf"
     resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
     return resp
+
+@app.route('/enriquecer_ementa', methods=['POST'])
+@login_required
+def enriquecer_ementa():
+    """Retorna ementa original + complemento IA entre parênteses."""
+    data    = request.get_json()
+    projeto = data.get('projeto', '')
+    ementa  = data.get('ementa', '')
+    autor   = data.get('autor', '')
+
+    groq_key = os.environ.get('GROQ_API_KEY')
+    if not groq_key:
+        return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
+
+    prompt = f"""Você é um especialista legislativo. Escreva em UMA frase direta (máximo 25 palavras) \
+o que esta proposição trata, de forma clara para leigos. Seja objetivo e use linguagem simples.
+
+Proposição: {projeto}
+Autor: {autor}
+Ementa: {ementa}
+
+Responda APENAS com a frase descritiva, sem introdução, sem aspas, sem ponto final."""
+
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+            json={"model": "llama-3.3-70b-versatile",
+                  "messages": [{"role": "user", "content": prompt}],
+                  "max_tokens": 60, "temperature": 0.2},
+            timeout=10
+        )
+        if r.ok:
+            comp = r.json()['choices'][0]['message']['content'].strip().rstrip('.')
+            ementa_enriquecida = f"{ementa} ({comp})"
+            return jsonify({'ementa_enriquecida': ementa_enriquecida, 'complemento': comp})
+    except Exception as e:
+        logger.warning(f"Erro enriquecer ementa: {e}")
+
+    return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
 
 @app.route('/complementar_ementa', methods=['POST'])
 @login_required
