@@ -737,27 +737,74 @@ def exportar_orientacoes_pdf():
     resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
     return resp
 
+@app.route('/limpar_cache/<int:evento_id>', methods=['POST'])
+@login_required
+def limpar_cache(evento_id):
+    """Remove cache de um evento específico para forçar reprocessamento do título REQ."""
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    try:
+        c.execute('DELETE FROM pauta_cache_db WHERE evento_id = ?', (evento_id,))
+        conn.commit()
+        pauta_cache.pop(str(evento_id), None)
+        return jsonify({'message': f'Cache do evento {evento_id} limpo. Atualize a pauta.'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
 @app.route('/enriquecer_ementa', methods=['POST'])
 @login_required
 def enriquecer_ementa():
-    """Retorna ementa original + complemento IA entre parênteses."""
+    """Retorna ementa original + complemento IA entre parênteses SOMENTE se a ementa for vaga."""
     data    = request.get_json()
     projeto = data.get('projeto', '')
-    ementa  = data.get('ementa', '')
+    ementa  = data.get('ementa', '').strip()
     autor   = data.get('autor', '')
+
+    # Detecta se ementa é vaga — só menciona lei/artigo mas não explica o conteúdo
+    def ementa_e_vaga(txt):
+        txt_lower = txt.lower()
+        # Padrões de ementa vaga: só referencia lei sem explicar o que faz
+        padroes_vagos = [
+            r'^altera\s+.{0,80}lei\s+n[º°.]?\s*[\d\.]+.*?(e\s+dá\s+outras\s+providências\.?)?$',
+            r'^acrescenta\s+(artigo|inciso|parágrafo).{0,80}(e\s+dá\s+outras\s+providências\.?)?$',
+            r'^revoga\s+.{0,80}(e\s+dá\s+outras\s+providências\.?)?$',
+            r'^dá\s+nova\s+redação.{0,80}(e\s+dá\s+outras\s+providências\.?)?$',
+        ]
+        # Se ementa é muito curta ou só faz referência formal
+        if len(txt) < 60:
+            return True
+        for padrao in padroes_vagos:
+            if re.match(padrao, txt_lower, re.IGNORECASE | re.DOTALL):
+                return True
+        # Se contém palavras que explicam o conteúdo, não é vaga
+        palavras_explicativas = [
+            'para', 'visando', 'com o objetivo', 'com a finalidade',
+            'destinado', 'dispõe sobre', 'institui', 'cria', 'estabelece',
+            'regulamenta', 'define', 'determina', 'proíbe', 'autoriza a',
+            'concede', 'assegura', 'garante', 'prevê'
+        ]
+        if any(p in txt_lower for p in palavras_explicativas) and len(txt) > 80:
+            return False
+        return len(txt) < 120
+
+    if not ementa_e_vaga(ementa):
+        return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
 
     groq_key = os.environ.get('GROQ_API_KEY')
     if not groq_key:
         return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
 
-    prompt = f"""Você é um especialista legislativo. Escreva em UMA frase direta (máximo 25 palavras) \
-o que esta proposição trata, de forma clara para leigos. Seja objetivo e use linguagem simples.
+    prompt = f"""Você é um especialista legislativo. Em UMA frase direta (máximo 20 palavras), \
+explique de forma simples o que esta proposição trata na prática para os cidadãos.
+Não repita o número da lei. Use linguagem clara e objetiva.
 
 Proposição: {projeto}
 Autor: {autor}
 Ementa: {ementa}
 
-Responda APENAS com a frase descritiva, sem introdução, sem aspas, sem ponto final."""
+Responda APENAS com a frase explicativa, sem introdução, sem aspas, sem ponto final."""
 
     try:
         r = requests.post(
