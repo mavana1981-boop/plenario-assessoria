@@ -211,7 +211,7 @@ def extrair_ref_pl(projeto, ementa):
 
     return projeto_base
 
-def buscar_ordem_oficial(evento_id):
+def buscar_ordem_oficial(evento_id, data_evento=''):
     """
     Extrai a ordem oficial dos itens diretamente do PDF de pauta da sessão.
     
@@ -236,46 +236,65 @@ def buscar_ordem_oficial(evento_id):
 
         soup = BeautifulSoup(r.text, 'html.parser')
 
-        # Busca link do PDF de pauta — prioriza texto exato "Pauta"
+        # Busca PDF com texto "Pauta" — verifica se é da mesma data do evento
         pdf_url = None
+        from bs4 import BeautifulSoup
 
-        # 1ª prioridade: link com texto exatamente "Pauta"
+        # Busca data do evento para validar
+        data_evento = ''
+        try:
+            data_el = soup.find(string=re.compile(r'\d{2}/\d{2}/\d{4}'))
+            if data_el:
+                m_data = re.search(r'(\d{2})/(\d{2})/(\d{4})', str(data_el))
+                if m_data:
+                    data_evento = f"{m_data.group(3)}-{m_data.group(2)}-{m_data.group(1)}"
+        except Exception:
+            pass
+
+        # Coleta todos os links "Pauta" para testar
+        candidatos_pauta = []
         for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
-            texto_link = a.get_text(strip=True).lower()
-            if texto_link == 'pauta':
+            if a.get_text(strip=True).lower() == 'pauta':
                 href = a['href']
-                pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-                sep = '&' if '?' in pdf_url else '?'
-                if 'tipo=PDF' not in pdf_url:
-                    pdf_url += sep + 'tipo=PDF'
-                logger.info(f"PDF de pauta encontrado (texto 'Pauta'): {pdf_url}")
+                url_cand = (href if href.startswith('http') else f"https://www.camara.leg.br{href}")
+                url_cand += ('&' if '?' in url_cand else '?') + 'tipo=PDF'
+                candidatos_pauta.append(url_cand)
+
+        # Testa cada candidato — usa o que tiver a data correta do evento
+        for url_cand in candidatos_pauta:
+            rp_test = requests.get(url_cand, headers={
+                'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'
+            }, timeout=20)
+            if not rp_test.ok:
+                continue
+            # Extrai primeiras linhas do PDF para verificar data
+            try:
+                with pdfplumber.open(BytesIO(rp_test.content)) as pdf_test:
+                    texto_inicio = pdf_test.pages[0].extract_text() or ''
+                # Verifica se data do evento está no PDF
+                data_ok = True
+                if data_evento:
+                    ano_ev = data_evento[:4]
+                    mes_ev = data_evento[5:7].lstrip('0')
+                    dia_ev = data_evento[8:10].lstrip('0')
+                    # Verifica se dia E ano estão no texto do PDF
+                    data_ok = ano_ev in texto_inicio and (
+                        f"{dia_ev} de" in texto_inicio or
+                        f"Em {dia_ev} de" in texto_inicio or
+                        f"Em {dia_ev.zfill(2)} de" in texto_inicio
+                    )
+                if data_ok:
+                    pdf_url = url_cand
+                    rp = rp_test
+                    logger.info(f"PDF de pauta válido: {url_cand}")
+                    break
+            except Exception:
+                pdf_url = url_cand
+                rp = rp_test
                 break
 
-        # 2ª prioridade: link com texto contendo "pauta" ou "ordem"
         if not pdf_url:
-            for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
-                texto_link = a.get_text(strip=True).lower()
-                if any(p in texto_link for p in ['pauta', 'ordem do dia']):
-                    href = a['href']
-                    pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-                    sep = '&' if '?' in pdf_url else '?'
-                    if 'tipo=PDF' not in pdf_url:
-                        pdf_url += sep + 'tipo=PDF'
-                    logger.info(f"PDF de pauta encontrado (fallback): {pdf_url}")
-                    break
-
-        if not pdf_url:
-            logger.warning(f"PDF de pauta não encontrado para evento {evento_id}")
-            return {}
-
-        logger.info(f"PDF de pauta encontrado: {pdf_url}")
-
-        # Passo 2: Baixa o PDF
-        rp = requests.get(pdf_url, headers={
-            'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'
-        }, timeout=20)
-        if not rp.ok or 'pdf' not in rp.headers.get('Content-Type', '').lower():
-            logger.warning(f"PDF não retornado: {rp.status_code} {rp.headers.get('Content-Type','')}")
+            logger.warning(f"Nenhum PDF de pauta válido para evento {evento_id}")
             return {}
 
         # Passo 3: Extrai ordem usando posição X das palavras (números centralizados)
@@ -528,7 +547,20 @@ def fetch_pauta(evento_id, force_reload=False):
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         # Reordena conforme ordem oficial da página de Ordem do Dia
-        ordem_oficial = buscar_ordem_oficial(evento_id)
+        data_ev = ''
+        for item in itens:
+            if item.get('data_sessao'):
+                data_ev = item['data_sessao']
+                break
+        # Tenta pegar data do evento diretamente da API
+        try:
+            r_ev = requests.get(f"https://dadosabertos.camara.leg.br/api/v2/eventos/{evento_id}", timeout=8)
+            if r_ev.ok:
+                data_ev = r_ev.json().get('dados', {}).get('dataHoraInicio', '')[:10]
+        except Exception:
+            pass
+
+        ordem_oficial = buscar_ordem_oficial(evento_id, data_ev)
         if ordem_oficial:
             itens = reordenar_por_ordem_oficial(itens, ordem_oficial)
             logger.info(f"✅ Itens reordenados pela ordem oficial do plenário.")
