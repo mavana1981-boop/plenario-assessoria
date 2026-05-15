@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trocar Senha</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <style>
+    body { background: #f8f9fa; font-family: 'Segoe UI', sans-serif; }
+    .header { background: #fff; border-bottom: 3px solid #1A6B3A; padding: 0.6rem 0; }
+    .card-senha { max-width: 420px; margin: 3rem auto; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="container d-flex align-items-center justify-content-between">
+      <div class="d-flex align-items-center gap-3">
+        <img src="/static/logo_minoria.png" style="width:80px;height:50px;object-fit:contain;" onerror="this.style.display='none'">
+        <img src="/static/logo_oposicao.png" style="width:80px;height:50px;object-fit:contain;" onerror="this.style.display='none'">
+        <div>
+          <h1 style="font-size:1.1rem;font-weight:700;color:#1A6B3A;margin:0;">Trocar Senha</h1>
+          <p style="font-size:0.8rem;color:#555;margin:0;">{{ current_user.username }}</p>
+        </div>
+      </div>
+      <a href="{{ url_for('selecionar_data') }}" class="btn btn-outline-success btn-sm">
+        <i class="fas fa-arrow-left me-1"></i>Voltar
+      </a>
+    </div>
+  </div>
+
+  <div class="card-senha">
+    <div class="card shadow-sm">
+      <div class="card-header bg-success text-white">
+        <i class="fas fa-key me-2"></i>Alterar sua senha
+      </div>
+      <div class="card-body">
+        <div id="msg-area"></div>
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Senha atual</label>
+          <input type="password" id="senha_atual" class="form-control" placeholder="Digite sua senha atual">
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Nova senha</label>
+          <input type="password" id="nova_senha" class="form-control" placeholder="Mínimo 4 caracteres">
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-bold">Confirmar nova senha</label>
+          <input type="password" id="confirma" class="form-control" placeholder="Repita a nova senha">
+        </div>
+        <button class="btn btn-success w-100" onclick="trocarSenha()">
+          <i class="fas fa-save me-2"></i>Salvar nova senha
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function trocarSenha() {
+      const senha_atual = document.getElementById('senha_atual').value;
+      const nova_senha  = document.getElementById('nova_senha').value;
+      const confirma    = document.getElementById('confirma').value;
+      const msg         = document.getElementById('msg-area');
+
+      const r = await fetch('/trocar-senha', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({senha_atual, nova_senha, confirma})
+      });
+      const j = await r.json();
+      if (j.error) {
+        msg.innerHTML = `<div class="alert alert-danger py-2">${j.error}</div>`;
+      } else {
+        msg.innerHTML = `<div class="alert alert-success py-2">${j.message}</div>`;
+        document.getElementById('senha_atual').value = '';
+        document.getElementById('nova_senha').value  = '';
+        document.getElementById('confirma').value    = '';
+      }
+    }
+  </script>
+</body>
+</html>
