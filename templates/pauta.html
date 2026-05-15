@@ -189,22 +189,7 @@
           <div class="item-header" data-bs-toggle="collapse" data-bs-target="#col-{{ item.ordem }}-{{ item.id_principal }}" aria-expanded="false">
             <div>
               <i class="fas fa-file-alt text-primary me-2"></i>
-              {% set projeto_display = item.projeto %}
-              {% if 'REQ' in item.projeto or 'RQS' in item.projeto or 'RQU' in item.projeto %}
-                {% set ementa_upper = item.ementa | upper %}
-                {% set pl_ref = '' %}
-                {% for sigla in ['PL ', 'PEC ', 'PLP ', 'PLC ', 'MPV ', 'PDL '] %}
-                  {% if sigla in ementa_upper and pl_ref == '' %}
-                    {% set pos = ementa_upper.find(sigla) %}
-                    {% set trecho = item.ementa[pos:pos+20] %}
-                    {% set pl_ref = trecho.split(' ')[:2] | join(' ') | replace(',','') | replace(';','') | replace('.','') %}
-                  {% endif %}
-                {% endfor %}
-                {% if pl_ref %}
-                  {% set projeto_display = item.projeto ~ ' ao ' ~ pl_ref %}
-                {% endif %}
-              {% endif %}
-              Item {{ item.ordem }} — <strong>{{ projeto_display }}</strong> — <strong>Autor:</strong> {{ item.autor }}
+              Item {{ item.ordem }} — <strong>{{ item.projeto }}</strong> — <strong>Autor:</strong> {{ item.autor }}
               <span class="badge secao-badge 
                 {{ 'bg-primary' if item.status in ['Proposta em Análise', 'Propostas em Análise'] else 
                    'bg-info' if item.status in ['Proposta Prevista', 'Propostas Previstas'] else 
@@ -711,17 +696,40 @@
   let tipoAtual = null;
   let itemAtual = null;
 
-  function gerarMensagem() {
+  async function gerarMensagem() {
     if (!itemAtual || !tipoAtual) return;
     const ori = itemAtual.orientacao ? itemAtual.orientacao.toUpperCase() : 'A DEFINIR';
     const obj = document.getElementById('input-objeto').value.trim();
     let msg = '';
 
+    // Verifica se ementa é vaga (menos de 50 chars ou começa com "Requer"/"Autoriza" sem muita info)
+    let ementa = itemAtual.ementa;
+    const ementaVaga = ementa.length < 80 ||
+                       /^(requer|autoriza|dispõe|institui|altera)/i.test(ementa.trim()) && ementa.length < 150;
+
+    if (ementaVaga && tipoAtual !== 'iniciada' && tipoAtual !== 'encerrada_ordem' && tipoAtual !== 'encerrada_sessao') {
+      try {
+        const r = await fetch('/complementar_ementa', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            projeto: itemAtual.projeto,
+            ementa:  itemAtual.ementa,
+            autor:   itemAtual.autor
+          })
+        });
+        const j = await r.json();
+        if (j.complemento && j.complemento.length > 10) {
+          ementa = j.complemento;
+        }
+      } catch(e) { /* usa ementa original */ }
+    }
+
     if (tipoAtual === 'apresentacao') {
       msg =
 `*${itemAtual.projeto}*
 
-${itemAtual.ementa}
+${ementa}
 
 Autor: ${itemAtual.autor}
 Relator: ${itemAtual.relator}
@@ -742,7 +750,7 @@ Relator: ${itemAtual.relator}
 
 _${obj}_ - ${itemAtual.projeto}${linhaDescricao}
 
-${itemAtual.ementa}
+${ementa}
 
 *OPOSIÇÃO ORIENTA: ${ori}*`;
 
