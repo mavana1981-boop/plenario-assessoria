@@ -95,6 +95,9 @@
       <div class="text-end">
         <a href="{{ url_for('logout') }}" class="btn btn-outline-success btn-sm mb-1">
           <i class="fas fa-sign-out-alt me-2"></i>Sair
+        </a>
+        <a href="{{ url_for('trocar_senha') }}" class="btn btn-outline-secondary btn-sm mb-1 ms-1">
+          <i class="fas fa-key me-1"></i>Senha
         </a><br>
         <small style="color:#444;">{{ current_user.username }}</small>
         {% if current_user.is_authenticated and current_user.role == 'Admin' %}
