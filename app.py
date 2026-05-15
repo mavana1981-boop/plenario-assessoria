@@ -605,8 +605,8 @@ def exportar_orientacoes_pdf():
     CORES_ORI  = {
         'a favor':   colors.HexColor("#d4edda"),
         'contra':    colors.HexColor("#f8d7da"),
-        'obstrução': colors.HexColor("#f8d7da"),
-        'liberado':  colors.HexColor("#fff3cd"),
+        'obstrução': colors.HexColor("#fff3cd"),
+        'liberado':  colors.HexColor("#cce5ff"),
         'abstenção': colors.HexColor("#e2e3e5"),
         '—':         colors.white,
         '':          colors.white,
