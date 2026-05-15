@@ -278,69 +278,58 @@ def buscar_ordem_oficial(evento_id):
             logger.warning(f"PDF não retornado: {rp.status_code} {rp.headers.get('Content-Type','')}")
             return {}
 
-        # Passo 3: Extrai texto do PDF
+        # Passo 3: Extrai ordem usando posição X das palavras (números centralizados)
         from io import BytesIO
         ordem = {}
+
         with pdfplumber.open(BytesIO(rp.content)) as pdf:
-            texto_total = '\n'.join(p.extract_text() or '' for p in pdf.pages)
+            page_width = float(pdf.pages[0].width) if pdf.pages else 595.0
 
-        # Passo 4: Parseia números de ordem
-        # Formato real do PDF (confirmado):
-        # "1. Requerimento nº 1.180, de 2026, dos Srs. Líderes..."
-        # "2\nPROJETO DE LEI Nº 2.766, DE 2021\n(DO SR. MARCO BERTAIOLLI)"
-        # "3\nPROJETO DE LEI Nº 3.278-A, DE 2021\n(DO SENADO FEDERAL)"
-        # "10\nPROJETO DE LEI COMPLEMENTAR Nº 21, DE 2026"
-        ordem = {}
+            for page in pdf.pages:
+                words = page.extract_words(x_tolerance=3, y_tolerance=3)
 
-        # Padrão 1: Requerimento (minúsculas, com ponto)
-        # "1. Requerimento nº 1.180, de 2026"
-        for m in re.finditer(
-            r'^(\d+)\.\s+Requerimento\s+n[º°.]?\s*([\d.]+),\s*de\s+(\d{4})',
-            texto_total, re.MULTILINE
-        ):
-            num   = int(m.group(1))
-            num_p = m.group(2).replace('.', '').replace('\xa0', '')
-            ano   = m.group(3)
-            chave = _normalizar_codigo(f"REQ {num_p}/{ano}")
-            if chave not in ordem:
-                ordem[chave] = num
-                logger.info(f"  REQ extraído: {chave} → posição {num}")
+                # Agrupa palavras por linha (y próximo)
+                linhas = {}
+                for w in words:
+                    y = round(float(w['top']))
+                    linhas.setdefault(y, []).append(w)
 
-        # Padrão 2: PL / PLP / PEC (maiúsculas, número isolado na linha anterior)
-        # "2\nPROJETO DE LEI Nº 2.766, DE 2021"
-        # "10\nPROJETO DE LEI COMPLEMENTAR Nº 21, DE 2026"
-        for m in re.finditer(
-            r'^(\d+)\s*\nPROJETO\s+DE\s+LEI\s*(COMPLEMENTAR)?\s*N[Oo°ºÃ]?\s*([\d.\-]+)[,\s]+DE\s+(\d{4})',
-            texto_total, re.MULTILINE
-        ):
-            num   = int(m.group(1))
-            comp  = bool(m.group(2))
-            num_p = m.group(3).replace('.', '').replace('-A','').replace('-B','')
-            ano   = m.group(4)
-            sigla = 'PLP' if comp else 'PL'
-            chave = _normalizar_codigo(f"{sigla} {num_p}/{ano}")
-            if chave not in ordem:
-                ordem[chave] = num
-                logger.info(f"  {sigla} extraído: {chave} → posição {num}")
+                ys = sorted(linhas.keys())
 
-        # Padrão 3: PEC
-        for m in re.finditer(
-            r'^(\d+)\s*\nPROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITU',
-            texto_total, re.MULTILINE
-        ):
-            # Busca número/ano na sequência
-            trecho = texto_total[m.end():m.end()+100]
-            mn = re.search(r'N[Oo°.]?\s*(\d+)[,\s]+DE\s+(\d{4})', trecho)
-            if mn:
-                num   = int(m.group(1))
-                num_p = mn.group(1)
-                ano   = mn.group(2)
-                chave = _normalizar_codigo(f"PEC {num_p}/{ano}")
-                if chave not in ordem:
-                    ordem[chave] = num
-                    logger.info(f"  PEC extraído: {chave} → posição {num}")
+                for i, y in enumerate(ys):
+                    palavras = linhas[y]
+                    # Linha com palavra única que é número de 1-2 dígitos
+                    if len(palavras) != 1:
+                        continue
+                    txt = palavras[0]['text'].strip()
+                    if not re.match(r'^\d{1,2}$', txt):
+                        continue
+                    num = int(txt)
+                    if num < 1 or num > 30:
+                        continue
 
-        logger.info(f"Ordem extraída do PDF evento {evento_id}: {len(ordem)} itens — {dict(list(ordem.items())[:5])}")
+                    # Verifica se está centralizado (dentro de 20% do centro da página)
+                    x0 = float(palavras[0]['x0'])
+                    x1 = float(palavras[0]['x1'])
+                    centro = (x0 + x1) / 2
+                    if abs(centro - page_width / 2) > page_width * 0.20:
+                        continue
+
+                    # Pega texto das próximas 10 linhas para extrair o código
+                    prox_ys = ys[i+1:i+11]
+                    bloco = ' '.join(
+                        ' '.join(w['text'] for w in linhas[ny])
+                        for ny in prox_ys if ny in linhas
+                    )
+
+                    codigo = _extrair_codigo_do_bloco(bloco)
+                    if codigo:
+                        chave = _normalizar_codigo(codigo)
+                        if chave not in ordem:
+                            ordem[chave] = num
+                            logger.info(f"  Item {num} (centralizado): {codigo} → {chave}")
+
+        logger.info(f"Ordem extraída do PDF evento {evento_id}: {len(ordem)} itens — {dict(list(ordem.items())[:10])}")
         return ordem
 
     except ImportError:
@@ -375,9 +364,43 @@ def _buscar_ordem_html(evento_id):
         logger.warning(f"Fallback HTML também falhou: {e}")
         return {}
 
+def _extrair_codigo_do_bloco(bloco):
+    """
+    Extrai o código da proposição do bloco de texto após o número centralizado.
+    Ex: "PROJETO DE LEI Nº 2.766, DE 2021" → "PL 2766/2021"
+        "PROJETO DE LEI COMPLEMENTAR Nº 21, DE 2026" → "PLP 21/2026"
+        "Requerimento nº 1.180, de 2026" → "REQ 1180/2026"
+        "PROPOSTA DE EMENDA À CONSTITUIÇÃO Nº 5" → "PEC 5/XXXX"
+    """
+    padroes = [
+        # Requerimento
+        (r'Requerimento\s+n[º°.]?\s*([\d.]+),\s*de\s+(\d{4})', 'REQ'),
+        # PL Complementar
+        (r'PROJETO\s+DE\s+LEI\s+COMPLEMENTAR\s+N[Oo°.]?\s*([\d.]+(?:-[A-Z])?)[,\s]+DE\s+(\d{4})', 'PLP'),
+        # PL simples
+        (r'PROJETO\s+DE\s+LEI\s+N[Oo°.]?\s*([\d.]+(?:-[A-Z])?)[,\s]+DE\s+(\d{4})', 'PL'),
+        # PEC
+        (r'PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O\s+N[Oo°.]?\s*(\d+)[,\s]+DE\s+(\d{4})', 'PEC'),
+        # MPV
+        (r'MEDIDA\s+PROVIS[OÓ]RIA\s+N[Oo°.]?\s*(\d+)[,\s]+DE\s+(\d{4})', 'MPV'),
+        # PDL
+        (r'PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO\s+N[Oo°.]?\s*(\d+)[,\s]+DE\s+(\d{4})', 'PDL'),
+    ]
+    for padrao, sigla in padroes:
+        m = re.search(padrao, bloco, re.IGNORECASE)
+        if m:
+            num = re.sub(r'-[A-Z]$', '', m.group(1).replace('.', ''))
+            ano = m.group(2)
+            return f"{sigla} {num}/{ano}"
+    return None
+
 def _normalizar_codigo(codigo):
-    """Normaliza código de proposição para comparação: 'PL 488/2019' -> 'PL488/2019'"""
-    return re.sub(r'\s+', '', codigo.upper().strip())
+    """Normaliza código para comparação: remove espaços, pontos, sufixos -A/-B."""
+    c = codigo.upper().strip()
+    c = re.sub(r'\s+', '', c)      # remove espaços
+    c = re.sub(r'\.', '', c)        # remove pontos
+    c = re.sub(r'-[A-Z](?=/)','', c)  # remove -A, -B antes da /
+    return c
 
 def reordenar_por_ordem_oficial(itens, ordem_oficial):
     """
