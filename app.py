@@ -909,6 +909,102 @@ def exportar_orientacoes_pdf():
     resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
     return resp
 
+@app.route('/debug_ordem/<int:evento_id>')
+@login_required
+def debug_ordem(evento_id):
+    """Debug da extração de ordem oficial do PDF."""
+    resultado = {'evento_id': evento_id, 'etapas': []}
+
+    try:
+        from bs4 import BeautifulSoup
+
+        # Passo 1: página do evento
+        url_evento = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
+        r = requests.get(url_evento, headers={
+            'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'
+        }, timeout=12)
+        resultado['etapas'].append({
+            'etapa': '1_pagina_evento',
+            'status': r.status_code,
+            'tamanho': len(r.text)
+        })
+
+        if not r.ok:
+            return jsonify(resultado)
+
+        # Passo 2: busca links de PDF
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(r.text, 'html.parser')
+        todos_links = []
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            texto = a.get_text(strip=True)
+            if any(p in href.lower() or p in texto.lower()
+                   for p in ['pdf', 'pauta', 'ordem', 'inteiro', 'teor', 'codteor']):
+                todos_links.append({'href': href, 'texto': texto[:60]})
+
+        resultado['etapas'].append({
+            'etapa': '2_links_pdf_encontrados',
+            'total': len(todos_links),
+            'links': todos_links[:10]
+        })
+
+        # Passo 3: tenta baixar o PDF
+        pdf_url = None
+        for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
+            href = a['href']
+            pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+            if '&tipo=PDF' not in pdf_url and '?tipo=PDF' not in pdf_url:
+                sep = '&' if '?' in pdf_url else '?'
+                pdf_url = pdf_url + sep + 'tipo=PDF'
+            break
+
+        resultado['etapas'].append({'etapa': '3_pdf_url', 'url': pdf_url})
+
+        if pdf_url:
+            rp = requests.get(pdf_url, headers={
+                'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'
+            }, timeout=20)
+            resultado['etapas'].append({
+                'etapa': '4_download_pdf',
+                'status': rp.status_code,
+                'content_type': rp.headers.get('Content-Type', ''),
+                'tamanho': len(rp.content)
+            })
+
+            # Tenta extrair texto
+            if rp.ok:
+                try:
+                    import pdfplumber
+                    from io import BytesIO
+                    with pdfplumber.open(BytesIO(rp.content)) as pdf:
+                        texto = '\n'.join(p.extract_text() or '' for p in pdf.pages[:3])
+                    resultado['etapas'].append({
+                        'etapa': '5_texto_pdf',
+                        'primeiros_500_chars': texto[:500],
+                        'total_chars': len(texto)
+                    })
+                    # Testa regex
+                    matches = []
+                    for m in re.finditer(r'^(\d+)[.\s]+\S', texto, re.MULTILINE):
+                        matches.append(m.group(0)[:50])
+                    resultado['etapas'].append({
+                        'etapa': '6_matches_numeracao',
+                        'matches': matches[:15]
+                    })
+                except Exception as e:
+                    resultado['etapas'].append({'etapa': '5_erro_pdf', 'erro': str(e)})
+
+        # Passo final: resultado da função buscar_ordem_oficial
+        ordem = buscar_ordem_oficial(evento_id)
+        resultado['ordem_extraida'] = ordem
+        resultado['total_itens_ordem'] = len(ordem)
+
+    except Exception as e:
+        resultado['erro_geral'] = str(e)
+
+    return jsonify(resultado)
+
 @app.route('/limpar_cache/<int:evento_id>', methods=['POST'])
 @login_required
 def limpar_cache(evento_id):
