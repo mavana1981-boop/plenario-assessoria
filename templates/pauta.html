@@ -148,6 +148,11 @@
       <a href="{{ url_for('view_pauta', evento_id=evento_id, force_reload='true') }}" class="btn btn-outline-primary btn-sm mb-3 ms-2">
         <i class="fas fa-sync-alt me-2"></i>Atualizar Pauta
       </a>
+      <button class="btn btn-outline-warning btn-sm mb-3 ms-2"
+              onclick="limparCacheEvento({{ evento_id }})"
+              title="Remove cache e reprocessa títulos de REQ">
+        <i class="fas fa-broom me-1"></i>Limpar Cache
+      </button>
       <a href="{{ url_for('export_resumo', evento_id=evento_id) }}"
         class="btn btn-outline-success btn-sm mb-3 ms-2" target="_blank" rel="noopener">
         <i class="fas fa-file-export me-2"></i>Exportar resumo
@@ -967,6 +972,16 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
     document.getElementById('input-objeto').value = '';
     document.querySelectorAll('.btn-tipo-msg, .btn-objeto').forEach(b => b.classList.remove('active'));
   });
+  async function limparCacheEvento(eventoId) {
+    if (!confirm('Limpar cache desta pauta? Os títulos de REQ serão reprocessados ao atualizar.')) return;
+    const r = await fetch(`/limpar_cache/${eventoId}`, {method: 'POST'});
+    const j = await r.json();
+    if (j.message) {
+      window.location.href = window.location.href.split('?')[0] + '?force_reload=true';
+    } else {
+      alert(j.error || 'Erro ao limpar cache');
+    }
+  }
 </script>
 
 <!-- MODAL ORIENTAÇÕES -->
