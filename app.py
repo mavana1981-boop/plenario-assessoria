@@ -213,45 +213,133 @@ def extrair_ref_pl(projeto, ementa):
 
 def buscar_ordem_oficial(evento_id):
     """
-    Scrapa a página de Ordem do Dia do Plenário para obter a sequência
-    oficial dos itens. Retorna dict {codigo_normalizado: posicao} ex:
-    {'PL 488/2019': 1, 'REQ 1180/2026': 2, ...}
-    Usa APENAS para reordenar — não altera dados dos itens.
+    Extrai a ordem oficial dos itens diretamente do PDF de pauta da sessão.
+    
+    Estratégia:
+    1. Acessa a página do evento para encontrar o link do PDF de pauta
+    2. Baixa o PDF e extrai o texto
+    3. Parseia os números de ordem (padrão: "N. Proposição...")
+    4. Retorna dict {codigo_normalizado: posicao}
     """
-    url = f"https://www.camara.leg.br/internet/ordemdodia/ordemDetalheReuniaoPle.asp?codReuniao={evento_id}"
     try:
-        r = requests.get(url, headers={
+        from bs4 import BeautifulSoup
+        import pdfplumber
+
+        # Passo 1: Busca o PDF de pauta na página do evento
+        url_evento = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
+        r = requests.get(url_evento, headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36'
         }, timeout=12)
         if not r.ok:
-            logger.warning(f"Ordem do dia indisponível para evento {evento_id}: {r.status_code}")
+            logger.warning(f"Evento {evento_id} inacessível: {r.status_code}")
             return {}
 
-        from bs4 import BeautifulSoup
         soup = BeautifulSoup(r.text, 'html.parser')
-        texto = soup.get_text(separator='\n')
 
+        # Busca link do PDF de pauta/ordem do dia
+        pdf_url = None
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            texto = a.get_text(strip=True).lower()
+            if ('pdf' in href.lower() or 'pdf' in texto) and \
+               any(p in href.lower() or p in texto for p in ['pauta', 'ordem', 'inteiro', 'teor']):
+                pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                break
+
+        # Fallback: busca qualquer link com codteor
+        if not pdf_url:
+            for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
+                href = a['href']
+                pdf_url = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                # Força download como PDF
+                if '&tipo=PDF' not in pdf_url and '?tipo=PDF' not in pdf_url:
+                    sep = '&' if '?' in pdf_url else '?'
+                    pdf_url = pdf_url + sep + 'tipo=PDF'
+                break
+
+        if not pdf_url:
+            logger.warning(f"PDF de pauta não encontrado para evento {evento_id}")
+            return {}
+
+        logger.info(f"PDF de pauta encontrado: {pdf_url}")
+
+        # Passo 2: Baixa o PDF
+        rp = requests.get(pdf_url, headers={
+            'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'
+        }, timeout=20)
+        if not rp.ok or 'pdf' not in rp.headers.get('Content-Type', '').lower():
+            logger.warning(f"PDF não retornado: {rp.status_code} {rp.headers.get('Content-Type','')}")
+            return {}
+
+        # Passo 3: Extrai texto do PDF
+        from io import BytesIO
         ordem = {}
-        posicao = 0
+        with pdfplumber.open(BytesIO(rp.content)) as pdf:
+            texto_total = '\n'.join(p.extract_text() or '' for p in pdf.pages)
 
-        # Padrão: "N - SIGLA NUMERO/ANO" ou "N - SIGLA NUMERO/ANO => SIGLA2 NUMERO2/ANO2"
-        padrao = re.compile(
-            r'^(\d+)\s*[-–]\s*'           # número do item
-            r'([A-Z]+\s+\d+/\d{4})',      # código principal ex: REQ 1180/2026
-            re.MULTILINE
-        )
-        for m in padrao.finditer(texto):
-            num    = int(m.group(1))
-            codigo = m.group(2).strip()
-            # Normaliza: "REQ 1180/2026" -> chave comparável
-            ordem[_normalizar_codigo(codigo)] = num
-            posicao = max(posicao, num)
+        # Passo 4: Parseia números de ordem
+        # Padrão PDF: "1. Requerimento nº 1.180..." ou "2\nPROJETO DE LEI Nº 2.766"
+        padroes = [
+            # "1. Requerimento nº 1.180, de 2026"
+            r'^(\d+)[.\s]+(?:Requerimento|Projeto|Proposta|PEC|PLP|MPV|PDL)\s+(?:de Lei\s+)?(?:Complementar\s+)?[nNº°.]*\s*([\d.]+),?\s*de\s+(\d{4})',
+            # "1\nPROJETO DE LEI Nº 2.766, DE 2021"
+            r'^(\d+)\s*\n\s*(?:PROJETO DE LEI|PROPOSTA|REQUERIMENTO)\s+(?:COMPLEMENTAR\s+)?[Nº°]*\s*([\d.]+)[,\s]+(?:DE\s+)?(\d{4})',
+        ]
 
-        logger.info(f"Ordem oficial evento {evento_id}: {len(ordem)} itens encontrados")
+        for padrao in padroes:
+            for m in re.finditer(padrao, texto_total, re.MULTILINE | re.IGNORECASE):
+                num    = int(m.group(1))
+                numero = m.group(2).replace('.', '')
+                ano    = m.group(3)
+                # Determina sigla pelo contexto
+                trecho = texto_total[max(0, m.start()-5):m.end()+50].upper()
+                if 'REQUERIMENTO' in trecho:
+                    sigla = 'REQ'
+                elif 'COMPLEMENTAR' in trecho:
+                    sigla = 'PLP'
+                elif 'EMENDA À CONSTITUIÇÃO' in trecho or 'PEC' in trecho:
+                    sigla = 'PEC'
+                elif 'MEDIDA PROVISÓRIA' in trecho:
+                    sigla = 'MPV'
+                else:
+                    sigla = 'PL'
+                chave = _normalizar_codigo(f"{sigla} {numero}/{ano}")
+                if chave not in ordem:
+                    ordem[chave] = num
+
+        logger.info(f"Ordem oficial extraída do PDF: {len(ordem)} itens — {dict(list(ordem.items())[:5])}")
         return ordem
 
+    except ImportError:
+        logger.warning("pdfplumber não disponível — usando fallback HTML")
+        return _buscar_ordem_html(evento_id)
     except Exception as e:
-        logger.warning(f"Erro ao buscar ordem oficial {evento_id}: {e}")
+        logger.warning(f"Erro ao extrair ordem do PDF {evento_id}: {e}")
+        return _buscar_ordem_html(evento_id)
+
+def _buscar_ordem_html(evento_id):
+    """Fallback: tenta extrair ordem da página HTML de ordem do dia."""
+    url = f"https://www.camara.leg.br/internet/ordemdodia/ordemDetalheReuniaoPle.asp?codReuniao={evento_id}"
+    try:
+        from bs4 import BeautifulSoup
+        r = requests.get(url, headers={
+            'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'
+        }, timeout=12)
+        if not r.ok:
+            return {}
+        soup = BeautifulSoup(r.text, 'html.parser')
+        texto = soup.get_text(separator='\n')
+        ordem = {}
+        padrao = re.compile(r'^(\d+)\s*[-–]\s*([A-Z]+\s+\d+/\d{4})', re.MULTILINE)
+        for m in padrao.finditer(texto):
+            num    = int(m.group(1))
+            chave  = _normalizar_codigo(m.group(2))
+            if chave not in ordem:
+                ordem[chave] = num
+        logger.info(f"Ordem via HTML: {len(ordem)} itens")
+        return ordem
+    except Exception as e:
+        logger.warning(f"Fallback HTML também falhou: {e}")
         return {}
 
 def _normalizar_codigo(codigo):
