@@ -140,7 +140,8 @@
       </div>
     </div>
 
-    <div class="d-flex align-items-center">
+    <div class="d-flex align-items-center flex-wrap">
+      {% if user_categoria != 'restrito' %}
       <a href="{{ url_for('selecionar_data') }}" class="btn btn-outline-secondary btn-sm mb-3">
         <i class="fas fa-arrow-left me-2"></i>Voltar para Seleção de Data
       </a>
@@ -156,11 +157,12 @@
         style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
         <i class="fas fa-image me-2"></i>Gerar Infográfico
       </a>
-      <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-mensagens-plenario"
+      <button class="btn btn-sm mb-3 ms-2 text-white"
         style="background:linear-gradient(135deg,#25D366,#128C7E);"
         data-bs-toggle="modal" data-bs-target="#modalMensagens">
         <i class="fab fa-whatsapp me-2"></i>Mensagens Plenário
       </button>
+      {% endif %}
       <button class="btn btn-sm mb-3 ms-2 text-white"
         style="background:linear-gradient(135deg,#B8860B,#DAA520);"
         data-bs-toggle="modal" data-bs-target="#modalOrientacoes"
@@ -168,11 +170,18 @@
         <i class="fas fa-vote-yea me-2"></i>Orientações
       </button>
 
-      {% if last_updated %}
+      {% if last_updated and user_categoria != 'restrito' %}
       <small class="last-updated mb-3">Atualizado em {{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</small>
       {% endif %}
     </div>
 
+    {% if user_categoria == 'restrito' %}
+    <div class="alert alert-info mt-2">
+      <i class="fas fa-info-circle me-2"></i>
+      Seu acesso é restrito ao registro de <strong>Orientações</strong>.
+      Clique no botão acima para registrar a orientação do seu grupo.
+    </div>
+    {% else %}
     {% if itens %}
       {% for item in itens %}
       <div class="item-card mb-3">
@@ -391,6 +400,7 @@
     {% else %}
       <div class="alert alert-info">Nenhum item encontrado na pauta para este evento.</div>
     {% endif %}
+    {% endif %} {# fecha o else do restrito #}
   </div>
 
     <!-- JS -->
