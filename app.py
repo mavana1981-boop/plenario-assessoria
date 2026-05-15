@@ -291,7 +291,18 @@ def login():
             login_user(User(u[0], u[1], u[3], u[4] if len(u) > 4 else 'geral'))
             return redirect(url_for('selecionar_data'))
         flash('Usuário ou senha inválidos.', 'error')
-    return render_template('login.html')
+
+    # Busca lista de usuários para o dropdown
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    try:
+        c.execute('SELECT username, categoria FROM users ORDER BY username')
+        usuarios = [{'username': r[0], 'categoria': r[1]} for r in c.fetchall()]
+    except Exception:
+        usuarios = []
+    finally:
+        conn.close()
+    return render_template('login.html', usuarios=usuarios)
 
 @app.route('/logout')
 @login_required
