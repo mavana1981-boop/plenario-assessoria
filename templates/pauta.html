@@ -161,6 +161,12 @@
         data-bs-toggle="modal" data-bs-target="#modalMensagens">
         <i class="fab fa-whatsapp me-2"></i>Mensagens Plenário
       </button>
+      <button class="btn btn-sm mb-3 ms-2 text-white"
+        style="background:linear-gradient(135deg,#B8860B,#DAA520);"
+        data-bs-toggle="modal" data-bs-target="#modalOrientacoes"
+        onclick="carregarOrientacoes()">
+        <i class="fas fa-vote-yea me-2"></i>Orientações
+      </button>
 
       {% if last_updated %}
       <small class="last-updated mb-3">Atualizado em {{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</small>
@@ -905,6 +911,225 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
     document.getElementById('input-objeto').value = '';
     document.querySelectorAll('.btn-tipo-msg, .btn-objeto').forEach(b => b.classList.remove('active'));
   });
+</script>
+
+<!-- MODAL ORIENTAÇÕES -->
+<div class="modal fade" id="modalOrientacoes" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#B8860B,#DAA520);">
+        <h5 class="modal-title text-white">
+          <i class="fas fa-vote-yea me-2"></i>Orientações — Pauta do Plenário
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div id="ori-loading" class="text-center p-4">
+          <div class="spinner-border text-warning"></div>
+          <p class="mt-2">Carregando orientações...</p>
+        </div>
+        <div id="ori-conteudo" style="display:none; overflow-x:auto;">
+          <table class="table table-bordered table-sm mb-0" id="tabela-orientacoes"
+                 style="font-size:0.82rem; min-width:900px;">
+            <thead>
+              <tr style="background:#f0f0f0;">
+                <th style="width:40px;">#</th>
+                <th style="width:140px;">Proposição</th>
+                <th>Apelido / Ementa</th>
+                <th style="width:130px; background:#dceefb;">Orientação PL</th>
+                <th style="width:130px; background:#fde8d8;">Orientação NOVO</th>
+                <th style="width:130px; background:#fdeaea;">Orientação Oposição</th>
+                <th style="width:130px; background:#e8f5ee;">Orientação Minoria</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-orientacoes"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <small class="text-muted me-auto">
+          <i class="fas fa-info-circle me-1"></i>
+          Cada grupo edita apenas sua própria coluna. Salvo automaticamente ao selecionar.
+        </small>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// MODAL ORIENTAÇÕES
+// ============================================================
+const USER_CATEGORIA = "{{ user_categoria }}";
+const EVENTO_ID_ORI  = {{ evento_id|safe }};
+
+// Mapa de itens da pauta
+const ITENS_ORI = [
+  {% for item in itens %}
+  {
+    ordem:        "{{ item.ordem }}",
+    id_principal: "{{ item.id_principal }}",
+    projeto:      "{{ item.projeto }}",
+    ementa:       "{{ item.ementa | replace('"','') | replace('\n',' ') | truncate(120, True, '...') }}"
+  }{% if not loop.last %},{% endif %}
+  {% endfor %}
+];
+
+const ORI_OPCOES = ['a favor', 'contra', 'obstrução', 'liberado', 'abstenção', '—'];
+const ORI_CORES  = {
+  'a favor':   '#d4edda',
+  'contra':    '#f8d7da',
+  'obstrução': '#f8d7da',
+  'liberado':  '#fff3cd',
+  'abstenção': '#e2e3e5',
+  '—':         '#ffffff',
+};
+
+// Qual grupo o usuário atual pode editar
+function grupoDoUsuario() {
+  if (USER_CATEGORIA === 'restrito') {
+    // Descobre pelo username qual grupo
+    const un = "{{ current_user.username }}".toUpperCase();
+    if (un === 'PL') return 'PL';
+    if (un === 'NOVO') return 'NOVO';
+  }
+  if (USER_CATEGORIA === 'oposicao') return 'oposicao';
+  if (USER_CATEGORIA === 'minoria')  return 'minoria';
+  if (USER_CATEGORIA === 'admin')    return 'todos';
+  return 'todos'; // geral também vê tudo mas sem editar
+}
+
+const COLUNAS = [
+  { grupo: 'PL',       label: 'PL',       bg: '#dceefb' },
+  { grupo: 'NOVO',     label: 'NOVO',     bg: '#fde8d8' },
+  { grupo: 'oposicao', label: 'Oposição', bg: '#fdeaea' },
+  { grupo: 'minoria',  label: 'Minoria',  bg: '#e8f5ee' },
+];
+
+let oriData = {}; // { "id_principal|grupo": {orientacao, comentario} }
+
+async function carregarOrientacoes() {
+  document.getElementById('ori-loading').style.display = 'block';
+  document.getElementById('ori-conteudo').style.display = 'none';
+
+  try {
+    const r = await fetch(`/get_orientacoes/${EVENTO_ID_ORI}`);
+    const j = await r.json();
+    oriData = {};
+    j.forEach(o => {
+      oriData[`${o.id_principal}|${o.grupo}`] = {
+        orientacao: o.orientacao,
+        comentario: o.comentario || ''
+      };
+    });
+    renderizarTabela();
+  } catch(e) {
+    alert('Erro ao carregar orientações: ' + e.message);
+  } finally {
+    document.getElementById('ori-loading').style.display = 'none';
+    document.getElementById('ori-conteudo').style.display = 'block';
+  }
+}
+
+function renderizarTabela() {
+  const tbody     = document.getElementById('tbody-orientacoes');
+  const meuGrupo  = grupoDoUsuario();
+  tbody.innerHTML = '';
+
+  ITENS_ORI.forEach(item => {
+    const tr = document.createElement('tr');
+
+    // Número + proposição + ementa
+    tr.innerHTML = `
+      <td class="text-center fw-bold">${item.ordem}</td>
+      <td><strong>${item.projeto}</strong></td>
+      <td style="font-size:0.78rem; color:#555;">${item.ementa}</td>`;
+
+    // Colunas de orientação
+    COLUNAS.forEach(col => {
+      const key    = `${item.id_principal}|${col.grupo}`;
+      const salvo  = oriData[key] || {orientacao: '', comentario: ''};
+      const podeEditar = (meuGrupo === 'todos' || meuGrupo === col.grupo);
+      const corFundo = ORI_CORES[salvo.orientacao] || '#fff';
+
+      const td = document.createElement('td');
+      td.style.background = col.bg;
+      td.style.padding = '4px';
+
+      if (podeEditar) {
+        td.innerHTML = `
+          <select class="form-select form-select-sm mb-1"
+                  style="background:${corFundo}; font-size:0.78rem;"
+                  onchange="salvarOrientacao('${item.id_principal}','${col.grupo}',this.value, this)">
+            <option value="">— selecione —</option>
+            ${ORI_OPCOES.map(op =>
+              `<option value="${op}" ${salvo.orientacao === op ? 'selected' : ''}>${op}</option>`
+            ).join('')}
+          </select>
+          <textarea class="form-control form-control-sm"
+                    rows="1" placeholder="Comentário..."
+                    style="font-size:0.72rem; resize:none;"
+                    onchange="salvarComentario('${item.id_principal}','${col.grupo}',this.value)"
+                    >${salvo.comentario}</textarea>`;
+      } else {
+        // Só leitura
+        const badgeCor = salvo.orientacao === 'a favor' ? 'success'
+                       : salvo.orientacao === 'contra' || salvo.orientacao === 'obstrução' ? 'danger'
+                       : salvo.orientacao === 'liberado' ? 'warning'
+                       : 'secondary';
+        td.innerHTML = salvo.orientacao
+          ? `<span class="badge bg-${badgeCor} w-100">${salvo.orientacao}</span>
+             ${salvo.comentario ? `<div style="font-size:0.7rem;color:#555;margin-top:2px;">${salvo.comentario}</div>` : ''}`
+          : `<span class="text-muted" style="font-size:0.75rem;">—</span>`;
+      }
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+}
+
+async function salvarOrientacao(id_principal, grupo, orientacao, selectEl) {
+  // Atualiza cor do select
+  selectEl.style.background = ORI_CORES[orientacao] || '#fff';
+
+  const key = `${id_principal}|${grupo}`;
+  if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
+  oriData[key].orientacao = orientacao;
+
+  await _enviarOrientacao(id_principal, grupo);
+}
+
+async function salvarComentario(id_principal, grupo, comentario) {
+  const key = `${id_principal}|${grupo}`;
+  if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
+  oriData[key].comentario = comentario;
+
+  await _enviarOrientacao(id_principal, grupo);
+}
+
+async function _enviarOrientacao(id_principal, grupo) {
+  const key   = `${id_principal}|${grupo}`;
+  const dados = oriData[key] || {};
+  try {
+    await fetch('/salvar_orientacoes', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        evento_id: EVENTO_ID_ORI,
+        orientacoes: [{
+          id_principal,
+          grupo,
+          orientacao: dados.orientacao || '',
+          comentario: dados.comentario || ''
+        }]
+      })
+    });
+  } catch(e) {
+    console.error('Erro ao salvar orientação:', e);
+  }
+}
 </script>
 
 </body>
