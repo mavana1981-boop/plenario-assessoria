@@ -570,6 +570,113 @@ def add_usuario():
     finally:
         conn.close()
 
+@app.route('/exportar_orientacoes_pdf', methods=['POST'])
+@login_required
+def exportar_orientacoes_pdf():
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                     Table, TableStyle, HRFlowable)
+
+    data     = request.get_json()
+    itens    = data.get('itens', [])
+    ori_data = data.get('orientacoes', {})
+    colunas  = data.get('colunas', [])
+    evento_id = data.get('evento_id', '')
+
+    COR_VERDE  = colors.HexColor("#1A6B3A")
+    COR_AZUL   = colors.HexColor("#0D2B5E")
+    COR_CINZA  = colors.HexColor("#555555")
+    CORES_ORI  = {
+        'a favor':   colors.HexColor("#d4edda"),
+        'contra':    colors.HexColor("#f8d7da"),
+        'obstrução': colors.HexColor("#f8d7da"),
+        'liberado':  colors.HexColor("#fff3cd"),
+        'abstenção': colors.HexColor("#e2e3e5"),
+        '—':         colors.white,
+        '':          colors.white,
+    }
+    CORES_COL = {
+        'PL':       colors.HexColor("#dceefb"),
+        'NOVO':     colors.HexColor("#fde8d8"),
+        'oposicao': colors.HexColor("#fdeaea"),
+        'minoria':  colors.HexColor("#e8f5ee"),
+    }
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+                            leftMargin=1.2*cm, rightMargin=1.2*cm,
+                            topMargin=1.5*cm, bottomMargin=1.5*cm)
+    SS = getSampleStyleSheet()
+    T  = ParagraphStyle("T", parent=SS["Title"],  fontSize=12, textColor=COR_VERDE, alignment=TA_CENTER)
+    S  = ParagraphStyle("S", parent=SS["Normal"], fontSize=7.5, textColor=COR_CINZA, leading=10, wordWrap='CJK')
+    SB = ParagraphStyle("SB",parent=SS["Normal"], fontSize=7.5, fontName="Helvetica-Bold", leading=10, wordWrap='CJK')
+    SC = ParagraphStyle("SC",parent=SS["Normal"], fontSize=7,   textColor=COR_CINZA, leading=9, wordWrap='CJK', alignment=TA_CENTER)
+
+    story = []
+    story.append(Paragraph("Quadro de Orientações — Plenário da Câmara dos Deputados", T))
+    story.append(Paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ParagraphStyle("sm", parent=SS["Normal"], fontSize=7.5, textColor=COR_CINZA, alignment=TA_CENTER)))
+    story.append(Spacer(1, 8))
+    story.append(HRFlowable(width="100%", thickness=1, color=COR_VERDE))
+    story.append(Spacer(1, 6))
+
+    # Cabeçalho
+    header = [Paragraph("<b>#</b>", SC),
+              Paragraph("<b>Proposição</b>", SC),
+              Paragraph("<b>Ementa</b>", SC)]
+    for col in colunas:
+        header.append(Paragraph(f"<b>{col['label']}</b>", SC))
+
+    rows = [header]
+    col_widths = [0.7*cm, 2.5*cm, 7*cm] + [4.5*cm] * len(colunas)
+
+    style_cmds = [
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#f0f0f0")),
+        ("GRID",       (0,0), (-1,-1), 0.4, colors.HexColor("#CCCCCC")),
+        ("VALIGN",     (0,0), (-1,-1), "TOP"),
+        ("TOPPADDING", (0,0), (-1,-1), 3),
+        ("BOTTOMPADDING",(0,0),(-1,-1),3),
+        ("FONTSIZE",   (0,0), (-1,-1), 7.5),
+    ]
+
+    for i, item in enumerate(itens):
+        row_num = i + 1
+        row = [
+            Paragraph(str(item.get('ordem','')), SC),
+            Paragraph(f"<b>{item.get('projeto','')}</b>", SB),
+            Paragraph(item.get('ementa',''), S),
+        ]
+        for j, col in enumerate(colunas):
+            key   = f"{item.get('id_principal')}|{col['grupo']}"
+            salvo = ori_data.get(key, {}) or {}
+            ori   = salvo.get('orientacao', '') if isinstance(salvo, dict) else ''
+            com   = salvo.get('comentario', '') if isinstance(salvo, dict) else ''
+            texto = f"<b>{ori}</b>" if ori else "—"
+            if com:
+                texto += f"<br/><font size='6.5' color='#555555'>{com}</font>"
+            row.append(Paragraph(texto, ParagraphStyle("oc", parent=S, alignment=TA_CENTER)))
+            # Cor de fundo da célula
+            cor_bg = CORES_ORI.get(ori, colors.white)
+            col_idx = 3 + j
+            style_cmds.append(("BACKGROUND", (col_idx, row_num), (col_idx, row_num), cor_bg))
+        rows.append(row)
+
+    tbl = Table(rows, colWidths=col_widths, repeatRows=1)
+    tbl.setStyle(TableStyle(style_cmds))
+    story.append(tbl)
+
+    doc.build(story)
+    pdf = buf.getvalue(); buf.close()
+
+    resp = make_response(pdf)
+    resp.headers["Content-Type"] = "application/pdf"
+    resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
+    return resp
+
 @app.route('/salvar_orientacoes', methods=['POST'])
 @login_required
 def salvar_orientacoes():
