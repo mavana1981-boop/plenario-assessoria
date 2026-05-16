@@ -318,17 +318,28 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                 for i, y in enumerate(ys):
                     palavras = linhas[y]
 
-                    # Aceita linha onde todas as palavras juntas formam apenas um número de 1-2 dígitos
-                    txt_linha = ''.join(w['text'].strip() for w in palavras)
+                    # Filtra apenas palavras centralizadas (X dentro de 25% do centro da página)
+                    # Isso elimina texto invisível ou marginal na mesma linha Y
+                    centro_pag = page_width / 2
+                    margem_centro = page_width * 0.25
+                    palavras_centrais = [
+                        w for w in palavras
+                        if abs(((float(w['x0']) + float(w['x1'])) / 2) - centro_pag) <= margem_centro
+                    ]
+                    if not palavras_centrais:
+                        continue
+
+                    # Verifica se as palavras centrais juntas formam apenas um número de 1-2 dígitos
+                    txt_linha = ''.join(w['text'].strip() for w in palavras_centrais)
                     if not re.match(r'^\d{1,2}$', txt_linha):
                         continue
                     num = int(txt_linha)
                     if num < 1 or num > 30:
                         continue
 
-                    # Verifica se está centralizado (dentro de 20% do centro da página)
-                    x0 = min(float(w['x0']) for w in palavras)
-                    x1 = max(float(w['x1']) for w in palavras)
+                    # Centro das palavras centrais
+                    x0 = min(float(w['x0']) for w in palavras_centrais)
+                    x1 = max(float(w['x1']) for w in palavras_centrais)
                     centro = (x0 + x1) / 2
                     if abs(centro - page_width / 2) > page_width * 0.20:
                         continue
@@ -1134,14 +1145,19 @@ def debug_ordem(evento_id):
                 ys = sorted(linhas.keys())
                 for i, y in enumerate(ys):
                     ws = linhas[y]
-                    txt = ''.join(w['text'].strip() for w in ws)
+                    # Filtra só palavras centralizadas (elimina texto invisível na mesma linha)
+                    centro_pag = page_width / 2
+                    ws_centrais = [w for w in ws if abs(((float(w['x0'])+float(w['x1']))/2) - centro_pag) <= page_width * 0.25]
+                    if not ws_centrais:
+                        continue
+                    txt = ''.join(w['text'].strip() for w in ws_centrais)
                     if not re.match(r'^\d{1,2}$', txt):
                         continue
                     num = int(txt)
                     if num < 1 or num > 30:
                         continue
-                    x0 = min(float(w['x0']) for w in ws)
-                    x1 = max(float(w['x1']) for w in ws)
+                    x0 = min(float(w['x0']) for w in ws_centrais)
+                    x1 = max(float(w['x1']) for w in ws_centrais)
                     centro = (x0 + x1) / 2
                     dist_centro = abs(centro - page_width / 2)
                     margem = page_width * 0.20
