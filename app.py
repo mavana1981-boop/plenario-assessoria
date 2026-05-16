@@ -343,9 +343,16 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                     codigo = _extrair_codigo_do_bloco(bloco)
                     if codigo:
                         chave = _normalizar_codigo(codigo)
-                        if chave not in ordem:
-                            ordem[chave] = num
-                            logger.info(f"  Item {num} (centralizado): {codigo} → {chave}")
+                        # Cada número de posição só pode ter UM item
+                        # Se já existe outro item nessa posição, o mais recente vence
+                        # (páginas posteriores têm o número correto)
+                        posicoes_usadas = {v: k for k, v in ordem.items()}
+                        if num in posicoes_usadas:
+                            # Remove entrada anterior para esta posição
+                            del ordem[posicoes_usadas[num]]
+                            logger.info(f"  Posição {num} sobrescrita: {posicoes_usadas[num]} → {chave}")
+                        ordem[chave] = num
+                        logger.info(f"  Item {num} (centralizado): {codigo} → {chave}")
 
         # Fallback para REQ: formato "1. Requerimento nº X.XXX, de AAAA" (não centralizado)
         if pdf_bytes := rp.content if 'rp' in dir() else None:
