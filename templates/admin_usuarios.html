@@ -147,9 +147,12 @@
       <span class="badge badge-geral ms-1">geral</span> acesso padrão sem categoria no log
     </div>
 
-    <div class="mt-3">
+    <div class="mt-3 d-flex gap-2">
       <button class="btn btn-warning btn-sm" onclick="resetTodasSenhas()">
         <i class="fas fa-key me-2"></i>Redefinir TODAS as senhas para 123
+      </button>
+      <button class="btn btn-danger btn-sm" onclick="limparTodoCache()">
+        <i class="fas fa-broom me-2"></i>Limpar TODO o cache de pautas
       </button>
     </div>
   </div>
@@ -160,6 +163,13 @@
       document.getElementById('msg-container').innerHTML =
         `<div class="alert alert-${type} alert-dismissible fade show py-2">${msg}
          <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+    }
+
+    async function limparTodoCache() {
+      if (!confirm('Limpar cache de TODAS as pautas? As próximas aberturas reprocessarão tudo.')) return;
+      const r = await fetch('/admin/limpar_todo_cache', {method: 'POST'});
+      const j = await r.json();
+      showMsg(j.message || j.error, j.error ? 'danger' : 'success');
     }
 
     async function resetTodasSenhas() {
