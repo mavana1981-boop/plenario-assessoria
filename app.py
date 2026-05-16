@@ -452,16 +452,25 @@ def reordenar_por_ordem_oficial(itens, ordem_oficial):
         return itens
 
     def posicao_item(item):
-        cod_norm = _normalizar_codigo(item.get('projeto_original') or item.get('projeto', ''))
-        # Tenta com código base (sem "ao PL X")
-        pos = ordem_oficial.get(cod_norm)
-        if pos is None:
-            # Tenta variações: com/sem espaços, siglas comuns
-            for k in ordem_oficial:
-                if k.startswith(cod_norm[:6]):  # Primeiros chars da sigla+número
-                    pos = ordem_oficial[k]
-                    break
-        return pos if pos is not None else 9999
+        proj = item.get('projeto_original') or item.get('projeto', '')
+        # Remove " ao PL X/AAAA" se presente
+        proj_base = proj.split(' ao ')[0].strip()
+        cod_norm = _normalizar_codigo(proj_base)
+
+        # Busca exata
+        if cod_norm in ordem_oficial:
+            return ordem_oficial[cod_norm]
+
+        # Tenta sem sufixo de ano (número da proposição)
+        # Ex: PL2766/2021 → testa se PL2766 bate com alguma chave
+        for k, v in ordem_oficial.items():
+            # Extrai só sigla+número sem ano de ambos
+            def sem_ano(c):
+                return re.sub(r'/\d{4}$', '', c)
+            if sem_ano(cod_norm) == sem_ano(k):
+                return v
+
+        return 9999
 
     itens_ordenados = sorted(itens, key=posicao_item)
 
