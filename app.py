@@ -317,19 +317,18 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
 
                 for i, y in enumerate(ys):
                     palavras = linhas[y]
-                    # Linha com palavra única que é número de 1-2 dígitos
-                    if len(palavras) != 1:
+
+                    # Aceita linha onde todas as palavras juntas formam apenas um número de 1-2 dígitos
+                    txt_linha = ''.join(w['text'].strip() for w in palavras)
+                    if not re.match(r'^\d{1,2}$', txt_linha):
                         continue
-                    txt = palavras[0]['text'].strip()
-                    if not re.match(r'^\d{1,2}$', txt):
-                        continue
-                    num = int(txt)
+                    num = int(txt_linha)
                     if num < 1 or num > 30:
                         continue
 
                     # Verifica se está centralizado (dentro de 20% do centro da página)
-                    x0 = float(palavras[0]['x0'])
-                    x1 = float(palavras[0]['x1'])
+                    x0 = min(float(w['x0']) for w in palavras)
+                    x1 = max(float(w['x1']) for w in palavras)
                     centro = (x0 + x1) / 2
                     if abs(centro - page_width / 2) > page_width * 0.20:
                         continue
@@ -1128,28 +1127,29 @@ def debug_ordem(evento_id):
                 ys = sorted(linhas.keys())
                 for i, y in enumerate(ys):
                     ws = linhas[y]
-                    if len(ws) != 1:
-                        continue
-                    txt = ws[0]['text'].strip()
+                    txt = ''.join(w['text'].strip() for w in ws)
                     if not re.match(r'^\d{1,2}$', txt):
                         continue
                     num = int(txt)
                     if num < 1 or num > 30:
                         continue
-                    x0 = float(ws[0]['x0'])
-                    x1 = float(ws[0]['x1'])
+                    x0 = min(float(w['x0']) for w in ws)
+                    x1 = max(float(w['x1']) for w in ws)
                     centro = (x0 + x1) / 2
                     dist_centro = abs(centro - page_width / 2)
                     margem = page_width * 0.20
                     # Próximas linhas
                     prox = ys[i+1:i+6]
                     bloco = ' '.join(' '.join(w['text'] for w in linhas[ny]) for ny in prox if ny in linhas)
+                    # Mostra todas as palavras da linha (incluindo possíveis invisíveis)
+                    palavras_linha_raw = [{'text': w['text'], 'x0': round(float(w['x0']),1), 'x1': round(float(w['x1']),1)} for w in ws]
                     numeros_centrais.append({
                         'num': num, 'page': pnum+1,
                         'centro_x': round(centro, 1),
                         'dist_centro': round(dist_centro, 1),
                         'margem_max': round(margem, 1),
                         'centralizado': dist_centro <= margem,
+                        'palavras_na_linha': palavras_linha_raw,
                         'bloco_seguinte': bloco[:120]
                     })
 
