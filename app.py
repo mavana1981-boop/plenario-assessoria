@@ -446,8 +446,7 @@ def _normalizar_codigo(codigo):
 def reordenar_por_ordem_oficial(itens, ordem_oficial):
     """
     Reordena lista de itens conforme ordem oficial do plenário.
-    Só aplica se ao menos 80% dos itens forem encontrados no PDF
-    (evita reordenação incorreta com PDF de outra sessão).
+    Só aplica se ao menos 80% dos itens forem encontrados no PDF.
     """
     if not ordem_oficial or not itens:
         return itens
@@ -456,26 +455,29 @@ def reordenar_por_ordem_oficial(itens, ordem_oficial):
         proj = item.get('projeto_original') or item.get('projeto', '')
         return _normalizar_codigo(proj.split(' ao ')[0].strip())
 
-    # Conta quantos itens da API estão no PDF
+    # Conta cobertura
     encontrados = sum(1 for item in itens if normalizar_item(item) in ordem_oficial)
     cobertura   = encontrados / len(itens)
+    logger.info(f"Cobertura PDF: {encontrados}/{len(itens)} ({cobertura:.0%})")
 
-    logger.info(f"Cobertura PDF: {encontrados}/{len(itens)} itens ({cobertura:.0%})")
-
-    # Exige ao menos 80% de cobertura para aplicar a ordem
     if cobertura < 0.80:
-        logger.warning(f"Cobertura insuficiente ({cobertura:.0%}) — PDF provavelmente é de outra sessão. Mantendo ordem da API.")
+        logger.warning(f"Cobertura insuficiente — PDF de outra sessão. Mantendo ordem da API.")
         return itens
 
-    def posicao_item(item):
+    # Atribui posição a cada item
+    for item in itens:
         cod = normalizar_item(item)
-        return ordem_oficial.get(cod, 9999)
+        item['_pos_pdf'] = ordem_oficial.get(cod, 9999)
 
-    itens_ordenados = sorted(itens, key=posicao_item)
+    # Ordena por posição PDF; empates mantêm ordem original (sort estável)
+    itens_ordenados = sorted(itens, key=lambda x: x['_pos_pdf'])
 
+    # Remove campo temporário e atualiza ordem
     for i, item in enumerate(itens_ordenados, start=1):
+        item.pop('_pos_pdf', None)
         item['ordem'] = str(i)
 
+    logger.info(f"Reordenação aplicada: {[it.get('projeto_original','') for it in itens_ordenados]}")
     return itens_ordenados
 
 def fetch_pauta(evento_id, force_reload=False):
@@ -1140,6 +1142,20 @@ def debug_ordem(evento_id):
         resultado['erro'] = str(e)
         resultado['tb'] = traceback.format_exc()[-500:]
     return jsonify(resultado)
+
+@app.route('/admin/limpar_todo_cache', methods=['POST'])
+@login_required
+def limpar_todo_cache():
+    if current_user.role != 'Admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    c.execute('DELETE FROM pauta_cache_db')
+    n = c.rowcount
+    conn.commit()
+    conn.close()
+    pauta_cache.clear()
+    return jsonify({'message': f'{n} eventos removidos do cache.'})
 
 @app.route('/limpar_cache/<int:evento_id>', methods=['POST'])
 @login_required
