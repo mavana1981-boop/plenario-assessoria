@@ -326,7 +326,7 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                         if not re.match(r'^\d{1,2}$', txt):
                             continue
                         centro_w = (float(w['x0']) + float(w['x1'])) / 2
-                        if abs(centro_w - page_width / 2) <= page_width * 0.10:
+                        if abs(centro_w - page_width / 2) <= page_width * 0.05:
                             num_encontrado = (int(txt), float(w['x0']), float(w['x1']))
                             break
 
@@ -416,39 +416,40 @@ def _buscar_ordem_html(evento_id):
 
 def _extrair_codigo_do_bloco(bloco):
     """
-    Extrai código da proposição do bloco de texto após o número centralizado.
-    Padrão real do PDF: "PROJETO DE LEI Nº 2.766, DE 2021"
-                        "PROJETO DE LEI COMPLEMENTAR Nº 21, DE 2026"
-                        "Requerimento nº 1.180, de 2026"
+    Extrai código de QUALQUER proposição do bloco de texto após o número centralizado.
+    Usa regex universal que captura sigla + número + sufixo + ano.
+    Remove sufixos (-A, -B, -C, -F etc.) que o PDF usa mas a API não usa.
     """
-    # Normaliza caracteres especiais
     b = bloco.replace('\xa0', ' ').strip()
 
-    padroes = [
-        # Requerimento (minúsculas)
-        (r'Requerimento\s+n[º°oa.]?\s*([\d.]+),\s*de\s+(\d{4})', 'REQ'),
-        # PL Complementar
-        (r'PROJETO\s+DE\s+LEI\s+COMPLEMENTAR\s+N[º°oa.]?\s*([\d.]+(?:-[A-Z])?),?\s*DE\s+(\d{4})', 'PLP'),
-        # PL simples
-        (r'PROJETO\s+DE\s+LEI\s+N[º°oa.]?\s*([\d.]+(?:-[A-Z])?),?\s*DE\s+(\d{4})', 'PL'),
-        # PEC
-        (r'PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O\s+N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'PEC'),
-        # MPV
-        (r'MEDIDA\s+PROVIS[OÓ]RIA\s+N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'MPV'),
-        # PDL - Projeto de Decreto Legislativo (aceita sufixo -B, -A etc)
-        (r'PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO\s+N[º°oa.]?\s*([\d.]+(?:-[A-Z])?),?\s*DE\s+(\d{4})', 'PDL'),
-        # PRC - Projeto de Resolução da Câmara
-        (r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O\s+(?:DA\s+C[AÂ]MARA\s+)?N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'PRC'),
-        # PRS - Projeto de Resolução do Senado
-        (r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O\s+DO\s+SENADO\s+N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'PRS'),
+    # Mapa de texto completo → sigla curta
+    tipos = [
+        (r'PROJETO\s+DE\s+LEI\s+COMPLEMENTAR',           'PLP'),
+        (r'PROJETO\s+DE\s+LEI',                           'PL'),
+        (r'PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O', 'PEC'),
+        (r'MEDIDA\s+PROVIS[OÓ]RIA',                       'MPV'),
+        (r'PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO',         'PDL'),
+        (r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O\s+DO\s+SENADO','PRS'),
+        (r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O',              'PRC'),
+        (r'PROPOSTA\s+DE\s+FISCALIZA[CÇ][AÃ]O\s+E\s+CONTROLE', 'PFC'),
+        (r'PROJETO\s+DE\s+LEI\s+DE\s+CONVERS[AÃ]O',      'PLV'),
+        (r'Requerimento',                                  'REQ'),
     ]
-    for padrao, sigla in padroes:
+
+    # Número: dígitos com pontos opcionais, sufixo -A/-B/-F etc. opcional
+    num_pattern = r'([\d.]+(?:-[A-Z])?)'
+    ano_pattern = r'(\d{4})'
+
+    for tipo_regex, sigla in tipos:
+        # Tenta: TIPO Nº NUM, DE ANO
+        padrao = (rf'{tipo_regex}\s+N[º°oa.]?\s*{num_pattern}'
+                  rf'(?:\s*[-–]\s*[A-Z])?,?\s*[Dd][Ee]\s+{ano_pattern}')
         m = re.search(padrao, b, re.IGNORECASE)
         if m:
-            # Remove pontos e sufixos -A, -B
-            num = re.sub(r'[-–][A-Z]$', '', m.group(1).replace('.', '').replace('\xa0',''))
+            num = re.sub(r'[-–][A-Z]$', '', m.group(1).replace('.', '').replace('\xa0', ''))
             ano = m.group(2)
             return f"{sigla} {num}/{ano}"
+
     return None
 
 def _normalizar_codigo(codigo):
@@ -1147,7 +1148,7 @@ def debug_ordem(evento_id):
                         if not re.match(r'^\d{1,2}$', txt):
                             continue
                         centro_w = (float(w['x0']) + float(w['x1'])) / 2
-                        if abs(centro_w - page_width / 2) <= page_width * 0.10:
+                        if abs(centro_w - page_width / 2) <= page_width * 0.05:
                             num_encontrado = (int(txt), float(w['x0']), float(w['x1']))
                             break
                     if not num_encontrado:
