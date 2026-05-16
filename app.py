@@ -1028,6 +1028,32 @@ def exportar_orientacoes_pdf():
     resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
     return resp
 
+@app.route('/debug_matching/<int:evento_id>')
+@login_required
+def debug_matching(evento_id):
+    """Mostra exatamente como os códigos da API batem com a ordem do PDF."""
+    itens, _ = fetch_pauta(evento_id)
+    ordem = buscar_ordem_oficial(evento_id)
+    
+    resultado = []
+    for item in itens:
+        proj_orig = item.get('projeto_original') or item.get('projeto', '')
+        proj_base = proj_orig.split(' ao ')[0].strip()
+        cod_norm  = _normalizar_codigo(proj_base)
+        pos_pdf   = ordem.get(cod_norm, 'NÃO ENCONTRADO')
+        resultado.append({
+            'ordem_app':      item.get('ordem'),
+            'projeto_orig':   proj_orig,
+            'projeto_base':   proj_base,
+            'cod_normalizado': cod_norm,
+            'posicao_pdf':    pos_pdf,
+        })
+    
+    return jsonify({
+        'ordem_pdf': ordem,
+        'itens_api': resultado
+    })
+
 @app.route('/debug_ordem/<int:evento_id>')
 @login_required
 def debug_ordem(evento_id):
