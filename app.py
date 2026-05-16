@@ -423,10 +423,12 @@ def _extrair_codigo_do_bloco(bloco):
         (r'PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O\s+N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'PEC'),
         # MPV
         (r'MEDIDA\s+PROVIS[OÓ]RIA\s+N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'MPV'),
-        # PDL / PRC (Projeto de Resolução da Câmara)
-        (r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O\s+N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'PRC'),
-        # PDL
-        (r'PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO\s+N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'PDL'),
+        # PDL - Projeto de Decreto Legislativo
+        (r'PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO\s+N[º°oa.]?\s*([\d.]+),?\s*DE\s+(\d{4})', 'PDL'),
+        # PRC - Projeto de Resolução da Câmara
+        (r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O\s+(?:DA\s+C[AÂ]MARA\s+)?N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'PRC'),
+        # PRS - Projeto de Resolução do Senado
+        (r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O\s+DO\s+SENADO\s+N[º°oa.]?\s*(\d+),?\s*DE\s+(\d{4})', 'PRS'),
     ]
     for padrao, sigla in padroes:
         m = re.search(padrao, b, re.IGNORECASE)
@@ -438,12 +440,13 @@ def _extrair_codigo_do_bloco(bloco):
     return None
 
 def _normalizar_codigo(codigo):
-    """Normaliza código para comparação: remove espaços, pontos, sufixos -A/-B."""
+    """Normaliza código para comparação: remove espaços, pontos, sufixos -A/-B, texto entre parênteses."""
     c = codigo.upper().strip()
-    c = re.sub(r'\s+', '', c)      # remove espaços
+    c = re.sub(r'\(.*?\)', '', c)   # remove (Nº Anterior: PL 7750/2017) etc
+    c = re.sub(r'\s+', '', c)       # remove espaços
     c = re.sub(r'\.', '', c)        # remove pontos
-    c = re.sub(r'-[A-Z](?=/)','', c)  # remove -A, -B antes da /
-    return c
+    c = re.sub(r'-[A-Z](?=/)', '', c)  # remove -A, -B antes da /
+    return c.strip()
 
 def reordenar_por_ordem_oficial(itens, ordem_oficial):
     """
