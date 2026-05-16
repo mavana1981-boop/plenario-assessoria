@@ -446,35 +446,33 @@ def _normalizar_codigo(codigo):
 def reordenar_por_ordem_oficial(itens, ordem_oficial):
     """
     Reordena lista de itens conforme ordem oficial do plenário.
-    Itens não encontrados na ordem oficial ficam no final.
+    Só aplica se ao menos 80% dos itens forem encontrados no PDF
+    (evita reordenação incorreta com PDF de outra sessão).
     """
-    if not ordem_oficial:
+    if not ordem_oficial or not itens:
+        return itens
+
+    def normalizar_item(item):
+        proj = item.get('projeto_original') or item.get('projeto', '')
+        return _normalizar_codigo(proj.split(' ao ')[0].strip())
+
+    # Conta quantos itens da API estão no PDF
+    encontrados = sum(1 for item in itens if normalizar_item(item) in ordem_oficial)
+    cobertura   = encontrados / len(itens)
+
+    logger.info(f"Cobertura PDF: {encontrados}/{len(itens)} itens ({cobertura:.0%})")
+
+    # Exige ao menos 80% de cobertura para aplicar a ordem
+    if cobertura < 0.80:
+        logger.warning(f"Cobertura insuficiente ({cobertura:.0%}) — PDF provavelmente é de outra sessão. Mantendo ordem da API.")
         return itens
 
     def posicao_item(item):
-        proj = item.get('projeto_original') or item.get('projeto', '')
-        # Remove " ao PL X/AAAA" se presente
-        proj_base = proj.split(' ao ')[0].strip()
-        cod_norm = _normalizar_codigo(proj_base)
-
-        # Busca exata
-        if cod_norm in ordem_oficial:
-            return ordem_oficial[cod_norm]
-
-        # Tenta sem sufixo de ano (número da proposição)
-        # Ex: PL2766/2021 → testa se PL2766 bate com alguma chave
-        for k, v in ordem_oficial.items():
-            # Extrai só sigla+número sem ano de ambos
-            def sem_ano(c):
-                return re.sub(r'/\d{4}$', '', c)
-            if sem_ano(cod_norm) == sem_ano(k):
-                return v
-
-        return 9999
+        cod = normalizar_item(item)
+        return ordem_oficial.get(cod, 9999)
 
     itens_ordenados = sorted(itens, key=posicao_item)
 
-    # Atualiza campo 'ordem' conforme nova posição
     for i, item in enumerate(itens_ordenados, start=1):
         item['ordem'] = str(i)
 
