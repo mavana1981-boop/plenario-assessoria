@@ -450,10 +450,8 @@ def _normalizar_codigo(codigo):
 
 def reordenar_por_ordem_oficial(itens, ordem_oficial):
     """
-    Reordena lista de itens conforme ordem oficial do plenário.
-    Itens não encontrados no PDF mantêm posição relativa entre si,
-    intercalados conforme posição natural.
-    Só aplica se ao menos 70% dos itens forem encontrados.
+    Reordena itens pelo PDF. Itens não encontrados são inseridos
+    na posição correta baseada nos vizinhos conhecidos da API.
     """
     if not ordem_oficial or not itens:
         return itens
@@ -462,35 +460,43 @@ def reordenar_por_ordem_oficial(itens, ordem_oficial):
         proj = item.get('projeto_original') or item.get('projeto', '')
         return _normalizar_codigo(proj.split(' ao ')[0].strip())
 
-    # Conta cobertura
-    encontrados = sum(1 for item in itens if normalizar_item(item) in ordem_oficial)
-    cobertura   = encontrados / len(itens)
-    logger.info(f"Cobertura PDF: {encontrados}/{len(itens)} ({cobertura:.0%})")
+    # Separa encontrados e não encontrados
+    encontrados = [(i, item, ordem_oficial[normalizar_item(item)])
+                   for i, item in enumerate(itens)
+                   if normalizar_item(item) in ordem_oficial]
+    nao_encontrados = [(i, item)
+                       for i, item in enumerate(itens)
+                       if normalizar_item(item) not in ordem_oficial]
+
+    cobertura = len(encontrados) / len(itens)
+    logger.info(f"Cobertura PDF: {len(encontrados)}/{len(itens)} ({cobertura:.0%})")
 
     if cobertura < 0.70:
-        logger.warning(f"Cobertura insuficiente — mantendo ordem da API.")
+        logger.warning("Cobertura insuficiente — mantendo ordem da API.")
         return itens
 
-    # Atribui posição: encontrados usam posição do PDF,
-    # não encontrados usam posição fracionária entre vizinhos
-    n_total = len(itens)
-    for i, item in enumerate(itens):
-        cod = normalizar_item(item)
-        if cod in ordem_oficial:
-            # Posição exata do PDF (multiplicada para dar espaço a intercalados)
-            item['_pos_pdf'] = ordem_oficial[cod] * 100
-        else:
-            # Mantém posição relativa da API entre os não encontrados
-            # Usa posição da API como decimal entre as posições do PDF
-            item['_pos_pdf'] = (i + 1) * 100 + 50  # .50 garante intercalação
+    # Ordena os encontrados pela posição do PDF
+    encontrados.sort(key=lambda x: x[2])
 
-    itens_ordenados = sorted(itens, key=lambda x: x['_pos_pdf'])
+    # Insere os não encontrados na posição relativa correta:
+    # um item não encontrado na posição i da API vai entre o último
+    # encontrado com api_pos < i e o primeiro com api_pos > i
+    resultado = list(encontrados)  # lista de (api_idx, item, pdf_pos)
 
+    for api_idx, item in nao_encontrados:
+        # Encontra onde inserir: após o último encontrado com api_idx menor
+        insert_pos = 0
+        for j, (enc_api_idx, enc_item, enc_pdf_pos) in enumerate(resultado):
+            if enc_api_idx < api_idx:
+                insert_pos = j + 1
+        resultado.insert(insert_pos, (api_idx, item, -1))
+
+    # Atualiza ordem
+    itens_ordenados = [item for (_, item, _) in resultado]
     for i, item in enumerate(itens_ordenados, start=1):
-        item.pop('_pos_pdf', None)
         item['ordem'] = str(i)
 
-    logger.info(f"Reordenação: {[(it.get('projeto_original',''), it.get('ordem')) for it in itens_ordenados]}")
+    logger.info(f"Ordem final: {[(it.get('projeto_original','')[:15], it['ordem']) for it in itens_ordenados]}")
     return itens_ordenados
 
 def fetch_pauta(evento_id, force_reload=False):
