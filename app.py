@@ -817,90 +817,103 @@ def buscar_destaques(id_proposicao):
 
 def buscar_ultimo_parecer(id_proposicao):
     """
-    Busca o último parecer ou substitutivo da proposição.
-    Tenta múltiplos endpoints da API da Câmara.
-    Retorna dict {tipo, nome, data} ou None.
+    Busca o último PRLP ou Substitutivo de Plenário via tramitações da proposição.
+    Filtra apenas documentos do Plenário (PLEN, MESA, PRLP, SBT em plenário).
     """
     headers = {'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}
 
-    # Endpoint 1: documentos da proposição
-    urls = [
-        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/documentos?itens=20&ordem=DESC",
-        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/textos",
-    ]
+    ORGAOS_PLENARIO = {'PLEN', 'MESA', 'PRESID', 'CVT'}
+    SIGLAS_DOC      = {'PRLP', 'SBT', 'SUBSTITUT', 'PARECER PRELIMINAR DE PLEN'}
 
-    docs = []
-    for url in urls:
-        try:
-            r = requests.get(url, headers=headers, timeout=10)
-            if r.ok:
-                data = r.json()
-                docs = data.get('dados', [])
-                if docs:
-                    break
-        except Exception:
-            continue
+    try:
+        # Busca tramitações em ordem DESC (mais recente primeiro)
+        url = (f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
+               f"/{id_proposicao}/tramitacoes?itens=50&ordem=DESC")
+        r = requests.get(url, headers=headers, timeout=12)
 
-    if not docs:
-        return None
+        if r.ok:
+            trams = r.json().get('dados', [])
+            for t in trams:
+                sigla_orgao = (t.get('siglaOrgao') or '').upper()
+                descricao   = (t.get('descricaoTramitacao') or '').upper()
+                despacho    = (t.get('despacho') or '').upper()
+                texto_busca = f"{descricao} {despacho}"
 
-    # Palavras-chave para identificar parecer/substitutivo — do mais relevante ao menos
-    prioridade = [
-        ('SBT', 'Substitutivo'),
-        ('SUBSTITUT', 'Substitutivo'),
-        ('PRLP', 'Parecer do Relator de Plenário'),
-        ('PARECER', 'Parecer do Relator'),
-        ('COMPLEMENTAÇÃO', 'Complementação de Voto'),
-    ]
+                # Só plenário
+                eh_plenario = (sigla_orgao in ORGAOS_PLENARIO or
+                               'PLEN' in sigla_orgao or
+                               'PLENÁRIO' in texto_busca or
+                               'PLENARIO' in texto_busca)
+                if not eh_plenario:
+                    continue
 
-    # Documentos já vêm em ordem DESC (mais recente primeiro)
-    for doc in docs:
-        # Junta todos os campos de texto para busca
-        campos = ' '.join([
-            str(doc.get('descricao', '') or ''),
-            str(doc.get('tipoProposta', '') or ''),
-            str(doc.get('tipo', '') or ''),
-            str(doc.get('nome', '') or ''),
-            str(doc.get('codTipo', '') or ''),
-        ]).upper()
+                # Verifica se é PRLP ou Substitutivo
+                eh_prlp_ou_sbt = (
+                    'PRLP' in texto_busca or
+                    'SUBSTITUT' in texto_busca or
+                    'PARECER PRELIMINAR' in texto_busca
+                )
+                if not eh_prlp_ou_sbt:
+                    continue
 
-        for chave, label in prioridade:
-            if chave in campos:
-                # Extrai data
-                data_raw = (doc.get('dataApresentacao') or
-                            doc.get('data') or
-                            doc.get('dataTexto') or '')
-                data_fmt = ''
-                if data_raw:
+                # Encontrou — extrai data e tipo
+                data_hora = t.get('dataHora', '') or ''
+                data_fmt  = ''
+                if data_hora:
                     try:
-                        dt = datetime.fromisoformat(str(data_raw)[:10])
+                        dt = datetime.fromisoformat(str(data_hora)[:10])
                         data_fmt = dt.strftime('%d/%m/%Y')
                     except Exception:
-                        data_fmt = str(data_raw)[:10]
+                        data_fmt = str(data_hora)[:10]
 
-                # Monta nome descritivo
-                desc = (doc.get('descricao') or doc.get('nome') or
-                        doc.get('tipoProposta') or label)
+                tipo_label = 'Substitutivo' if 'SUBSTITUT' in texto_busca else 'Parecer Preliminar de Plenário (PRLP)'
+                desc_curta = (t.get('descricaoTramitacao') or '').strip()
 
-                logger.info(f"Documento encontrado para {id_proposicao}: {label} — {desc} em {data_fmt}")
+                logger.info(f"Parecer plenário encontrado para {id_proposicao}: {tipo_label} em {data_fmt}")
                 return {
-                    'tipo': label,
-                    'nome': desc,
-                    'data': data_fmt,
+                    'tipo':     tipo_label,
+                    'nome':     desc_curta,
+                    'data':     data_fmt,
+                    'orgao':    t.get('siglaOrgao', ''),
                 }
 
-    # Nenhum parecer/substitutivo — retorna o documento mais recente
-    doc = docs[0]
-    data_raw = doc.get('dataApresentacao') or doc.get('data') or ''
-    data_fmt = ''
-    if data_raw:
-        try:
-            dt = datetime.fromisoformat(str(data_raw)[:10])
-            data_fmt = dt.strftime('%d/%m/%Y')
-        except Exception:
-            data_fmt = str(data_raw)[:10]
-    desc = doc.get('descricao') or doc.get('nome') or doc.get('tipoProposta') or ''
-    return {'tipo': 'Documento', 'nome': desc, 'data': data_fmt} if desc else None
+        # Fallback: usa statusProposicao do endpoint principal
+        r2 = requests.get(
+            f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}",
+            headers=headers, timeout=10
+        )
+        if r2.ok:
+            status = r2.json().get('dados', {}).get('statusProposicao', {}) or {}
+            despacho   = (status.get('despacho', '') or '').upper()
+            tramitacao = (status.get('descricaoTramitacao', '') or '').upper()
+            sigla_orgao = (status.get('siglaOrgao', '') or '').upper()
+            data_hora   = status.get('dataHora', '') or ''
+
+            eh_plenario   = sigla_orgao in ORGAOS_PLENARIO or 'PLEN' in sigla_orgao
+            eh_prlp_ou_sbt = ('SUBSTITUT' in despacho or 'PRLP' in despacho or
+                               'SUBSTITUT' in tramitacao or 'PRLP' in tramitacao)
+
+            if eh_plenario and eh_prlp_ou_sbt:
+                data_fmt = ''
+                if data_hora:
+                    try:
+                        dt = datetime.fromisoformat(str(data_hora)[:10])
+                        data_fmt = dt.strftime('%d/%m/%Y')
+                    except Exception:
+                        data_fmt = str(data_hora)[:10]
+
+                tipo_label = 'Substitutivo' if 'SUBSTITUT' in f"{despacho} {tramitacao}" else 'PRLP'
+                return {
+                    'tipo':  tipo_label,
+                    'nome':  status.get('descricaoTramitacao', ''),
+                    'data':  data_fmt,
+                    'orgao': status.get('siglaOrgao', ''),
+                }
+
+    except Exception as e:
+        logger.warning(f"Erro ao buscar parecer de {id_proposicao}: {e}")
+
+    return None
 
 @app.route('/analisar_ia', methods=['POST'])
 @login_required
@@ -923,7 +936,11 @@ def analisar_ia():
     # Monta linha de referência do documento
     ref_doc = ''
     if parecer_info:
-        ref_doc = f"\nDocumento de referência: {parecer_info['tipo']} — {parecer_info['nome']} (inserido em {parecer_info['data']})"
+        ref_doc = f"\nDocumento de referência: {parecer_info['tipo']} de {parecer_info['data']}"
+        if parecer_info.get('relator'):
+            ref_doc += f" — Relator(a): {parecer_info['relator']}"
+        if parecer_info.get('situacao'):
+            ref_doc += f" — Situação atual: {parecer_info['situacao']}"
 
     prompt = f"""Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil.
 
