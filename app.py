@@ -817,139 +817,84 @@ def buscar_destaques(id_proposicao):
 
 def buscar_texto_prlp_ou_sbt(id_proposicao):
     """
-    Busca o texto completo do último PRLP ou Substitutivo de plenário.
-    Estratégia: scraping da página de tramitação, identificando pelo filename do link.
+    Busca o texto do último PRLP ou Substitutivo de plenário.
+    Usa o Avulso e as últimas tramitações, verificando o conteúdo do PDF.
     """
     from bs4 import BeautifulSoup
     import pdfplumber
     from io import BytesIO
 
     headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
-    url_pag = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}"
 
     try:
+        url_pag = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}"
         r = requests.get(url_pag, headers=headers, timeout=12)
         if not r.ok:
             return None
 
         soup = BeautifulSoup(r.text, 'html.parser')
-        candidatos = []
 
-        # Estratégia 1: filename com PRLP ou SBT
+        # Coleta todos os links com codteor
+        avulso_url = None
+        tramitacoes = []  # [(num, url)]
+
         for a in soup.find_all('a', href=True):
-            href     = a['href']
-            filename = href.upper()
+            href = a['href']
             if 'codteor' not in href.lower():
                 continue
-            if any(p in filename for p in ['PRLP', 'SBT', 'SUBSTITUT']):
-                url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-                tipo = 'Substitutivo' if any(p in filename for p in ['SBT', 'SUBSTITUT']) else 'PRLP'
-                # Extrai data do contexto
-                parent = a.find_parent(['td', 'tr', 'li', 'div'])
-                data_txt = ''
-                if parent:
-                    m = re.search(r'(\d{2}/\d{2}/\d{4})', parent.get_text())
-                    if m:
-                        data_txt = m.group(1)
-                candidatos.append({'url': url_doc, 'data': data_txt, 'tipo': tipo})
+            url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+            m_fn = re.search(r'filename=([^&"]+)', href)
+            filename = m_fn.group(1) if m_fn else ''
+            # Avulso tem prioridade
+            if 'Avulso' in filename:
+                avulso_url = url_doc
+            # Tramitações numeradas
+            m_tram = re.search(r'Tramitacao-(\d+)-', filename)
+            if m_tram:
+                tramitacoes.append((int(m_tram.group(1)), url_doc))
 
-        # Estratégia 2: na seção "Histórico de Pareceres, Substitutivos e Votos"
-        # busca links próximos a menções de PRLP/Substitutivo
-        if not candidatos:
-            texto_pag = soup.get_text(separator='\n')
-            linhas = texto_pag.split('\n')
-            for i, linha in enumerate(linhas):
-                linha_up = linha.upper()
-                if 'PRLP' in linha_up or ('SUBSTITUT' in linha_up and 'PLENÁRIO' in linha_up):
-                    # Busca link mais próximo nesta região do HTML
-                    # Procura o trecho do HTML correspondente
-                    trecho = ' '.join(linhas[max(0,i-3):i+4])
-                    m_ct = re.search(r'codteor=(\d+)', trecho)
-                    if m_ct:
-                        cod = m_ct.group(1)
-                        url_doc = f"https://www.camara.leg.br/proposicoesWeb/prop_mostrarintegra?codteor={cod}"
-                        tipo = 'Substitutivo' if 'SUBSTITUT' in linha_up else 'PRLP'
-                        m_data = re.search(r'(\d{2}/\d{2}/\d{4})', trecho)
-                        candidatos.append({
-                            'url': url_doc,
-                            'data': m_data.group(1) if m_data else '',
-                            'tipo': tipo
-                        })
+        # Ordena: avulso primeiro, depois tramitações do mais recente ao mais antigo
+        tramitacoes.sort(key=lambda x: x[0], reverse=True)
+        candidatos = []
+        if avulso_url:
+            candidatos.append(('avulso', avulso_url))
+        for num, url in tramitacoes[:5]:
+            candidatos.append((f'tram-{num}', url))
 
-        # Estratégia 3: link de tramitação mais recente (maior número)
-        # Os PRLP/SBT costumam ser tramitações com número alto
-        if not candidatos:
-            tramitacoes = []
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                if 'Tramitacao-' in href and 'codteor' in href:
-                    m = re.search(r'Tramitacao-(\d+)-', href)
-                    if m:
-                        num = int(m.group(1))
-                        url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-                        tramitacoes.append((num, url_doc))
-            if tramitacoes:
-                tramitacoes.sort(key=lambda x: x[0], reverse=True)
-                # Testa as últimas 3 tramitações para encontrar PRLP/SBT
-                for num, url_doc in tramitacoes[:3]:
-                    rtest = requests.get(url_doc + '&tipo=PDF', headers=headers, timeout=15)
-                    if rtest.ok and 'pdf' in rtest.headers.get('Content-Type','').lower():
-                        try:
-                            with pdfplumber.open(BytesIO(rtest.content)) as pdf:
-                                txt = (pdf.pages[0].extract_text() or '').upper()
-                            if 'PRLP' in txt or 'SUBSTITUTIVO' in txt or 'PARECER PRELIMINAR' in txt:
-                                candidatos.append({'url': url_doc, 'data': '', 'tipo': 'PRLP/Substitutivo'})
-                                break
-                        except Exception:
-                            pass
+        palavras_prlp_sbt = ['PRLP', 'PARECER PRELIMINAR', 'SUBSTITUTIVO']
 
-        if not candidatos:
-            return None
+        for label, url_doc in candidatos:
+            url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
+            try:
+                rp = requests.get(url_pdf, headers=headers, timeout=20)
+                if not rp.ok or 'pdf' not in rp.headers.get('Content-Type','').lower():
+                    continue
+                with pdfplumber.open(BytesIO(rp.content)) as pdf:
+                    pag1  = (pdf.pages[0].extract_text() or '').upper()
+                    texto = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
 
-        # Prioriza Substitutivo; pega o último
-        sbts  = [c for c in candidatos if 'Substitutivo' in c['tipo'] or 'SBT' in c['tipo']]
-        prlps = [c for c in candidatos if 'PRLP' in c['tipo']]
-        doc   = sbts[-1] if sbts else prlps[-1] if prlps else candidatos[-1]
+                # Avulso: aceita sempre (contém texto consolidado com Substitutivo)
+                # Tramitações: só aceita se contiver PRLP ou Substitutivo
+                if label == 'avulso':
+                    tipo = 'Substitutivo' if 'SUBSTITUTIVO' in pag1 else 'Texto Atualizado (Avulso)'
+                elif any(p in pag1 for p in palavras_prlp_sbt):
+                    tipo = 'Substitutivo' if 'SUBSTITUTIVO' in pag1 else 'PRLP'
+                else:
+                    continue  # não é PRLP/SBT, testa próximo
 
-        # Baixa e extrai texto do PDF
-        url_pdf = doc['url']
-        if '?' in url_pdf and 'tipo=PDF' not in url_pdf:
-            url_pdf += '&tipo=PDF'
-        elif '?' not in url_pdf:
-            url_pdf += '?tipo=PDF'
+                m_data = re.search(r'(\d{2}/\d{2}/\d{4})', pag1)
+                data   = m_data.group(1) if m_data else ''
+                logger.info(f"Documento {tipo} ({label}) para {id_proposicao}: {len(texto)} chars")
+                return {'tipo': tipo, 'data': data, 'texto': texto[:8000]}
+            except Exception as e:
+                logger.warning(f"Erro ao processar {label}: {e}")
+                continue
 
-        rp = requests.get(url_pdf, headers=headers, timeout=25)
-        if not rp.ok or 'pdf' not in rp.headers.get('Content-Type', '').lower():
-            return {'tipo': doc['tipo'], 'data': doc['data'], 'texto': None}
-
-        with pdfplumber.open(BytesIO(rp.content)) as pdf:
-            texto_completo = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
-
-        logger.info(f"Texto extraído ({doc['tipo']} para {id_proposicao}): {len(texto_completo)} chars")
-        return {'tipo': doc['tipo'], 'data': doc['data'], 'texto': texto_completo[:8000]}
+        return None
 
     except Exception as e:
-        logger.warning(f"Erro ao buscar PRLP/SBT de {id_proposicao}: {e}")
+        logger.warning(f"Erro buscar_texto_prlp_ou_sbt({id_proposicao}): {e}")
     return None
-    """
-    Extrai nome descritivo do documento a partir do texto do despacho.
-    Ex: "aprovação do Substitutivo ao PL nº 1.054/2019, adotado pela relatora da Comissão de Administração"
-    → "Substitutivo adotado pela relatora da Comissão de Administração e Serviço Público"
-    """
-    if not despacho:
-        return tipo_label
-
-    # Tenta extrair "adotado por X da Comissão Y"
-    m = re.search(
-        r'adotad[ao]\s+pel[ao]\s+(?:relator[a]?\s+)?(?:dep\.\s+)?(.{5,80}?)(?:\s*[\.\(]|$)',
-        despacho, re.IGNORECASE
-    )
-    if m:
-        quem = m.group(1).strip().rstrip('.,;')
-        return f"{tipo_label} adotado por {quem}"
-
-    # Fallback: retorna o tipo + primeiros 80 chars do despacho
-    return f"{tipo_label} ({despacho[:80].strip()}...)" if len(despacho) > 80 else tipo_label
 
 def buscar_ultimo_parecer(id_proposicao):
     """
