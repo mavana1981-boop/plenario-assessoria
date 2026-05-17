@@ -815,35 +815,97 @@ def buscar_destaques(id_proposicao):
         logger.warning(f"Falha ao buscar destaques de {id_proposicao}: {e}")
         return jsonify({'destaques': [], 'total': 0, 'erro': str(e)})
 
+def buscar_ultimo_parecer(id_proposicao):
+    """
+    Busca o último parecer ou substitutivo da proposição via API da Câmara.
+    Retorna dict {tipo, numero, data, url} ou None.
+    """
+    try:
+        url = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/documentos?itens=20&ordem=DESC"
+        r = requests.get(url, headers={
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'
+        }, timeout=10)
+        if not r.ok:
+            return None
+
+        docs = r.json().get('dados', [])
+        # Palavras-chave que indicam parecer ou substitutivo
+        palavras = ['PRLP', 'SUBSTITUTIVO', 'PARECER', 'Substitutivo', 'Parecer']
+        for doc in docs:
+            desc = doc.get('descricao', '') or ''
+            tipo_doc = doc.get('tipoProposta', '') or doc.get('tipo', '') or ''
+            nome = doc.get('nome', '') or ''
+            texto_busca = f"{desc} {tipo_doc} {nome}".upper()
+
+            if any(p.upper() in texto_busca for p in palavras):
+                data_raw = doc.get('dataApresentacao') or doc.get('data') or ''
+                data_fmt = ''
+                if data_raw:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(data_raw[:10])
+                        data_fmt = dt.strftime('%d/%m/%Y')
+                    except Exception:
+                        data_fmt = data_raw[:10]
+
+                tipo_label = 'Substitutivo' if 'SUBSTITUT' in texto_busca else 'Parecer do Relator'
+                return {
+                    'tipo':  tipo_label,
+                    'nome':  desc or nome or tipo_doc,
+                    'data':  data_fmt,
+                    'url':   doc.get('url', '') or doc.get('urlInteiroTeor', ''),
+                }
+    except Exception as e:
+        logger.warning(f"Erro ao buscar parecer de {id_proposicao}: {e}")
+    return None
+
 @app.route('/analisar_ia', methods=['POST'])
 @login_required
 def analisar_ia():
-    data    = request.get_json()
-    projeto = data.get('projeto', '')
-    ementa  = data.get('ementa', '')
-    autor   = data.get('autor', '')
-    relator = data.get('relator', '')
+    data         = request.get_json()
+    projeto      = data.get('projeto', '')
+    ementa       = data.get('ementa', '')
+    autor        = data.get('autor', '')
+    relator      = data.get('relator', '')
+    id_principal = data.get('id_principal', '')
 
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     groq_key   = os.environ.get('GROQ_API_KEY', '')
 
+    # Busca último parecer/substitutivo
+    parecer_info = None
+    if id_principal:
+        parecer_info = buscar_ultimo_parecer(id_principal)
+
+    # Monta linha de referência do documento
+    ref_doc = ''
+    if parecer_info:
+        ref_doc = f"\nDocumento de referência: {parecer_info['tipo']} — {parecer_info['nome']} (inserido em {parecer_info['data']})"
+
     prompt = f"""Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil.
 
-Analise a seguinte proposição e gere uma nota técnica objetiva em português:
+Analise a seguinte proposição e gere uma nota técnica em português usando HTML:
 
 **Proposição:** {projeto}
 **Autor(es):** {autor}
 **Relator:** {relator}
-**Ementa:** {ementa}
+**Ementa:** {ementa}{ref_doc}
 
-Gere a nota técnica com os seguintes tópicos em HTML simples (use <strong>, <br>, <ul>, <li>):
+Formate a resposta EXATAMENTE assim em HTML:
 
-1. <strong>Objetivo da Proposição</strong> — o que a proposta pretende fazer
-2. <strong>Principais Alterações</strong> — mudanças concretas propostas
-3. <strong>Impacto Esperado</strong> — efeitos práticos para a sociedade
-4. <strong>Pontos de Atenção</strong> — aspectos relevantes para o parlamentar
+<p><strong>Nota Técnica: Análise do {projeto}</strong></p>
+<p><em style="color:red;">Análise baseada em: [tipo e nome do documento mais recente, ex: Substitutivo do Relator inserido em DD/MM/AAAA. Se não houver documento informado, escreva: texto original da proposição]</em></p>
+<br>
+<p><strong>Objetivo da Proposição</strong><br>[texto]</p>
+<br>
+<p><strong>Principais Alterações</strong><br><ul><li>[item]</li><li>[item]</li></ul></p>
+<br>
+<p><strong>Impacto Esperado</strong><br>[texto]</p>
+<br>
+<p><strong>Pontos de Atenção</strong><br><ul><li>[item]</li><li>[item]</li></ul></p>
 
-Seja detalhado e técnico. Máximo 400 palavras."""
+Seja detalhado e técnico. Máximo 400 palavras. Não use ### ou ** no texto, apenas HTML."""
 
     # Tenta Gemini primeiro, fallback para Groq
     if gemini_key:
@@ -859,7 +921,7 @@ Seja detalhado e técnico. Máximo 400 palavras."""
             )
             r.raise_for_status()
             texto = r.json()['candidates'][0]['content']['parts'][0]['text']
-            return jsonify({'resumo': texto, 'fonte': 'gemini'})
+            return jsonify({'resumo': texto, 'fonte': 'gemini', 'parecer': parecer_info})
         except Exception as e:
             logger.warning(f"Gemini falhou, usando Groq: {e}")
 
@@ -878,7 +940,7 @@ Seja detalhado e técnico. Máximo 400 palavras."""
                 timeout=30
             )
             r.raise_for_status()
-            return jsonify({'resumo': r.json()['choices'][0]['message']['content'], 'fonte': 'groq'})
+            return jsonify({'resumo': r.json()['choices'][0]['message']['content'], 'fonte': 'groq', 'parecer': parecer_info})
         except Exception as e:
             logger.error(f"Groq também falhou: {e}")
             return jsonify({'error': str(e)}), 500
