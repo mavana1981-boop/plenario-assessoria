@@ -824,9 +824,9 @@ def analisar_ia():
     autor   = data.get('autor', '')
     relator = data.get('relator', '')
 
-    groq_key = os.environ.get('GROQ_API_KEY', '')
-    if not groq_key:
-        return jsonify({'error': 'Chave Groq não configurada.'}), 500
+    openai_key = os.environ.get('OPENAI_API_KEY', '')
+    if not openai_key:
+        return jsonify({'error': 'Chave OpenAI não configurada.'}), 500
 
     prompt = f"""Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil.
 
@@ -844,19 +844,24 @@ Gere a nota técnica com os seguintes tópicos em HTML simples (use <strong>, <b
 3. <strong>Impacto Esperado</strong> — efeitos práticos para a sociedade
 4. <strong>Pontos de Atenção</strong> — aspectos relevantes para o parlamentar
 
-Seja objetivo e técnico. Máximo 300 palavras."""
+Seja objetivo e técnico. Máximo 400 palavras."""
 
     try:
         r = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-            json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "max_tokens": 1024, "temperature": 0.3},
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {openai_key}", "Content-Type": "application/json"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 1024,
+                "temperature": 0.3
+            },
             timeout=30
         )
         r.raise_for_status()
         return jsonify({'resumo': r.json()['choices'][0]['message']['content']})
     except Exception as e:
-        logger.error(f"Erro Groq: {e}")
+        logger.error(f"Erro OpenAI: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/infografico/<int:evento_id>')
