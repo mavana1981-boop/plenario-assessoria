@@ -927,20 +927,26 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                     'Substitutivo' if 'SUBSTITUTIVO' in pag1 else 'PRLP'
                 )
 
-                # Extrai número do PRLP (ex: "PRLP n.6" ou "PRLP n. 6")
+                # Extrai número do PRLP (ex: "PRLP n.6", "PRLP N. 6", "PRLP n.°6")
                 numero_prlp = None
-                m_num = re.search(r'PRLP\s+n[º°.]?\s*(\d+)', pag1)
+                m_num = re.search(r'PRLP\s+[Nn][º°.]?\s*(\d+)', pag1)
                 if m_num:
                     numero_prlp = m_num.group(1)
 
-                # Extrai data do PDF — procura padrão DD/MM/AAAA
-                # No PDF do PRLP a data aparece na lateral: "Apresentação 13/05/2026"
-                m_data = re.search(r'APRESENTA[CÇ][AÃ]O\s+(\d{2}/\d{2}/\d{4})', pag1)
-                if not m_data:
-                    m_data = re.search(r'(\d{2}/\d{2}/\d{4})', pag1)
-                data = m_data.group(1) if m_data else ''
+                # Extrai data — prioriza "Apresentação DD/MM/AAAA" (data do PRLP)
+                # No PDF da Câmara aparece como texto rotacionado: "Apresentação: 13/05/2026"
+                data = ''
+                for padrao_data in [
+                    r'Apresenta[cç][aã]o[:\s]+(\d{2}/\d{2}/\d{4})',
+                    r'APRESENTA[CÇ][AÃ]O[:\s]+(\d{2}/\d{2}/\d{4})',
+                    r'(\d{2}/\d{2}/\d{4})',
+                ]:
+                    m_data = re.search(padrao_data, pag1, re.IGNORECASE)
+                    if m_data:
+                        data = m_data.group(1)
+                        break
 
-                # Se não achou data no PDF, busca na API
+                # Se não achou no PDF, busca na API
                 if not data:
                     try:
                         r_api = requests.get(
