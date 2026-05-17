@@ -283,6 +283,13 @@
                     <img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">
                     Gerar Análise
                   </button>
+                  <button class="btn btn-outline-secondary btn-sm ms-1" type="button"
+                    title="Verificar último documento disponível (PRLP/Substitutivo)"
+                    data-id-principal="{{ item.id_principal }}"
+                    data-projeto="{{ item.projeto }}"
+                    onclick="verificarUltimoDoc(this)">
+                    <i class="fas fa-search me-1"></i>Último doc.
+                  </button>
                 </div>
                 <small class="text-muted">A análise será inserida automaticamente no campo de Resumo/Nota Técnica.</small>
               </div>
@@ -974,7 +981,27 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
     document.getElementById('input-objeto').value = '';
     document.querySelectorAll('.btn-tipo-msg, .btn-objeto').forEach(b => b.classList.remove('active'));
   });
-  async function limparCacheEvento(eventoId) {
+  async function verificarUltimoDoc(btn) {
+    const idPrincipal = btn.dataset.idPrincipal;
+    const projeto     = btn.dataset.projeto;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>';
+    try {
+      const r = await fetch(`/verificar_doc/${idPrincipal}`);
+      const j = await r.json();
+      if (j.tipo) {
+        const msg = `${projeto}\n\nÚltimo documento: ${j.tipo}\nData: ${j.data || 'não informada'}\n\nA análise usará este documento.`;
+        alert(msg);
+      } else {
+        alert(`${projeto}\n\nNenhum PRLP ou Substitutivo de plenário encontrado.\nA análise usará a ementa original.`);
+      }
+    } catch(e) {
+      alert('Erro ao verificar: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-search me-1"></i>Último doc.';
+    }
+  }
     if (!confirm('Limpar cache desta pauta? Os títulos de REQ serão reprocessados ao atualizar.')) return;
     const r = await fetch(`/limpar_cache/${eventoId}`, {method: 'POST'});
     const j = await r.json();
