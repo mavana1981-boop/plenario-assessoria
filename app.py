@@ -1387,6 +1387,32 @@ def debug_docs(codigo):
             resultado['endpoints'].append({'url': url.split('camara.leg.br')[1], 'erro': str(e)})
 
     resultado['parecer'] = buscar_ultimo_parecer(id_prop)
+
+    # Debug da página de tramitação
+    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
+    url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_prop}"
+    try:
+        from bs4 import BeautifulSoup
+        r_tram = requests.get(url_tram, headers=headers, timeout=12)
+        resultado['tram_status'] = r_tram.status_code
+        resultado['tram_url'] = url_tram
+        if r_tram.ok:
+            soup = BeautifulSoup(r_tram.text, 'html.parser')
+            # Todos os links com codteor
+            links_codteor = []
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                txt  = a.get_text(strip=True)
+                if 'codteor' in href.lower() or 'mostrarintegra' in href.lower():
+                    links_codteor.append({'texto': txt[:60], 'href': href[:120]})
+            resultado['links_codteor'] = links_codteor[:20]
+            # Texto bruto com PRLP ou SBT
+            texto_pag = soup.get_text()
+            prlp_mencoes = [l.strip() for l in texto_pag.split('\n') if 'PRLP' in l.upper() or 'SBT' in l.upper() or 'SUBSTITUT' in l.upper()]
+            resultado['mencoes_prlp_sbt'] = prlp_mencoes[:10]
+    except Exception as e:
+        resultado['tram_erro'] = str(e)
+
     resultado['texto_prlp_sbt'] = buscar_texto_prlp_ou_sbt(id_prop)
     return jsonify(resultado)
 
