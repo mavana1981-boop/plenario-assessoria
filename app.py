@@ -884,6 +884,20 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
 
                 m_data = re.search(r'(\d{2}/\d{2}/\d{4})', pag1)
                 data   = m_data.group(1) if m_data else ''
+
+                # Se não achou data no PDF, busca na API
+                if not data:
+                    try:
+                        r_api = requests.get(
+                            f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}",
+                            headers=headers, timeout=8
+                        )
+                        if r_api.ok:
+                            dh = r_api.json().get('dados', {}).get('statusProposicao', {}).get('dataHora', '')
+                            if dh:
+                                data = datetime.fromisoformat(str(dh)[:10]).strftime('%d/%m/%Y')
+                    except Exception:
+                        pass
                 logger.info(f"Documento {tipo} ({label}) para {id_proposicao}: {len(texto)} chars")
                 return {'tipo': tipo, 'data': data, 'texto': texto[:8000]}
             except Exception as e:
