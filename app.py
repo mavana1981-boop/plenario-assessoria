@@ -1153,6 +1153,17 @@ def exportar_orientacoes_pdf():
     resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
     return resp
 
+@app.route('/debug_docs/<int:id_prop>')
+@login_required
+def debug_docs(id_prop):
+    """Debug dos documentos de uma proposição."""
+    url = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}/documentos?itens=10&ordem=DESC"
+    r = requests.get(url, headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0'}, timeout=10)
+    if not r.ok:
+        return jsonify({'erro': r.status_code})
+    docs = r.json().get('dados', [])
+    return jsonify({'total': len(docs), 'documentos': docs[:5]})
+
 @app.route('/debug_matching/<int:evento_id>')
 @login_required
 def debug_matching(evento_id):
