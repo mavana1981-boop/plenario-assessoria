@@ -863,17 +863,47 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                 if m_tram:
                     tramitacoes.append((int(m_tram.group(1)), url_doc))
 
-        # Ordem de teste: PRLP/SBT (último primeiro) → tramitações recentes → avulso
+        # Ordena: PRLP/SBT por filename → tramitações recentes (verifica PDF) → avulso
         tramitacoes.sort(key=lambda x: x[0], reverse=True)
         candidatos = []
-        for tipo, url in reversed(prlp_sbt_urls):  # mais recente (maior índice) primeiro
+        for tipo, url in reversed(prlp_sbt_urls):
             candidatos.append((tipo, url))
-        for num, url in tramitacoes[:5]:
+        for num, url in tramitacoes[:8]:  # aumenta para 8 tramitações
             candidatos.append((f'tram-{num}', url))
         if avulso_url:
             candidatos.append(('avulso', avulso_url))
 
-        palavras_prlp_sbt = ['PRLP', 'PARECER PRELIMINAR', 'SUBSTITUTIVO']
+        # Estratégia extra: rastreia links próximos às menções de PRLP/SBT no HTML
+        # As menções são "Apresentação do PRLP n. X PLEN" mas o link está na linha anterior/posterior
+        texto_html = r.text
+        for m in re.finditer(r'PRLP|SUBSTITUT', texto_html, re.IGNORECASE):
+            # Pega trecho ao redor da menção
+            inicio = max(0, m.start() - 500)
+            fim    = min(len(texto_html), m.end() + 500)
+            trecho = texto_html[inicio:fim]
+            # Extrai codteors do trecho
+            for ct in re.findall(r'codteor=(\d+)', trecho):
+                url_doc = f"https://www.camara.leg.br/proposicoesWeb/prop_mostrarintegra?codteor={ct}"
+                # Evita duplicatas
+                if not any(url_doc in c[1] for c in candidatos):
+                    candidatos.append((f'prlp-html-{ct}', url_doc))
+
+        # Remove duplicatas preservando ordem
+        vistos = set()
+        candidatos_unicos = []
+        for label, url in candidatos:
+            if url not in vistos:
+                vistos.add(url)
+                candidatos_unicos.append((label, url))
+        candidatos = candidatos_unicos
+
+        palavras_prlp_sbt = [
+            'PRLP',
+            'PARECER PRELIMINAR',
+            'SUBSTITUTIVO',
+            'PARECER DE PLEN',
+            'PARECER DO RELATOR DE PLEN',
+        ]
 
         for label, url_doc in candidatos:
             url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
