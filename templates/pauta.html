@@ -270,6 +270,22 @@
               <!-- 🔵 EDIÇÃO PARA ADMIN E ASSESSOR PLENÁRIO -->
               <div class="mt-2">
                 <label class="form-label small"><strong>Gerar sugestão de análise (Projeto principal):</strong></label>
+
+                <!-- Botão procurar último parecer -->
+                <div class="mb-2">
+                  <button class="btn btn-outline-info btn-sm" type="button"
+                    id="btn-ultimo-doc-{{ item.ordem }}"
+                    data-id-principal="{{ item.id_principal }}"
+                    data-projeto="{{ item.projeto }}"
+                    data-ordem="{{ item.ordem }}"
+                    onclick="verificarUltimoDoc(this)">
+                    <i class="fas fa-search me-1"></i>Procurar último parecer (PRLP/Substitutivo)
+                  </button>
+                  <div id="ultimo-doc-resultado-{{ item.ordem }}" class="mt-1" style="display:none;">
+                    <small class="text-info fw-bold" id="ultimo-doc-texto-{{ item.ordem }}"></small>
+                  </div>
+                </div>
+
                 <div class="input-group mb-2">
                   <input type="text" id="numero_pl_{{ item.ordem }}" class="form-control" placeholder="Ex: PL 4363/2025">
                   <button class="btn btn-outline-primary btn-gerar-analise" type="button"
@@ -282,13 +298,6 @@
                     onclick="gerarAnalise('{{ item.ordem }}', this)">
                     <img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">
                     Gerar Análise
-                  </button>
-                  <button class="btn btn-outline-secondary btn-sm ms-1" type="button"
-                    title="Procura o último PRLP ou Substitutivo de plenário"
-                    data-id-principal="{{ item.id_principal }}"
-                    data-projeto="{{ item.projeto }}"
-                    onclick="verificarUltimoDoc(this)">
-                    <i class="fas fa-search me-1"></i>Procurar último parecer
                   </button>
                 </div>
                 <small class="text-muted">A análise será inserida automaticamente no campo de Resumo/Nota Técnica.</small>
@@ -984,27 +993,42 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
   async function verificarUltimoDoc(btn) {
     const idPrincipal = btn.dataset.idPrincipal;
     const projeto     = btn.dataset.projeto;
+    const ordem       = btn.dataset.ordem;
+
     if (!idPrincipal) {
       alert('ID da proposição não encontrado.');
       return;
     }
+
+    const resultadoDiv  = document.getElementById(`ultimo-doc-resultado-${ordem}`);
+    const resultadoTexto = document.getElementById(`ultimo-doc-texto-${ordem}`);
+
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando...';
+
     try {
       const r = await fetch(`/verificar_doc/${idPrincipal}`);
       const j = await r.json();
-      console.log('verificar_doc result:', j);
+
       if (j.tipo) {
-        alert(`${projeto}\n\nÚltimo documento encontrado:\n• Tipo: ${j.tipo}\n• Data: ${j.data || 'não informada'}\n• Texto extraído: ${j.tem_texto ? 'Sim' : 'Não'}\n\nA análise (botão "Gerar Análise") usará este documento.`);
+        const numStr  = j.numero ? ` nº ${j.numero}` : '';
+        const dataStr = j.data   ? ` — ${j.data}` : '';
+        resultadoTexto.innerHTML =
+          `<i class="fas fa-check-circle text-success me-1"></i>` +
+          `Último documento: <strong>${j.tipo}${numStr}</strong>${dataStr}` +
+          ` <span class="text-success">(texto disponível para análise)</span>`;
+        resultadoDiv.style.display = 'block';
       } else {
-        alert(`${projeto}\n\nNenhum PRLP ou Substitutivo de plenário encontrado.\nA análise usará a ementa original da proposição.`);
+        resultadoTexto.innerHTML =
+          `<i class="fas fa-info-circle text-warning me-1"></i>` +
+          `Nenhum PRLP ou Substitutivo de plenário encontrado. A análise usará a ementa.`;
+        resultadoDiv.style.display = 'block';
       }
     } catch(e) {
       alert('Erro ao buscar documento: ' + e.message);
-      console.error(e);
     } finally {
       btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-search me-1"></i>Procurar último parecer';
+      btn.innerHTML = '<i class="fas fa-search me-1"></i>Procurar último parecer (PRLP/Substitutivo)';
     }
   }
     if (!confirm('Limpar cache desta pauta? Os títulos de REQ serão reprocessados ao atualizar.')) return;
