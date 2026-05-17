@@ -927,8 +927,18 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                     'Substitutivo' if 'SUBSTITUTIVO' in pag1 else 'PRLP'
                 )
 
-                m_data = re.search(r'(\d{2}/\d{2}/\d{4})', pag1)
-                data   = m_data.group(1) if m_data else ''
+                # Extrai número do PRLP (ex: "PRLP n.6" ou "PRLP n. 6")
+                numero_prlp = None
+                m_num = re.search(r'PRLP\s+n[º°.]?\s*(\d+)', pag1)
+                if m_num:
+                    numero_prlp = m_num.group(1)
+
+                # Extrai data do PDF — procura padrão DD/MM/AAAA
+                # No PDF do PRLP a data aparece na lateral: "Apresentação 13/05/2026"
+                m_data = re.search(r'APRESENTA[CÇ][AÃ]O\s+(\d{2}/\d{2}/\d{4})', pag1)
+                if not m_data:
+                    m_data = re.search(r'(\d{2}/\d{2}/\d{4})', pag1)
+                data = m_data.group(1) if m_data else ''
 
                 # Se não achou data no PDF, busca na API
                 if not data:
@@ -943,8 +953,8 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                                 data = datetime.fromisoformat(str(dh)[:10]).strftime('%d/%m/%Y')
                     except Exception:
                         pass
-                logger.info(f"Documento {tipo} ({label}) para {id_proposicao}: {len(texto)} chars")
-                return {'tipo': tipo, 'data': data, 'texto': texto[:8000]}
+                logger.info(f"Documento {tipo} ({label}) para {id_proposicao}: {len(texto)} chars, PRLP nº {numero_prlp}, data {data}")
+                return {'tipo': tipo, 'numero': numero_prlp, 'data': data, 'texto': texto[:8000]}
             except Exception as e:
                 logger.warning(f"Erro ao processar {label}: {e}")
                 continue
@@ -1094,7 +1104,8 @@ TEXTO COMPLETO DO DOCUMENTO:
 
 ---
 Faça a análise com base no texto acima, não na ementa original."""
-        ref_linha = f"{doc_plenario['tipo']} de {doc_plenario['data']}"
+        num_str   = f" nº {doc_plenario['numero']}" if doc_plenario.get('numero') else ''
+        ref_linha = f"{doc_plenario['tipo']}{num_str} de {doc_plenario.get('data','')}"
     elif parecer_info:
         contexto_doc = f"\nDocumento de referência: {parecer_info['tipo']} de {parecer_info.get('data','')}"
         ref_linha = f"{parecer_info['tipo']} de {parecer_info.get('data','')}"
@@ -1374,11 +1385,16 @@ def exportar_orientacoes_pdf():
 @app.route('/verificar_doc/<int:id_prop>')
 @login_required
 def verificar_doc(id_prop):
-    """Retorna o tipo e data do último PRLP/Substitutivo de plenário disponível."""
+    """Retorna tipo, número e data do último PRLP/Substitutivo de plenário."""
     doc = buscar_texto_prlp_ou_sbt(id_prop)
     if doc:
-        return jsonify({'tipo': doc.get('tipo'), 'data': doc.get('data'), 'tem_texto': bool(doc.get('texto'))})
-    return jsonify({'tipo': None, 'data': None})
+        return jsonify({
+            'tipo':      doc.get('tipo'),
+            'numero':    doc.get('numero'),
+            'data':      doc.get('data'),
+            'tem_texto': bool(doc.get('texto'))
+        })
+    return jsonify({'tipo': None, 'data': None, 'numero': None})
 
 @app.route('/debug_docs/<path:codigo>')
 @login_required
