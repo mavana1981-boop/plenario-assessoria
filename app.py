@@ -1387,6 +1387,7 @@ def debug_docs(codigo):
             resultado['endpoints'].append({'url': url.split('camara.leg.br')[1], 'erro': str(e)})
 
     resultado['parecer'] = buscar_ultimo_parecer(id_prop)
+    resultado['texto_prlp_sbt'] = buscar_texto_prlp_ou_sbt(id_prop)
     return jsonify(resultado)
 
 @app.route('/debug_matching/<int:evento_id>')
