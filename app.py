@@ -834,32 +834,39 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
 
         soup = BeautifulSoup(r.text, 'html.parser')
 
-        # Coleta todos os links com codteor
-        avulso_url = None
-        tramitacoes = []  # [(num, url)]
+        # Coleta links: primeiro PRLP/SBT pelo filename, depois tramitações recentes, depois avulso
+        prlp_sbt_urls = []  # [(label, url)] com PRLP/SBT no filename
+        tramitacoes   = []  # [(num, url)]
+        avulso_url    = None
 
         for a in soup.find_all('a', href=True):
             href = a['href']
             if 'codteor' not in href.lower():
                 continue
-            url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-            m_fn = re.search(r'filename=([^&"]+)', href)
-            filename = m_fn.group(1) if m_fn else ''
-            # Avulso tem prioridade
-            if 'Avulso' in filename:
-                avulso_url = url_doc
-            # Tramitações numeradas
-            m_tram = re.search(r'Tramitacao-(\d+)-', filename)
-            if m_tram:
-                tramitacoes.append((int(m_tram.group(1)), url_doc))
+            url_doc  = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+            m_fn     = re.search(r'filename=([^&"]+)', href)
+            filename = (m_fn.group(1) if m_fn else '').upper()
 
-        # Ordena: avulso primeiro, depois tramitações do mais recente ao mais antigo
+            # PRLP ou SBT no filename — prioridade máxima
+            if any(p in filename for p in ['PRLP', 'SBT', 'SUBSTITUT']):
+                tipo = 'Substitutivo' if any(p in filename for p in ['SBT', 'SUBSTITUT']) else 'PRLP'
+                prlp_sbt_urls.append((tipo, url_doc))
+            elif 'AVULSO' in filename:
+                avulso_url = url_doc
+            else:
+                m_tram = re.search(r'Tramitacao-(\d+)-', filename)
+                if m_tram:
+                    tramitacoes.append((int(m_tram.group(1)), url_doc))
+
+        # Ordem de teste: PRLP/SBT (último primeiro) → tramitações recentes → avulso
         tramitacoes.sort(key=lambda x: x[0], reverse=True)
         candidatos = []
-        if avulso_url:
-            candidatos.append(('avulso', avulso_url))
+        for tipo, url in reversed(prlp_sbt_urls):  # mais recente (maior índice) primeiro
+            candidatos.append((tipo, url))
         for num, url in tramitacoes[:5]:
             candidatos.append((f'tram-{num}', url))
+        if avulso_url:
+            candidatos.append(('avulso', avulso_url))
 
         palavras_prlp_sbt = ['PRLP', 'PARECER PRELIMINAR', 'SUBSTITUTIVO']
 
@@ -873,14 +880,17 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                     pag1  = (pdf.pages[0].extract_text() or '').upper()
                     texto = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
 
-                # Avulso: aceita sempre (contém texto consolidado com Substitutivo)
-                # Tramitações: só aceita se contiver PRLP ou Substitutivo
-                if label == 'avulso':
-                    tipo = 'Substitutivo' if 'SUBSTITUTIVO' in pag1 else 'Texto Atualizado (Avulso)'
-                elif any(p in pag1 for p in palavras_prlp_sbt):
-                    tipo = 'Substitutivo' if 'SUBSTITUTIVO' in pag1 else 'PRLP'
-                else:
-                    continue  # não é PRLP/SBT, testa próximo
+                # PRLP/SBT identificados pelo filename: aceita sempre
+                # Tramitações e Avulso: só aceita se contiver PRLP/Substitutivo
+                eh_prlp_fn = label in ('PRLP', 'Substitutivo')
+                eh_prlp_txt = any(p in pag1 for p in palavras_prlp_sbt)
+
+                if not eh_prlp_fn and not eh_prlp_txt:
+                    continue
+
+                tipo = label if eh_prlp_fn else (
+                    'Substitutivo' if 'SUBSTITUTIVO' in pag1 else 'PRLP'
+                )
 
                 m_data = re.search(r'(\d{2}/\d{2}/\d{4})', pag1)
                 data   = m_data.group(1) if m_data else ''
@@ -1325,6 +1335,15 @@ def exportar_orientacoes_pdf():
     resp.headers["Content-Type"] = "application/pdf"
     resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
     return resp
+
+@app.route('/verificar_doc/<int:id_prop>')
+@login_required
+def verificar_doc(id_prop):
+    """Retorna o tipo e data do último PRLP/Substitutivo de plenário disponível."""
+    doc = buscar_texto_prlp_ou_sbt(id_prop)
+    if doc:
+        return jsonify({'tipo': doc.get('tipo'), 'data': doc.get('data'), 'tem_texto': bool(doc.get('texto'))})
+    return jsonify({'tipo': None, 'data': None})
 
 @app.route('/debug_docs/<path:codigo>')
 @login_required
