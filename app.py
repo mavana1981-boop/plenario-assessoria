@@ -815,6 +815,27 @@ def buscar_destaques(id_proposicao):
         logger.warning(f"Falha ao buscar destaques de {id_proposicao}: {e}")
         return jsonify({'destaques': [], 'total': 0, 'erro': str(e)})
 
+def _extrair_nome_doc_despacho(despacho, tipo_label):
+    """
+    Extrai nome descritivo do documento a partir do texto do despacho.
+    Ex: "aprovação do Substitutivo ao PL nº 1.054/2019, adotado pela relatora da Comissão de Administração"
+    → "Substitutivo adotado pela relatora da Comissão de Administração e Serviço Público"
+    """
+    if not despacho:
+        return tipo_label
+
+    # Tenta extrair "adotado por X da Comissão Y"
+    m = re.search(
+        r'adotad[ao]\s+pel[ao]\s+(?:relator[a]?\s+)?(?:dep\.\s+)?(.{5,80}?)(?:\s*[\.\(]|$)',
+        despacho, re.IGNORECASE
+    )
+    if m:
+        quem = m.group(1).strip().rstrip('.,;')
+        return f"{tipo_label} adotado por {quem}"
+
+    # Fallback: retorna o tipo + primeiros 80 chars do despacho
+    return f"{tipo_label} ({despacho[:80].strip()}...)" if len(despacho) > 80 else tipo_label
+
 def buscar_ultimo_parecer(id_proposicao):
     """
     Busca o último PRLP ou Substitutivo de Plenário via tramitações da proposição.
@@ -867,14 +888,15 @@ def buscar_ultimo_parecer(id_proposicao):
                         data_fmt = str(data_hora)[:10]
 
                 tipo_label = 'Substitutivo' if 'SUBSTITUT' in texto_busca else 'Parecer Preliminar de Plenário (PRLP)'
-                desc_curta = (t.get('descricaoTramitacao') or '').strip()
+                despacho_orig = t.get('despacho', '') or ''
+                nome_doc = _extrair_nome_doc_despacho(despacho_orig, tipo_label)
 
                 logger.info(f"Parecer plenário encontrado para {id_proposicao}: {tipo_label} em {data_fmt}")
                 return {
-                    'tipo':     tipo_label,
-                    'nome':     desc_curta,
-                    'data':     data_fmt,
-                    'orgao':    t.get('siglaOrgao', ''),
+                    'tipo':  tipo_label,
+                    'nome':  nome_doc,
+                    'data':  data_fmt,
+                    'orgao': t.get('siglaOrgao', ''),
                 }
 
         # Fallback: usa statusProposicao do endpoint principal
@@ -902,10 +924,17 @@ def buscar_ultimo_parecer(id_proposicao):
                     except Exception:
                         data_fmt = str(data_hora)[:10]
 
-                tipo_label = 'Substitutivo' if 'SUBSTITUT' in f"{despacho} {tramitacao}" else 'PRLP'
+                despacho_orig = status.get('despacho', '') or ''
+                tramitacao_orig = status.get('descricaoTramitacao', '') or ''
+                texto_upper = f"{despacho_orig} {tramitacao_orig}".upper()
+                tipo_label = 'Substitutivo' if 'SUBSTITUT' in texto_upper else 'PRLP'
+
+                # Extrai nome descritivo do despacho
+                nome_doc = _extrair_nome_doc_despacho(despacho_orig, tipo_label)
+
                 return {
                     'tipo':  tipo_label,
-                    'nome':  status.get('descricaoTramitacao', ''),
+                    'nome':  nome_doc,
                     'data':  data_fmt,
                     'orgao': status.get('siglaOrgao', ''),
                 }
