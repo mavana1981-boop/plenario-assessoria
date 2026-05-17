@@ -1198,51 +1198,56 @@ def exportar_orientacoes_pdf():
 @app.route('/debug_docs/<path:codigo>')
 @login_required
 def debug_docs(codigo):
-    """Debug dos documentos de uma proposição. Aceita id numérico ou 'PL-1054-2019'."""
+    """Debug dos documentos. Aceita id numérico ou 'PL-1054-2019'."""
     headers = {'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}
-    resultado = {'codigo': codigo, 'tentativas': []}
+    resultado = {'codigo': codigo}
 
-    # Se for código no formato "PL-1054-2019", busca o id via API
+    # Resolve id
     id_prop = None
     if '-' in str(codigo):
         partes = str(codigo).split('-')
         if len(partes) == 3:
             sigla, numero, ano = partes
-            url_busca = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?sigla={sigla}&numero={numero}&ano={ano}&itens=1"
+            # Parâmetro correto é siglaTipo
+            url_busca = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla}&numero={numero}&ano={ano}&itens=1"
             try:
                 r = requests.get(url_busca, headers=headers, timeout=10)
+                resultado['busca_status'] = r.status_code
+                resultado['busca_url'] = url_busca
                 if r.ok:
                     dados = r.json().get('dados', [])
+                    resultado['busca_dados'] = dados
                     if dados:
                         id_prop = dados[0].get('id')
-                        resultado['id_encontrado'] = id_prop
-                        resultado['prop'] = dados[0]
             except Exception as e:
-                resultado['erro_busca'] = str(e)
+                resultado['busca_erro'] = str(e)
     else:
         id_prop = int(codigo)
 
+    resultado['id_prop'] = id_prop
     if not id_prop:
-        return jsonify({'erro': 'ID não encontrado', **resultado})
+        return jsonify(resultado)
 
-    # Testa endpoints de documentos
+    # Testa vários endpoints
     urls = [
         f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}/documentos?itens=10&ordem=DESC",
         f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}/textos",
+        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}",
     ]
+    resultado['endpoints'] = []
     for url in urls:
         try:
             r = requests.get(url, headers=headers, timeout=10)
-            dados = r.json().get('dados', []) if r.ok else []
-            resultado['tentativas'].append({
-                'url': url[-60:], 'status': r.status_code,
-                'total': len(dados),
-                'primeiros': dados[:3]
+            body = r.json() if r.ok else r.text[:200]
+            resultado['endpoints'].append({
+                'url': url.split('camara.leg.br')[1],
+                'status': r.status_code,
+                'body': body if isinstance(body, dict) else body
             })
         except Exception as e:
-            resultado['tentativas'].append({'url': url[-60:], 'erro': str(e)})
+            resultado['endpoints'].append({'url': url.split('camara.leg.br')[1], 'erro': str(e)})
 
-    resultado['buscar_ultimo_parecer'] = buscar_ultimo_parecer(id_prop)
+    resultado['parecer'] = buscar_ultimo_parecer(id_prop)
     return jsonify(resultado)
 
 @app.route('/debug_matching/<int:evento_id>')
