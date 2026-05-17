@@ -817,48 +817,90 @@ def buscar_destaques(id_proposicao):
 
 def buscar_ultimo_parecer(id_proposicao):
     """
-    Busca o último parecer ou substitutivo da proposição via API da Câmara.
-    Retorna dict {tipo, numero, data, url} ou None.
+    Busca o último parecer ou substitutivo da proposição.
+    Tenta múltiplos endpoints da API da Câmara.
+    Retorna dict {tipo, nome, data} ou None.
     """
-    try:
-        url = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/documentos?itens=20&ordem=DESC"
-        r = requests.get(url, headers={
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'
-        }, timeout=10)
-        if not r.ok:
-            return None
+    headers = {'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}
 
-        docs = r.json().get('dados', [])
-        # Palavras-chave que indicam parecer ou substitutivo
-        palavras = ['PRLP', 'SUBSTITUTIVO', 'PARECER', 'Substitutivo', 'Parecer']
-        for doc in docs:
-            desc = doc.get('descricao', '') or ''
-            tipo_doc = doc.get('tipoProposta', '') or doc.get('tipo', '') or ''
-            nome = doc.get('nome', '') or ''
-            texto_busca = f"{desc} {tipo_doc} {nome}".upper()
+    # Endpoint 1: documentos da proposição
+    urls = [
+        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/documentos?itens=20&ordem=DESC",
+        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/textos",
+    ]
 
-            if any(p.upper() in texto_busca for p in palavras):
-                data_raw = doc.get('dataApresentacao') or doc.get('data') or ''
+    docs = []
+    for url in urls:
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            if r.ok:
+                data = r.json()
+                docs = data.get('dados', [])
+                if docs:
+                    break
+        except Exception:
+            continue
+
+    if not docs:
+        return None
+
+    # Palavras-chave para identificar parecer/substitutivo — do mais relevante ao menos
+    prioridade = [
+        ('SBT', 'Substitutivo'),
+        ('SUBSTITUT', 'Substitutivo'),
+        ('PRLP', 'Parecer do Relator de Plenário'),
+        ('PARECER', 'Parecer do Relator'),
+        ('COMPLEMENTAÇÃO', 'Complementação de Voto'),
+    ]
+
+    # Documentos já vêm em ordem DESC (mais recente primeiro)
+    for doc in docs:
+        # Junta todos os campos de texto para busca
+        campos = ' '.join([
+            str(doc.get('descricao', '') or ''),
+            str(doc.get('tipoProposta', '') or ''),
+            str(doc.get('tipo', '') or ''),
+            str(doc.get('nome', '') or ''),
+            str(doc.get('codTipo', '') or ''),
+        ]).upper()
+
+        for chave, label in prioridade:
+            if chave in campos:
+                # Extrai data
+                data_raw = (doc.get('dataApresentacao') or
+                            doc.get('data') or
+                            doc.get('dataTexto') or '')
                 data_fmt = ''
                 if data_raw:
                     try:
-                        from datetime import datetime
-                        dt = datetime.fromisoformat(data_raw[:10])
+                        dt = datetime.fromisoformat(str(data_raw)[:10])
                         data_fmt = dt.strftime('%d/%m/%Y')
                     except Exception:
-                        data_fmt = data_raw[:10]
+                        data_fmt = str(data_raw)[:10]
 
-                tipo_label = 'Substitutivo' if 'SUBSTITUT' in texto_busca else 'Parecer do Relator'
+                # Monta nome descritivo
+                desc = (doc.get('descricao') or doc.get('nome') or
+                        doc.get('tipoProposta') or label)
+
+                logger.info(f"Documento encontrado para {id_proposicao}: {label} — {desc} em {data_fmt}")
                 return {
-                    'tipo':  tipo_label,
-                    'nome':  desc or nome or tipo_doc,
-                    'data':  data_fmt,
-                    'url':   doc.get('url', '') or doc.get('urlInteiroTeor', ''),
+                    'tipo': label,
+                    'nome': desc,
+                    'data': data_fmt,
                 }
-    except Exception as e:
-        logger.warning(f"Erro ao buscar parecer de {id_proposicao}: {e}")
-    return None
+
+    # Nenhum parecer/substitutivo — retorna o documento mais recente
+    doc = docs[0]
+    data_raw = doc.get('dataApresentacao') or doc.get('data') or ''
+    data_fmt = ''
+    if data_raw:
+        try:
+            dt = datetime.fromisoformat(str(data_raw)[:10])
+            data_fmt = dt.strftime('%d/%m/%Y')
+        except Exception:
+            data_fmt = str(data_raw)[:10]
+    desc = doc.get('descricao') or doc.get('nome') or doc.get('tipoProposta') or ''
+    return {'tipo': 'Documento', 'nome': desc, 'data': data_fmt} if desc else None
 
 @app.route('/analisar_ia', methods=['POST'])
 @login_required
@@ -1157,12 +1199,26 @@ def exportar_orientacoes_pdf():
 @login_required
 def debug_docs(id_prop):
     """Debug dos documentos de uma proposição."""
-    url = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}/documentos?itens=10&ordem=DESC"
-    r = requests.get(url, headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0'}, timeout=10)
-    if not r.ok:
-        return jsonify({'erro': r.status_code})
-    docs = r.json().get('dados', [])
-    return jsonify({'total': len(docs), 'documentos': docs[:5]})
+    resultado = {'id': id_prop, 'tentativas': []}
+    headers = {'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}
+    urls = [
+        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}/documentos?itens=10&ordem=DESC",
+        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}/textos",
+    ]
+    for url in urls:
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            dados = r.json().get('dados', []) if r.ok else []
+            resultado['tentativas'].append({
+                'url': url, 'status': r.status_code,
+                'total': len(dados),
+                'primeiros': dados[:3]
+            })
+        except Exception as e:
+            resultado['tentativas'].append({'url': url, 'erro': str(e)})
+    # Também testa a função
+    resultado['buscar_ultimo_parecer'] = buscar_ultimo_parecer(id_prop)
+    return jsonify(resultado)
 
 @app.route('/debug_matching/<int:evento_id>')
 @login_required
