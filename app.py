@@ -848,7 +848,12 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
             filename = (m_fn.group(1) if m_fn else '').upper()
 
             # PRLP ou SBT no filename — prioridade máxima
-            if any(p in filename for p in ['PRLP', 'SBT', 'SUBSTITUT']):
+            # Filenames: PRLP-1-PL-X, SBT-1-PL-X, Parecer-PLEN-*, Substitutivo-*
+            eh_prlp_fn = any(p in filename for p in ['PRLP', 'SBT', 'SUBSTITUT'])
+            eh_parecer_plen = ('PARECER' in filename and
+                               any(p in filename for p in ['PLEN', 'PLENARIO', 'PLENÁRIO']))
+
+            if eh_prlp_fn or eh_parecer_plen:
                 tipo = 'Substitutivo' if any(p in filename for p in ['SBT', 'SUBSTITUT']) else 'PRLP'
                 prlp_sbt_urls.append((tipo, url_doc))
             elif 'AVULSO' in filename:
