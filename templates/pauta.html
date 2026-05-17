@@ -278,6 +278,7 @@
                     data-ementa="{{ item.ementa | replace('"', '') | replace("'", '') | truncate(400, True, '') }}"
                     data-autor="{{ item.autor }}"
                     data-relator="{{ item.relator }}"
+                    data-id-principal="{{ item.id_principal }}"
                     onclick="gerarAnalise('{{ item.ordem }}', this)">
                     <img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">
                     Gerar Análise
@@ -562,11 +563,12 @@
 
     // Botão Gerar Análise — usa ementa da proposição via Groq
     async function gerarAnalise(ordem, btn) {
-      const overlay = document.getElementById("overlay-" + ordem);
-      const ementa  = btn.dataset.ementa || '';
-      const projeto = btn.dataset.projeto || '';
-      const autor   = btn.dataset.autor || '';
-      const relator = btn.dataset.relator || '';
+      const overlay      = document.getElementById("overlay-" + ordem);
+      const ementa       = btn.dataset.ementa || '';
+      const projeto      = btn.dataset.projeto || '';
+      const autor        = btn.dataset.autor || '';
+      const relator      = btn.dataset.relator || '';
+      const id_principal = btn.dataset.idPrincipal || '';
 
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando...';
@@ -576,7 +578,7 @@
         const r = await fetch('/analisar_ia', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projeto, ementa, autor, relator })
+          body: JSON.stringify({ projeto, ementa, autor, relator, id_principal })
         });
         if (!r.ok) { alert('Erro do servidor: ' + await r.text()); return; }
         const j = await r.json();
