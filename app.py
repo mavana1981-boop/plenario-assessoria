@@ -824,9 +824,8 @@ def analisar_ia():
     autor   = data.get('autor', '')
     relator = data.get('relator', '')
 
-    openai_key = os.environ.get('OPENAI_API_KEY', '')
-    if not openai_key:
-        return jsonify({'error': 'Chave OpenAI não configurada.'}), 500
+    gemini_key = os.environ.get('GEMINI_API_KEY', '')
+    groq_key   = os.environ.get('GROQ_API_KEY', '')
 
     prompt = f"""Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil.
 
@@ -844,25 +843,47 @@ Gere a nota técnica com os seguintes tópicos em HTML simples (use <strong>, <b
 3. <strong>Impacto Esperado</strong> — efeitos práticos para a sociedade
 4. <strong>Pontos de Atenção</strong> — aspectos relevantes para o parlamentar
 
-Seja objetivo e técnico. Máximo 400 palavras."""
+Seja detalhado e técnico. Máximo 400 palavras."""
 
-    try:
-        r = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {openai_key}", "Content-Type": "application/json"},
-            json={
-                "model": "gpt-4o-mini",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 1024,
-                "temperature": 0.3
-            },
-            timeout=30
-        )
-        r.raise_for_status()
-        return jsonify({'resumo': r.json()['choices'][0]['message']['content']})
-    except Exception as e:
-        logger.error(f"Erro OpenAI: {e}")
-        return jsonify({'error': str(e)}), 500
+    # Tenta Gemini primeiro, fallback para Groq
+    if gemini_key:
+        try:
+            r = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={gemini_key}",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.3}
+                },
+                timeout=30
+            )
+            r.raise_for_status()
+            texto = r.json()['candidates'][0]['content']['parts'][0]['text']
+            return jsonify({'resumo': texto, 'fonte': 'gemini'})
+        except Exception as e:
+            logger.warning(f"Gemini falhou, usando Groq: {e}")
+
+    # Fallback: Groq
+    if groq_key:
+        try:
+            r = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 1024,
+                    "temperature": 0.3
+                },
+                timeout=30
+            )
+            r.raise_for_status()
+            return jsonify({'resumo': r.json()['choices'][0]['message']['content'], 'fonte': 'groq'})
+        except Exception as e:
+            logger.error(f"Groq também falhou: {e}")
+            return jsonify({'error': str(e)}), 500
+
+    return jsonify({'error': 'Nenhuma chave de IA configurada (GEMINI_API_KEY ou GROQ_API_KEY).'}), 500
 
 @app.route('/infografico/<int:evento_id>')
 @login_required
