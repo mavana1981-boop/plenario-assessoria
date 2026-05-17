@@ -815,7 +815,89 @@ def buscar_destaques(id_proposicao):
         logger.warning(f"Falha ao buscar destaques de {id_proposicao}: {e}")
         return jsonify({'destaques': [], 'total': 0, 'erro': str(e)})
 
-def _extrair_nome_doc_despacho(despacho, tipo_label):
+def buscar_texto_prlp_ou_sbt(id_proposicao):
+    """
+    Busca o texto completo do último PRLP ou Substitutivo de plenário.
+    1. Scrapa a página de tramitação da Câmara para encontrar o link do documento
+    2. Baixa o PDF e extrai o texto com pdfplumber
+    Retorna dict {tipo, data, texto} ou None.
+    """
+    from bs4 import BeautifulSoup
+    import pdfplumber
+    from io import BytesIO
+
+    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
+
+    # Página de tramitação da proposição
+    url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}"
+    try:
+        r = requests.get(url_tram, headers=headers, timeout=12)
+        if not r.ok:
+            return None
+
+        soup = BeautifulSoup(r.text, 'html.parser')
+
+        # Busca links de documentos PRLP ou Substitutivo em plenário
+        # A página lista documentos com texto como "PRLP 1 => PL X/AAAA" ou "SBT 1 => PL X/AAAA"
+        candidatos = []
+        for a in soup.find_all('a', href=True):
+            href  = a['href']
+            texto = a.get_text(strip=True).upper()
+            # Identifica PRLP ou Substitutivo
+            if any(p in texto for p in ['PRLP', 'SBT', 'SUBSTITUT']):
+                if 'codteor' in href.lower() or 'mostrarintegra' in href.lower():
+                    url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                    # Extrai data se disponível no contexto próximo
+                    data_txt = ''
+                    parent = a.find_parent(['td', 'li', 'div', 'tr'])
+                    if parent:
+                        m_data = re.search(r'(\d{2}/\d{2}/\d{4})', parent.get_text())
+                        if m_data:
+                            data_txt = m_data.group(1)
+                    candidatos.append({
+                        'texto': texto,
+                        'url':   url_doc,
+                        'data':  data_txt,
+                        'tipo':  'Substitutivo' if 'SBT' in texto or 'SUBSTITUT' in texto else 'PRLP',
+                    })
+
+        if not candidatos:
+            logger.info(f"Nenhum PRLP/SBT encontrado para {id_proposicao} na página de tramitação")
+            return None
+
+        # Pega o último (mais recente — geralmente o de maior número)
+        # PRLP 3 > PRLP 2 > PRLP 1; SBT tem prioridade sobre PRLP
+        sbts  = [c for c in candidatos if 'SBT' in c['texto'] or 'SUBSTITUT' in c['tipo']]
+        prlps = [c for c in candidatos if 'PRLP' in c['texto']]
+        doc   = sbts[-1] if sbts else prlps[-1] if prlps else candidatos[-1]
+
+        # Baixa o PDF
+        url_pdf = doc['url']
+        if 'tipo=PDF' not in url_pdf and 'pdf' not in url_pdf.lower():
+            url_pdf += ('&' if '?' in url_pdf else '?') + 'tipo=PDF'
+
+        rp = requests.get(url_pdf, headers=headers, timeout=20)
+        if not rp.ok or 'pdf' not in rp.headers.get('Content-Type', '').lower():
+            logger.warning(f"PDF não retornado para {url_pdf}: {rp.status_code}")
+            return None
+
+        # Extrai texto do PDF (máx 8000 chars para não estourar o contexto)
+        with pdfplumber.open(BytesIO(rp.content)) as pdf:
+            texto_completo = '\n'.join(
+                p.extract_text() or '' for p in pdf.pages
+            ).strip()
+
+        logger.info(f"Texto extraído do {doc['tipo']} para {id_proposicao}: {len(texto_completo)} chars")
+        return {
+            'tipo':  doc['tipo'],
+            'data':  doc['data'],
+            'texto': texto_completo[:8000],  # limita para caber no prompt
+            'url':   url_pdf,
+        }
+
+    except Exception as e:
+        logger.warning(f"Erro ao buscar texto PRLP/SBT de {id_proposicao}: {e}")
+    return None
     """
     Extrai nome descritivo do documento a partir do texto do despacho.
     Ex: "aprovação do Substitutivo ao PL nº 1.054/2019, adotado pela relatora da Comissão de Administração"
@@ -957,43 +1039,54 @@ def analisar_ia():
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     groq_key   = os.environ.get('GROQ_API_KEY', '')
 
-    # Busca último parecer/substitutivo
+    # Busca texto completo do último PRLP ou Substitutivo de plenário
+    doc_plenario = None
     parecer_info = None
     if id_principal:
-        parecer_info = buscar_ultimo_parecer(id_principal)
+        doc_plenario = buscar_texto_prlp_ou_sbt(id_principal)
+        if not doc_plenario:
+            parecer_info = buscar_ultimo_parecer(id_principal)
 
-    # Monta linha de referência do documento
-    ref_doc = ''
-    if parecer_info:
-        ref_doc = f"\nDocumento de referência: {parecer_info['tipo']} de {parecer_info['data']}"
-        if parecer_info.get('relator'):
-            ref_doc += f" — Relator(a): {parecer_info['relator']}"
-        if parecer_info.get('situacao'):
-            ref_doc += f" — Situação atual: {parecer_info['situacao']}"
+    # Monta contexto do documento para o prompt
+    if doc_plenario and doc_plenario.get('texto'):
+        contexto_doc = f"""
+Documento de referência: {doc_plenario['tipo']} de {doc_plenario['data']}
+
+TEXTO COMPLETO DO DOCUMENTO:
+{doc_plenario['texto']}
+
+---
+Faça a análise com base no texto acima, não na ementa original."""
+        ref_linha = f"{doc_plenario['tipo']} de {doc_plenario['data']}"
+    elif parecer_info:
+        contexto_doc = f"\nDocumento de referência: {parecer_info['tipo']} de {parecer_info.get('data','')}"
+        ref_linha = f"{parecer_info['tipo']} de {parecer_info.get('data','')}"
+    else:
+        contexto_doc = ''
+        ref_linha = 'texto original da proposição'
 
     prompt = f"""Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil.
-
-Analise a seguinte proposição e gere uma nota técnica em português usando HTML:
 
 **Proposição:** {projeto}
 **Autor(es):** {autor}
 **Relator:** {relator}
-**Ementa:** {ementa}{ref_doc}
+**Ementa:** {ementa}
+{contexto_doc}
 
-Formate a resposta EXATAMENTE assim em HTML:
+Gere uma nota técnica em HTML com EXATAMENTE este formato:
 
 <p><strong>Nota Técnica: Análise do {projeto}</strong></p>
-<p><em style="color:red;">Análise baseada em: [tipo e nome do documento mais recente, ex: Substitutivo do Relator inserido em DD/MM/AAAA. Se não houver documento informado, escreva: texto original da proposição]</em></p>
+<p><em style="color:red;">Análise baseada em: {ref_linha}</em></p>
 <br>
-<p><strong>Objetivo da Proposição</strong><br>[texto]</p>
+<p><strong>Objetivo da Proposição</strong><br>[texto detalhado]</p>
 <br>
-<p><strong>Principais Alterações</strong><br><ul><li>[item]</li><li>[item]</li></ul></p>
+<p><strong>Principais Alterações</strong><br><ul><li>[item]</li><li>[item]</li><li>[item]</li></ul></p>
 <br>
-<p><strong>Impacto Esperado</strong><br>[texto]</p>
+<p><strong>Impacto Esperado</strong><br>[texto detalhado]</p>
 <br>
 <p><strong>Pontos de Atenção</strong><br><ul><li>[item]</li><li>[item]</li></ul></p>
 
-Seja detalhado e técnico. Máximo 400 palavras. Não use ### ou ** no texto, apenas HTML."""
+Seja detalhado e técnico. Máximo 500 palavras. Não use ### ou ** no texto, apenas HTML."""
 
     # Tenta Gemini primeiro, fallback para Groq
     if gemini_key:
