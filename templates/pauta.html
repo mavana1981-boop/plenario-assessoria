@@ -1,1864 +1,1300 @@
-from flask import Flask, jsonify, request, render_template, redirect, url_for, flash, make_response
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from flask_bcrypt import Bcrypt
-import sqlite3
-import requests
-import json
-import logging
-from datetime import datetime, timedelta
-import os
-import re
-import html as ihtml
-from scraper_camara import obter_itens_pauta
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Assessoria - Plenário da Câmara dos Deputados</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <link href="/static/style.css" rel="stylesheet">
+  <style>
+    .item-header {
+      display: flex; justify-content: space-between; align-items: center;
+      cursor: pointer; color: #006633; font-weight: 600; font-size: 0.95rem; padding: 0.3rem 0;
+    }
+    .item-header:hover { color: #004d26; }
+    .item-info { font-size: 0.85rem; color: #555; }
+    .collapse-toggle-icon { transition: transform 0.3s ease; }
+    .collapse.show + .item-header .collapse-toggle-icon,
+    .item-header[aria-expanded="true"] .collapse-toggle-icon { transform: rotate(180deg); }
+    .secao-badge {
+      font-size: 0.75rem;
+      padding: 0.3em 0.5em;
+      border-radius: 0.3rem;
+      margin-left: 10px;
+      color: #fff !important;
+    }
+    .secao-badge.bg-warning { color: #000 !important; }
+    .secao-badge.bg-primary { background-color: #0d6efd !important; }
+    .secao-badge.bg-info { background-color: #17a2b8 !important; }
+    .secao-badge.bg-success { background-color: #28a745 !important; }
+    .secao-badge.bg-warning { background-color: #ffc107 !important; }
+    .secao-badge.bg-secondary { background-color: #6c757d !important; }
+    .last-updated {
+      font-size: 0.75rem;
+      color: #6c757d;
+      margin-left: 10px;
+    }
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
-logger = logging.getLogger(__name__)
-logging.getLogger('werkzeug').setLevel(logging.WARNING)
+    .editor-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255,255,255,0.8);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      font-size: 0.9rem;
+      color: #333;
+      font-style: italic;
+    }
+    .editor-spinner {
+      margin: 10px auto;
+      width: 40px;
+      height: 40px;
+      border: 4px solid #ccc;
+      border-top-color: #007bff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+    .ql-container { font-size: 14px; font-family: 'Segoe UI', Arial, sans-serif; }
+    .ql-editor { min-height: 550px; }
+    .ql-toolbar.ql-snow, .ql-container.ql-snow { width: 100%; box-sizing: border-box; }
+    .logo-header { width: 80px; height: 50px; object-fit: contain; background: transparent; }
+  </style>
+</head>
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'plenario-chave-secreta-2025'
-bcrypt = Bcrypt(app)
-login_manager = LoginManager(app)
-login_manager.login_view = 'login'
+<body>
+  <div class="alert text-center py-1 mb-0" 
+     style="font-size:0.85rem; background-color:#b5d3bc; color:#4d5d4d; border:1px solid #dbe3da;">
+    ⚠️ Ambiente de desenvolvimento — dados e análises podem conter erros.
+  </div>
 
-pauta_cache = {}
-CACHE_DURATION = timedelta(minutes=5)
-DB = 'plenario.db'
+  <div class="header" style="background: #fff !important; border-bottom: 3px solid #1A6B3A; box-shadow: 0 2px 6px rgba(0,0,0,0.08);">
+    <div class="container header-wrap d-flex align-items-center justify-content-between">
+      <div class="d-flex align-items-center">
+        <div class="header-logos me-3 d-flex align-items-center gap-3">
+          <img src="/static/logo_minoria.png" alt="Liderança da Minoria"
+            style="width:90px;height:55px;object-fit:contain;background:transparent;"
+            onerror="this.style.display='none'">
+          <img src="/static/logo_oposicao.png" alt="Oposição"
+            style="width:90px;height:55px;object-fit:contain;background:transparent;"
+            onerror="this.style.display='none'">
+        </div>
+        <div class="header-text">
+          <h1 class="titulo-app mb-0" style="color:#1A6B3A !important;">Assessoria de Plenário</h1>
+          <p class="subtitulo-app mb-0" style="color:#444 !important;">Lideranças da Minoria e da Oposição — Câmara dos Deputados</p>
+        </div>
+      </div>
+      <div class="text-end">
+        <a href="{{ url_for('logout') }}" class="btn btn-outline-success btn-sm mb-1">
+          <i class="fas fa-sign-out-alt me-2"></i>Sair
+        </a>
+        <a href="{{ url_for('trocar_senha') }}" class="btn btn-outline-secondary btn-sm mb-1 ms-1">
+          <i class="fas fa-key me-1"></i>Senha
+        </a><br>
+        <small style="color:#444;">{{ current_user.username }}</small>
+        {% if current_user.is_authenticated and current_user.role == 'Admin' %}
+          <a href="{{ url_for('admin_usuarios') }}" 
+            class="btn btn-sm mb-1 ms-1"
+            style="color: rgba(255,255,255,0.5); border: none;"
+            onmouseover="this.style.color='#ffc107'" 
+            onmouseout="this.style.color='rgba(255,255,255,0.5)'">
+            <i class="fas fa-cog"></i>
+          </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
 
-# --------------------------------------------------------------------------
-# INIT BANCO AUTOMÁTICO (Railway)
-# --------------------------------------------------------------------------
-with app.app_context():
-    try:
-        import sqlite3 as _sq
-        from flask_bcrypt import Bcrypt as _Bc
-        _conn = _sq.connect(DB)
-        _c = _conn.cursor()
-        _c.execute('''CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            role TEXT NOT NULL,
-            categoria TEXT NOT NULL DEFAULT 'geral')''')
-        # Migração: adiciona coluna categoria se não existir
-        try:
-            _c.execute('ALTER TABLE users ADD COLUMN categoria TEXT NOT NULL DEFAULT "geral"')
-            _conn.commit()
-        except Exception:
-            pass
-        _c.execute('''CREATE TABLE IF NOT EXISTS notas (
-            item_key TEXT PRIMARY KEY,
-            evento_id INTEGER,
-            ordem TEXT,
-            resumo_materia TEXT,
-            orientacao TEXT,
-            resumo_parecer TEXT,
-            saved_by TEXT,
-            saved_at TEXT)''')
-        _c.execute('''CREATE TABLE IF NOT EXISTS pauta_cache_db (
-            evento_id INTEGER PRIMARY KEY,
-            json_pauta TEXT,
-            last_updated TEXT,
-            last_saved_by TEXT)''')
-        _conn.commit()
-        _bcrypt = _Bc()
-        _pw123 = _bcrypt.generate_password_hash('123').decode('utf-8')
+  <div class="container my-4">
+    <div class="sessao-info p-3 bg-light border rounded mb-3">
+      <h5 class="mb-2"><i class="fas fa-users text-success me-2"></i>Sessão Deliberativa</h5>
+      {% if from_cache %}
+      <div class="alert alert-warning text-center py-2 mb-3" style="font-size: 0.9rem;">
+        🔁 Exibindo versão em cache — dados indisponíveis ou instáveis no momento.
+      </div>
+      {% endif %}
+      <div class="small text-muted">
+        <strong><i class="far fa-clock me-1"></i>Data/Hora:</strong>
+        {{ evento.dataHoraInicio | default('N/D') | replace('T', ' ') | datetimeformat('%d/%m/%Y %H:%M') if evento.dataHoraInicio != 'N/D' else 'N/D' }}<br>
+        <strong><i class="fas fa-info-circle me-1"></i>Situação:</strong>
+        <span class="badge {{ 'bg-success' if evento.situacao|default('')|lower == 'em andamento' else 'bg-secondary' }}">
+          {{ evento.situacao | default('N/D') }}
+        </span><br>
+        <strong><i class="fas fa-align-left me-1"></i>Descrição:</strong> {{ evento.descricao | default('Sem descrição') }}<br>
+        <strong><i class="fas fa-map-marker-alt me-1"></i>Local:</strong> {{ evento.local | default('N/D') }}<br>
+        <strong><i class="fas fa-save me-1"></i>Último salvamento:</strong>
+        <span id="ultimo-salvamento">
+          {% if last_updated %}{{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}{% else %}Nenhum registro{% endif %}
+        </span>
+        <span id="ultimo-usuario" class="text-muted">
+          {% if last_saved_user %} — por <strong>{{ last_saved_user }}</strong>{% endif %}
+        </span>
+      </div>
+    </div>
 
-        # usuarios padrão + novos — INSERT OR IGNORE (não sobrescreve existentes)
-        _usuarios = [
-            ('admin',             'Admin',            'admin'),
-            ('assessor_plenario', 'Assessor Plenário','minoria'),
-            ('assessor',          'Assessor',         'geral'),
-            ('PL',                'Orientação',       'restrito'),
-            ('NOVO',              'Orientação',       'restrito'),
-            ('marcelo.oliveira',  'Assessor Plenário','minoria'),
-        ]
-        for _un, _role, _cat in _usuarios:
-            try:
-                _c.execute('INSERT INTO users (username, password, role, categoria) VALUES (?, ?, ?, ?)',
-                           (_un, _pw123, _role, _cat))
-            except _sq.IntegrityError:
-                pass
+    <div class="d-flex align-items-center flex-wrap">
+      {% if user_categoria != 'restrito' %}
+      <a href="{{ url_for('selecionar_data') }}" class="btn btn-outline-secondary btn-sm mb-3">
+        <i class="fas fa-arrow-left me-2"></i>Voltar para Seleção de Data
+      </a>
+      <a href="{{ url_for('view_pauta', evento_id=evento_id, force_reload='true') }}" class="btn btn-outline-primary btn-sm mb-3 ms-2">
+        <i class="fas fa-sync-alt me-2"></i>Atualizar Pauta
+      </a>
+      <button class="btn btn-outline-warning btn-sm mb-3 ms-2"
+              onclick="limparCacheEvento({{ evento_id }})"
+              title="Remove cache e reprocessa títulos de REQ">
+        <i class="fas fa-broom me-1"></i>Limpar Cache
+      </button>
+      <a href="{{ url_for('export_resumo', evento_id=evento_id) }}"
+        class="btn btn-outline-success btn-sm mb-3 ms-2" target="_blank" rel="noopener">
+        <i class="fas fa-file-export me-2"></i>Exportar resumo
+      </a>
+      <a href="{{ url_for('gerar_infografico', evento_id=evento_id) }}"
+        class="btn btn-sm mb-3 ms-2 text-white" target="_blank" rel="noopener"
+        style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
+        <i class="fas fa-image me-2"></i>Gerar Infográfico
+      </a>
+      <button class="btn btn-sm mb-3 ms-2 text-white"
+        style="background:linear-gradient(135deg,#25D366,#128C7E);"
+        data-bs-toggle="modal" data-bs-target="#modalMensagens">
+        <i class="fab fa-whatsapp me-2"></i>Mensagens Plenário
+      </button>
+      {% endif %}
+      <button class="btn btn-sm mb-3 ms-2 text-white"
+        style="background:linear-gradient(135deg,#B8860B,#DAA520);"
+        data-bs-toggle="modal" data-bs-target="#modalOrientacoes"
+        onclick="carregarOrientacoes()">
+        <i class="fas fa-vote-yea me-2"></i>Orientações
+      </button>
 
-        # Redefine senha 123 para TODOS os usuários existentes
-        _c.execute('UPDATE users SET password=?', (_pw123,))
+      {% if last_updated and user_categoria != 'restrito' %}
+      <small class="last-updated mb-3">Atualizado em {{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</small>
+      {% endif %}
+    </div>
 
-        # Atualiza categorias dos usuários existentes
-        _cats = {
-            'vinicius.scheffel': 'oposicao', 'lianna.barros': 'oposicao',
-            'marcelo.uvara': 'oposicao', 'elyesley.silva': 'oposicao',
-            'pedro.chaves': 'oposicao',
-            'ulisses.branco': 'minoria', 'eduardo.borba': 'minoria',
-            'luisa.marreco': 'minoria', 'luiz.garibaldi': 'minoria',
-            'luiz.garibaldi': 'minoria', 'assessor_plenario': 'minoria',
-            'marcelo.oliveira': 'minoria',
-        }
-        for _un, _cat in _cats.items():
-            _c.execute('UPDATE users SET categoria=? WHERE username=?', (_cat, _un))
-        _conn.commit()
-        _conn.close()
-        logger.info('✅ Banco inicializado.')
-    except Exception as _e:
-        logger.error(f'❌ Erro banco: {_e}')
+    {% if user_categoria == 'restrito' %}
+    <div class="alert alert-info mt-2">
+      <i class="fas fa-info-circle me-2"></i>
+      Seu acesso é restrito ao registro de <strong>Orientações</strong>.
+      Clique no botão acima para registrar a orientação do seu grupo.
+    </div>
+    {% else %}
+    {% if itens %}
+      {% for item in itens %}
+      <div class="item-card mb-3">
+        <div class="card-body">
+          <div class="item-header" data-bs-toggle="collapse" data-bs-target="#col-{{ item.ordem }}-{{ item.id_principal }}" aria-expanded="false">
+            <div>
+              <i class="fas fa-file-alt text-primary me-2"></i>
+              Item {{ item.ordem }} — <strong>{{ item.projeto }}</strong> — <strong>Autor:</strong> {{ item.autor }}
+              <span class="badge secao-badge 
+                {{ 'bg-primary' if item.status in ['Proposta em Análise', 'Propostas em Análise'] else 
+                   'bg-info' if item.status in ['Proposta Prevista', 'Propostas Previstas'] else 
+                   'bg-success' if item.status in ['Proposta Analisada', 'Propostas Analisadas'] else 
+                   'bg-warning text-dark' if item.status in ['Proposta Não Analisada', 'Propostas Não Analisadas'] else 
+                   'bg-secondary' }}">
+                {{ item.status | default('N/D') }}
+              </span>
+              <div class="item-info mt-1">
+                <strong>Situação:</strong> {{ item.situacao | default('N/D') }} &nbsp;&nbsp;
+                <strong>Relator:</strong> {{ item.relator }}
+              </div>
+              <div class="item-info mt-1 text-muted fst-italic"
+                   style="font-size:0.82rem; width:100%; white-space:normal; word-break:break-word;"
+                   data-ementa-id="{{ item.id_principal }}"
+                   data-projeto="{{ item.projeto }}"
+                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
+                   data-autor="{{ item.autor | replace('"','&quot;') | truncate(80, True, '') }}">
+                {{ item.ementa }}
+              </div>
+            </div>
+            <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
+          </div>
 
-# --------------------------------------------------------------------------
-# HELPERS DB
-# --------------------------------------------------------------------------
-def load_notas():
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    try:
-        c.execute('SELECT item_key, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at FROM notas')
-        notas = {row[0]: {'resumo_materia': row[1], 'orientacao': row[2], 'resumo_parecer': row[3],
-                          'saved_by': row[4] or '', 'saved_at': row[5] or ''}
-                 for row in c.fetchall()}
-    except Exception:
-        # Coluna pode não existir ainda — tenta sem saved_by/saved_at
-        try:
-            c.execute('SELECT item_key, resumo_materia, orientacao, resumo_parecer FROM notas')
-            notas = {row[0]: {'resumo_materia': row[1], 'orientacao': row[2], 'resumo_parecer': row[3],
-                              'saved_by': '', 'saved_at': ''}
-                     for row in c.fetchall()}
-        except Exception:
-            notas = {}
-    finally:
-        conn.close()
-    return notas
+          <div class="collapse" id="col-{{ item.ordem }}-{{ item.id_principal }}">
+            <hr class="mt-2 mb-2">
+            <div class="small text-muted mb-2">
+              <strong>Ementa:</strong> {{ item.ementa }}<br>
+            </div>
 
-# --------------------------------------------------------------------------
-# LOGIN
-# --------------------------------------------------------------------------
-class User(UserMixin):
-    def __init__(self, id, username, role, categoria='geral'):
-        self.id = id; self.username = username; self.role = role; self.categoria = categoria
+            {% if user_role == 'Assessor' %}
+              <!-- 🟡 MODO LEITURA -->
+              <div class="mt-2">
+                <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
+                <div class="p-2 border rounded bg-light" style="min-height:150px; white-space:pre-wrap;">
+                  {{ item.resumo_materia | safe }}
+                </div>
+              </div>
 
-    def display_name(self):
-        """Nome de exibição com categoria."""
-        if self.categoria in ('oposicao', 'minoria'):
-            return f"{self.username} - {self.categoria}"
-        return self.username
+              <div class="mt-2">
+                <label class="form-label small"><strong>Orientação:</strong></label><br>
+                <span class="badge bg-secondary">{{ item.orientacao or '—' }}</span>
+              </div>
 
-@login_manager.user_loader
-def load_user(user_id):
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute('SELECT id, username, role, categoria FROM users WHERE id = ?', (user_id,))
-    u = c.fetchone()
-    conn.close()
-    return User(u[0], u[1], u[2], u[3] if len(u) > 3 else 'geral') if u else None
+              {% if item.destaques_emendas %}
+              <div class="mt-4">
+                <h6><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
+                <div class="table-responsive">
+                  <table class="table table-sm table-striped align-middle">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo Destaque</th><th>Situação</th><th>Resumo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for d in item.destaques_emendas %}
+                      <tr>
+                        <td><strong>{{ d.numero }}</strong></td>
+                        <td>{{ d.autoria }}</td>
+                        <td>{{ d.descricao }}</td>
+                        <td>{{ d.tipo_destaque }}</td>
+                        <td><span class="badge {{ 'bg-warning' if d.situacao|lower == 'em tramitação' else 'bg-secondary' }}">{{ d.situacao }}</span></td>
+                        <td style="white-space:pre-wrap;">{{ d.resumo_nota | safe }}</td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {% endif %}
 
-# --------------------------------------------------------------------------
-# EVENTOS & PAUTA
-# --------------------------------------------------------------------------
-def fetch_eventos_por_data(data):
-    url = f"https://dadosabertos.camara.leg.br/api/v2/eventos?idOrgao=180&dataInicio={data}&dataFim={data}&itens=50"
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        dados = r.json().get('dados', [])
-        return [
-            {
-                'id': str(e.get('id')),
-                'descricao': e.get('descricao', 'Sem descrição'),
-                'tipo': e.get('descricaoTipo', ''),
-                'dataHoraInicio': e.get('dataHoraInicio', 'N/D'),
-                'local': e.get('localCamara', {}).get('nome', 'N/D') if isinstance(e.get('localCamara'), dict) else e.get('localCamara', 'N/D'),
-                'situacao': e.get('situacao', 'N/D')
+            {% else %}
+              <!-- 🔵 EDIÇÃO PARA ADMIN E ASSESSOR PLENÁRIO -->
+              <div class="mt-2">
+                <label class="form-label small"><strong>Gerar sugestão de análise (Projeto principal):</strong></label>
+
+                <!-- Botão procurar último parecer -->
+                <div class="mb-2">
+                  <button class="btn btn-outline-info btn-sm" type="button"
+                    id="btn-ultimo-doc-{{ item.ordem }}"
+                    data-id-principal="{{ item.id_principal }}"
+                    data-projeto="{{ item.projeto }}"
+                    data-ordem="{{ item.ordem }}"
+                    onclick="verificarUltimoDoc(this)">
+                    <i class="fas fa-search me-1"></i>Procurar último parecer (PRLP/Substitutivo)
+                  </button>
+                  <div id="ultimo-doc-resultado-{{ item.ordem }}" class="mt-1" style="display:none;">
+                    <small class="text-info fw-bold" id="ultimo-doc-texto-{{ item.ordem }}"></small>
+                  </div>
+                </div>
+
+                <div class="input-group mb-2">
+                  <input type="text" id="numero_pl_{{ item.ordem }}" class="form-control" placeholder="Ex: PL 4363/2025">
+                  <button class="btn btn-outline-primary btn-gerar-analise" type="button"
+                    data-ordem="{{ item.ordem }}"
+                    data-projeto="{{ item.projeto }}"
+                    data-ementa="{{ item.ementa | replace('"', '') | replace("'", '') | truncate(400, True, '') }}"
+                    data-autor="{{ item.autor }}"
+                    data-relator="{{ item.relator }}"
+                    data-id-principal="{{ item.id_principal }}"
+                    onclick="gerarAnalise('{{ item.ordem }}', this)">
+                    <img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">
+                    Gerar Análise
+                  </button>
+                </div>
+                <small class="text-muted">A análise será inserida automaticamente no campo de Resumo/Nota Técnica.</small>
+              </div>
+
+              <div class="mt-2 position-relative" style="width:100%;">
+                <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
+                <textarea id="editor-resumo-materia-{{ item.ordem }}" class="d-none">{% if item.resumo_materia %}{{ item.resumo_materia | safe }}{% endif %}</textarea>
+                <div id="quill-editor-{{ item.ordem }}" data-ordem="{{ item.ordem }}" style="width:100%; background:#fff; min-height:500px;"></div>
+                <div id="overlay-{{ item.ordem }}" class="editor-overlay" style="display:none;">
+                  <div class="editor-spinner"></div>
+                  <p>📄 Modelo analisando a Proposição...<br>🧠 Gerando sugestão de nota técnica...</p>
+                </div>
+              </div>
+
+              <div class="mt-2">
+                <label class="form-label small"><strong>Orientação:</strong></label>
+                <select class="form-control editable-field orientacao" data-ordem="{{ item.ordem }}">
+                  <option value="" {% if not item.orientacao %}selected{% endif %}>Selecione</option>
+                  <option value="NEGOCIAÇÃO" {% if item.orientacao == 'NEGOCIAÇÃO' %}selected{% endif %}>NEGOCIAÇÃO</option>
+                  <option value="SIM" {% if item.orientacao == 'SIM' %}selected{% endif %}>SIM</option>
+                  <option value="NÃO" {% if item.orientacao == 'NÃO' %}selected{% endif %}>NÃO</option>
+                  <option value="LIBERADO" {% if item.orientacao == 'LIBERADO' %}selected{% endif %}>LIBERADO</option>
+                  <option value="OBSTRUÇÃO" {% if item.orientacao == 'OBSTRUÇÃO' %}selected{% endif %}>OBSTRUÇÃO</option>
+                  <option value="ABSTENÇÃO" {% if item.orientacao == 'ABSTENÇÃO' %}selected{% endif %}>ABSTENÇÃO</option>
+                </select>
+              </div>
+
+              {% if item.destaques_emendas %}
+              <div class="mt-4">
+                <h6><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
+                <div class="table-responsive">
+                  <table class="table table-sm table-striped align-middle">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo Destaque</th><th>Situação</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for d in item.destaques_emendas %}
+                      <tr>
+                        <td><strong>{{ d.numero }}</strong></td>
+                        <td>{{ d.autoria }}</td>
+                        <td>{{ d.descricao }}</td>
+                        <td>{{ d.tipo_destaque }}</td>
+                        <td><span class="badge {{ 'bg-warning' if d.situacao|lower == 'em tramitação' else 'bg-secondary' }}">{{ d.situacao }}</span></td>
+                      </tr>
+                      <tr>
+                        <td colspan="5">
+                          <label class="form-label small"><strong>Resumo/Nota Técnica — {{ d.numero }}:</strong></label>
+                          <textarea id="editor-resumo-destaque-{{ item.ordem }}-{{ loop.index }}" class="editable-field" data-numero="{{ d.numero }}">{% if d.resumo_nota %}{{ d.resumo_nota | safe }}{% endif %}</textarea>
+                        </td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {% endif %}
+
+              <div class="d-flex align-items-center gap-3 mt-3 flex-wrap">
+                <button class="btn btn-primary btn-sm save-btn"
+                        data-ordem="{{ item.ordem }}"
+                        data-id-principal="{{ item.id_principal }}">Salvar</button>
+                <small class="text-muted" id="info-salvo-{{ item.ordem }}" style="font-size:0.8rem;">
+                  {% if item.saved_by and item.saved_at %}
+                    <i class="fas fa-check-circle text-success me-1"></i>
+                    Salvo por <strong>{{ item.saved_by }}</strong> em {{ item.saved_at | datetimeformat('%d/%m/%Y %H:%M') }}
+                  {% endif %}
+                </small>
+              </div>
+
+              <!-- DESTAQUES -->
+              <div class="mt-4">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                  <h6 class="mb-0"><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
+                  <button class="btn btn-outline-warning btn-sm btn-buscar-destaques"
+                          data-id-proposicao="{{ item.id_principal }}"
+                          data-ordem="{{ item.ordem }}">
+                    <i class="fas fa-search me-1"></i>Buscar Destaques
+                  </button>
+                  <span class="spinner-busca-{{ item.ordem }}" style="display:none;">
+                    <span class="spinner-border spinner-border-sm text-warning"></span>
+                    Buscando...
+                  </span>
+                </div>
+                <div id="tabela-destaques-{{ item.ordem }}" style="display:none;">
+                  <div class="table-responsive">
+                    <table class="table table-sm table-striped align-middle">
+                      <thead class="table-warning">
+                        <tr>
+                          <th>Número</th>
+                          <th>Autoria</th>
+                          <th>Descrição</th>
+                          <th>Tipo</th>
+                          <th>Situação</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tbody-destaques-{{ item.ordem }}"></tbody>
+                    </table>
+                  </div>
+                  <div id="sem-destaques-{{ item.ordem }}" class="alert alert-info py-2" style="display:none;">
+                    <i class="fas fa-info-circle me-2"></i>Nenhum destaque em tramitação encontrado para esta proposição.
+                  </div>
+                </div>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="alert alert-info">Nenhum item encontrado na pauta para este evento.</div>
+    {% endif %}
+    {% endif %} {# fecha o else do restrito #}
+  </div>
+
+    <!-- JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+  <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+  <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
+
+  <script>
+    const quillInstances = {};
+
+    // Inicializa Quill quando collapse abre
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('.collapse').forEach(collapseEl => {
+        collapseEl.addEventListener('shown.bs.collapse', () => {
+          const quillDiv = collapseEl.querySelector('[id^="quill-editor-"]');
+          if (!quillDiv) return;
+          const ordem = quillDiv.dataset.ordem;
+          if (quillInstances[ordem]) return;
+
+          const textarea = collapseEl.querySelector(`#editor-resumo-materia-${ordem}`);
+          const conteudo = textarea ? textarea.value : '';
+
+          const quill = new Quill(`#quill-editor-${ordem}`, {
+            theme: 'snow',
+            modules: {
+              toolbar: [
+                ['bold', 'italic', 'underline'],
+                [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                ['clean']
+              ]
             }
-            for e in dados if e.get('descricaoTipo') == "Sessão Deliberativa"
-        ]
-    except Exception as e:
-        logger.error(f"Erro ao buscar eventos: {e}")
-        return []
-
-def extrair_ref_pl(projeto, ementa):
-    """
-    Se for REQ/RQS/RQU/REC, extrai a referência ao PL/PEC/PLP/MPV da ementa.
-    Retorna ex: 'REQ 2569/2026 ao PL 1811/2026'
-    É idempotente: se já contém ' ao ', não processa novamente.
-    """
-    # Pega só a parte base do projeto (antes de " ao " se já processado)
-    projeto_base = projeto.split(' ao ')[0].strip()
-
-    siglas_req = ('REQ', 'RQS', 'RQU', 'REC', 'REQ.', 'RQS.')
-    if not any(projeto_base.upper().startswith(s) for s in siglas_req):
-        return projeto
-
-    ementa_str = str(ementa or '')
-
-    # Padrões do mais específico para o mais genérico
-    padroes = [
-        # "PL nº 1811/2026" ou "PL 1811/2026"
-        r'\b(PL|PEC|PLP|PLC|MPV|PDL|PLV|PDS|PRS)\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})\b',
-        # "PL 1811, de 2026"
-        r'\b(PL|PEC|PLP|PLC|MPV|PDL|PLV|PDS|PRS)\s+(\d+),?\s*de\s+(\d{4})\b',
-        # "Projeto de Lei nº 1811/2026"
-        r'Projeto de Lei\s+(?:Complementar\s+)?n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})',
-        # "PL1811/2026" sem espaço
-        r'\b(PL|PEC|PLP|PLC|MPV)\s*(\d{3,5})[/\-](\d{4})\b',
-    ]
-
-    for padrao in padroes:
-        m = re.search(padrao, ementa_str, re.IGNORECASE)
-        if m:
-            grupos = m.groups()
-            if len(grupos) == 3:
-                sigla, num, ano = grupos
-                return f"{projeto_base} ao {sigla.upper()} {num}/{ano}"
-            elif len(grupos) == 2:
-                num, ano = grupos
-                return f"{projeto_base} ao PL {num}/{ano}"
-
-    return projeto_base
-
-def buscar_ordem_oficial(evento_id, data_evento=''):
-    """
-    Extrai a ordem oficial dos itens diretamente do PDF de pauta da sessão.
-    
-    Estratégia:
-    1. Acessa a página do evento para encontrar o link do PDF de pauta
-    2. Baixa o PDF e extrai o texto
-    3. Parseia os números de ordem (padrão: "N. Proposição...")
-    4. Retorna dict {codigo_normalizado: posicao}
-    """
-    try:
-        from bs4 import BeautifulSoup
-        import pdfplumber
-
-        # Passo 1: Busca o PDF de pauta na página do evento
-        url_evento = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
-        r = requests.get(url_evento, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36'
-        }, timeout=12)
-        if not r.ok:
-            logger.warning(f"Evento {evento_id} inacessível: {r.status_code}")
-            return {}
-
-        soup = BeautifulSoup(r.text, 'html.parser')
-
-        # Busca PDF com texto "Pauta" — verifica se é da mesma data do evento
-        pdf_url = None
-        from bs4 import BeautifulSoup
-
-        # Busca data do evento para validar
-        data_evento = ''
-        try:
-            data_el = soup.find(string=re.compile(r'\d{2}/\d{2}/\d{4}'))
-            if data_el:
-                m_data = re.search(r'(\d{2})/(\d{2})/(\d{4})', str(data_el))
-                if m_data:
-                    data_evento = f"{m_data.group(3)}-{m_data.group(2)}-{m_data.group(1)}"
-        except Exception:
-            pass
-
-        # Coleta todos os links "Pauta" para testar
-        candidatos_pauta = []
-        for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
-            if a.get_text(strip=True).lower() == 'pauta':
-                href = a['href']
-                url_cand = (href if href.startswith('http') else f"https://www.camara.leg.br{href}")
-                url_cand += ('&' if '?' in url_cand else '?') + 'tipo=PDF'
-                candidatos_pauta.append(url_cand)
-
-        # Testa cada candidato — usa o que tiver a data correta do evento
-        for url_cand in candidatos_pauta:
-            rp_test = requests.get(url_cand, headers={
-                'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'
-            }, timeout=20)
-            if not rp_test.ok:
-                continue
-            # Extrai primeiras linhas do PDF para verificar data
-            try:
-                with pdfplumber.open(BytesIO(rp_test.content)) as pdf_test:
-                    texto_inicio = pdf_test.pages[0].extract_text() or ''
-                # Verifica se data do evento está no PDF
-                data_ok = True
-                if data_evento:
-                    ano_ev = data_evento[:4]
-                    mes_ev = data_evento[5:7].lstrip('0')
-                    dia_ev = data_evento[8:10].lstrip('0')
-                    # Verifica se dia E ano estão no texto do PDF
-                    data_ok = ano_ev in texto_inicio and (
-                        f"{dia_ev} de" in texto_inicio or
-                        f"Em {dia_ev} de" in texto_inicio or
-                        f"Em {dia_ev.zfill(2)} de" in texto_inicio
-                    )
-                if data_ok:
-                    pdf_url = url_cand
-                    rp = rp_test
-                    logger.info(f"PDF de pauta válido: {url_cand}")
-                    break
-            except Exception:
-                pdf_url = url_cand
-                rp = rp_test
-                break
-
-        if not pdf_url:
-            logger.warning(f"Nenhum PDF de pauta válido para evento {evento_id}")
-            return {}
-
-        # Passo 3: Extrai ordem usando posição X das palavras (números centralizados)
-        from io import BytesIO
-        ordem = {}
-
-        with pdfplumber.open(BytesIO(rp.content)) as pdf:
-            page_width = float(pdf.pages[0].width) if pdf.pages else 595.0
-
-            for page in pdf.pages:
-                words = page.extract_words(x_tolerance=3, y_tolerance=3)
-
-                # Agrupa palavras por linha (y próximo)
-                linhas = {}
-                for w in words:
-                    y = round(float(w['top']))
-                    linhas.setdefault(y, []).append(w)
-
-                ys = sorted(linhas.keys())
-
-                for i, y in enumerate(ys):
-                    palavras = linhas[y]
-
-                    # Encontra na linha uma palavra que seja número 1-2 dígitos E centralizada
-                    # Ignora qualquer outro texto na mesma linha (invisível ou não)
-                    num_encontrado = None
-                    for w in palavras:
-                        txt = w['text'].strip()
-                        if not re.match(r'^\d{1,2}$', txt):
-                            continue
-                        centro_w = (float(w['x0']) + float(w['x1'])) / 2
-                        if abs(centro_w - page_width / 2) <= page_width * 0.05:
-                            num_encontrado = (int(txt), float(w['x0']), float(w['x1']))
-                            break
-
-                    if not num_encontrado:
-                        continue
-                    num, x0, x1 = num_encontrado
-                    if num < 1 or num > 30:
-                        continue
-                    centro = (x0 + x1) / 2
-                    if abs(centro - page_width / 2) > page_width * 0.20:
-                        continue
-
-                    # Pega texto das próximas 10 linhas para extrair o código
-                    prox_ys = ys[i+1:i+11]
-                    bloco = ' '.join(
-                        ' '.join(w['text'] for w in linhas[ny])
-                        for ny in prox_ys if ny in linhas
-                    )
-
-                    codigo = _extrair_codigo_do_bloco(bloco)
-                    if codigo:
-                        chave = _normalizar_codigo(codigo)
-                        # Cada número de posição só pode ter UM item
-                        # Se já existe outro item nessa posição, o mais recente vence
-                        # (páginas posteriores têm o número correto)
-                        posicoes_usadas = {v: k for k, v in ordem.items()}
-                        if num in posicoes_usadas:
-                            # Remove entrada anterior para esta posição
-                            del ordem[posicoes_usadas[num]]
-                            logger.info(f"  Posição {num} sobrescrita: {posicoes_usadas[num]} → {chave}")
-                        ordem[chave] = num
-                        logger.info(f"  Item {num} (centralizado): {codigo} → {chave}")
-
-        # Fallback para REQ: formato "1. Requerimento nº X.XXX, de AAAA" (não centralizado)
-        if pdf_bytes := rp.content if 'rp' in dir() else None:
-            pass  # já processado acima
-
-        # Extrai REQ do texto bruto (formato com ponto, não centralizado)
-        with pdfplumber.open(BytesIO(rp.content)) as pdf:
-            texto_total = '\n'.join(p.extract_text() or '' for p in pdf.pages)
-        for m in re.finditer(
-            r'^(\d+)\.\s+Requerimento\s+n[º°oa.]?\s*([\d.]+),\s*de\s+(\d{4})',
-            texto_total, re.MULTILINE
-        ):
-            num   = int(m.group(1))
-            num_p = m.group(2).replace('.', '')
-            ano   = m.group(3)
-            chave = _normalizar_codigo(f"REQ {num_p}/{ano}")
-            if chave not in ordem and num <= 30:
-                ordem[chave] = num
-                logger.info(f"  Item {num} (REQ texto): REQ {num_p}/{ano} → {chave}")
-
-        logger.info(f"Ordem extraída do PDF evento {evento_id}: {len(ordem)} itens — {dict(list(ordem.items())[:10])}")
-        return ordem
-
-    except ImportError:
-        logger.warning("pdfplumber não disponível — usando fallback HTML")
-        return _buscar_ordem_html(evento_id)
-    except Exception as e:
-        logger.warning(f"Erro ao extrair ordem do PDF {evento_id}: {e}")
-        return _buscar_ordem_html(evento_id)
-
-def _buscar_ordem_html(evento_id):
-    """Fallback: tenta extrair ordem da página HTML de ordem do dia."""
-    url = f"https://www.camara.leg.br/internet/ordemdodia/ordemDetalheReuniaoPle.asp?codReuniao={evento_id}"
-    try:
-        from bs4 import BeautifulSoup
-        r = requests.get(url, headers={
-            'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'
-        }, timeout=12)
-        if not r.ok:
-            return {}
-        soup = BeautifulSoup(r.text, 'html.parser')
-        texto = soup.get_text(separator='\n')
-        ordem = {}
-        padrao = re.compile(r'^(\d+)\s*[-–]\s*([A-Z]+\s+\d+/\d{4})', re.MULTILINE)
-        for m in padrao.finditer(texto):
-            num    = int(m.group(1))
-            chave  = _normalizar_codigo(m.group(2))
-            if chave not in ordem:
-                ordem[chave] = num
-        logger.info(f"Ordem via HTML: {len(ordem)} itens")
-        return ordem
-    except Exception as e:
-        logger.warning(f"Fallback HTML também falhou: {e}")
-        return {}
-
-def _extrair_codigo_do_bloco(bloco):
-    """
-    Extrai código de QUALQUER proposição do bloco de texto após o número centralizado.
-    Usa regex universal que captura sigla + número + sufixo + ano.
-    Remove sufixos (-A, -B, -C, -F etc.) que o PDF usa mas a API não usa.
-    """
-    b = bloco.replace('\xa0', ' ').strip()
-
-    # Mapa de texto completo → sigla curta
-    tipos = [
-        (r'PROJETO\s+DE\s+LEI\s+COMPLEMENTAR',           'PLP'),
-        (r'PROJETO\s+DE\s+LEI',                           'PL'),
-        (r'PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O', 'PEC'),
-        (r'MEDIDA\s+PROVIS[OÓ]RIA',                       'MPV'),
-        (r'PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO',         'PDL'),
-        (r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O\s+DO\s+SENADO','PRS'),
-        (r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O',              'PRC'),
-        (r'PROPOSTA\s+DE\s+FISCALIZA[CÇ][AÃ]O\s+E\s+CONTROLE', 'PFC'),
-        (r'PROJETO\s+DE\s+LEI\s+DE\s+CONVERS[AÃ]O',      'PLV'),
-        (r'Requerimento',                                  'REQ'),
-    ]
-
-    # Número: dígitos com pontos opcionais, sufixo -A/-B/-F etc. opcional
-    num_pattern = r'([\d.]+(?:-[A-Z])?)'
-    ano_pattern = r'(\d{4})'
-
-    for tipo_regex, sigla in tipos:
-        # Tenta: TIPO Nº NUM, DE ANO
-        padrao = (rf'{tipo_regex}\s+N[º°oa.]?\s*{num_pattern}'
-                  rf'(?:\s*[-–]\s*[A-Z])?,?\s*[Dd][Ee]\s+{ano_pattern}')
-        m = re.search(padrao, b, re.IGNORECASE)
-        if m:
-            num = re.sub(r'[-–][A-Z]$', '', m.group(1).replace('.', '').replace('\xa0', ''))
-            ano = m.group(2)
-            return f"{sigla} {num}/{ano}"
-
-    return None
-
-def _normalizar_codigo(codigo):
-    """Normaliza código para comparação.
-    Remove: espaços, pontos, texto entre parênteses, sufixos -A/-B/-C no número.
-    Ex: 'PDL 330-B/2022' → 'PDL330/2022'
-        'PL 3.278-A/2021' → 'PL3278/2021'
-        'PL 2199/2022 (Nº Anterior: PL 7750/2017)' → 'PL2199/2022'
-    """
-    c = codigo.upper().strip()
-    c = re.sub(r'\(.*?\)', '', c)        # remove (Nº Anterior: ...) etc
-    c = re.sub(r'\s+', '', c)            # remove espaços
-    c = re.sub(r'\.', '', c)             # remove pontos
-    c = re.sub(r'-[A-Z](?=/)', '', c)    # remove -A, -B, -C antes da /
-    return c.strip()
-
-def reordenar_por_ordem_oficial(itens, ordem_oficial):
-    """
-    Reordena itens pelo PDF. Itens não encontrados são inseridos
-    na posição correta baseada nos vizinhos conhecidos da API.
-    """
-    if not ordem_oficial or not itens:
-        return itens
-
-    def normalizar_item(item):
-        proj = item.get('projeto_original') or item.get('projeto', '')
-        return _normalizar_codigo(proj.split(' ao ')[0].strip())
-
-    # Separa encontrados e não encontrados
-    encontrados = [(i, item, ordem_oficial[normalizar_item(item)])
-                   for i, item in enumerate(itens)
-                   if normalizar_item(item) in ordem_oficial]
-    nao_encontrados = [(i, item)
-                       for i, item in enumerate(itens)
-                       if normalizar_item(item) not in ordem_oficial]
-
-    cobertura = len(encontrados) / len(itens)
-    logger.info(f"Cobertura PDF: {len(encontrados)}/{len(itens)} ({cobertura:.0%})")
-
-    if cobertura < 0.70:
-        logger.warning("Cobertura insuficiente — mantendo ordem da API.")
-        return itens
-
-    # Ordena os encontrados pela posição do PDF
-    encontrados.sort(key=lambda x: x[2])
-
-    # Insere os não encontrados na posição relativa correta:
-    # um item não encontrado na posição i da API vai entre o último
-    # encontrado com api_pos < i e o primeiro com api_pos > i
-    resultado = list(encontrados)  # lista de (api_idx, item, pdf_pos)
-
-    for api_idx, item in nao_encontrados:
-        # Encontra onde inserir: após o último encontrado com api_idx menor
-        insert_pos = 0
-        for j, (enc_api_idx, enc_item, enc_pdf_pos) in enumerate(resultado):
-            if enc_api_idx < api_idx:
-                insert_pos = j + 1
-        resultado.insert(insert_pos, (api_idx, item, -1))
-
-    # Atualiza ordem
-    itens_ordenados = [item for (_, item, _) in resultado]
-    for i, item in enumerate(itens_ordenados, start=1):
-        item['ordem'] = str(i)
-
-    logger.info(f"Ordem final: {[(it.get('projeto_original','')[:15], it['ordem']) for it in itens_ordenados]}")
-    return itens_ordenados
-
-def fetch_pauta(evento_id, force_reload=False):
-    now = datetime.now()
-    cache_key = str(evento_id)
-    notas = load_notas()
-
-    if not force_reload and cache_key in pauta_cache:
-        cached = pauta_cache[cache_key]
-        if now - cached['timestamp'] < CACHE_DURATION:
-            return cached['itens'], False
-
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-
-    if not force_reload:
-        try:
-            c.execute("SELECT json_pauta, last_updated FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
-            row = c.fetchone()
-            if row:
-                itens = json.loads(row[0])
-                # Reaplica notas e corrige título de REQ sempre
-                for item in itens:
-                    # projeto_original = código limpo (sem " ao PL...")
-                    orig = item.get('projeto_original') or item.get('projeto', '')
-                    # Garante que projeto_original seja o código base
-                    item['projeto_original'] = orig.split(' ao ')[0].strip()
-                    item['projeto'] = extrair_ref_pl(item['projeto_original'], item.get('ementa', ''))
-                    key = f"PROP_{item['id_principal']}"
-                    if key in notas:
-                        item['resumo_materia'] = notas[key].get('resumo_materia', item.get('resumo_materia', ''))
-                        item['orientacao']     = notas[key].get('orientacao', item.get('orientacao', ''))
-                        item['resumo_parecer'] = notas[key].get('resumo_parecer', item.get('resumo_parecer', ''))
-                        item['saved_by']       = notas[key].get('saved_by', item.get('saved_by', ''))
-                        item['saved_at']       = notas[key].get('saved_at', item.get('saved_at', ''))
-                pauta_cache[cache_key] = {'timestamp': now, 'itens': itens}
-                conn.close()
-                return itens, True
-        except Exception:
-            pass
-
-    try:
-        itens_raw = obter_itens_pauta(evento_id)
-        if not itens_raw:
-            raise ValueError("Scraper sem itens")
-
-        itens = []
-        vistos = set()
-        for ordem, item in enumerate(itens_raw, start=1):
-            id_p = item.get('id_principal')
-            if not id_p or id_p in vistos:
-                continue
-            vistos.add(id_p)
-            key = f"PROP_{id_p}"
-            codigo_original = item['codigo']
-            ementa_item     = item['ementa']
-            projeto_display = extrair_ref_pl(codigo_original, ementa_item)
-            itens.append({
-                'ordem': str(ordem),
-                'id_principal': id_p,
-                'projeto': projeto_display,
-                'projeto_original': codigo_original,
-                'ementa': ementa_item,
-                'autor': item.get('autores', 'N/D'),
-                'relator': item.get('relator', 'Não atribuído'),
-                'situacao': item.get('situacao', 'N/D'),
-                'secao': item.get('secao', 'N/D'),
-                'resumo_materia': notas.get(key, {}).get('resumo_materia', ''),
-                'orientacao':     notas.get(key, {}).get('orientacao', ''),
-                'resumo_parecer': notas.get(key, {}).get('resumo_parecer', ''),
-                'saved_by':       notas.get(key, {}).get('saved_by', ''),
-                'saved_at':       notas.get(key, {}).get('saved_at', ''),
-                'destaques_emendas': []
-            })
-
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        # Reordena conforme ordem oficial da página de Ordem do Dia
-        data_ev = ''
-        for item in itens:
-            if item.get('data_sessao'):
-                data_ev = item['data_sessao']
-                break
-        # Tenta pegar data do evento diretamente da API
-        try:
-            r_ev = requests.get(f"https://dadosabertos.camara.leg.br/api/v2/eventos/{evento_id}", timeout=8)
-            if r_ev.ok:
-                data_ev = r_ev.json().get('dados', {}).get('dataHoraInicio', '')[:10]
-        except Exception:
-            pass
-
-        ordem_oficial = buscar_ordem_oficial(evento_id, data_ev)
-        if ordem_oficial:
-            itens = reordenar_por_ordem_oficial(itens, ordem_oficial)
-            logger.info(f"✅ Itens reordenados pela ordem oficial do plenário.")
-        else:
-            logger.info("⚠️ Ordem oficial não disponível — mantendo ordem da API.")
-
-        c.execute('INSERT OR REPLACE INTO pauta_cache_db (evento_id, json_pauta, last_updated) VALUES (?, ?, ?)',
-                  (evento_id, json.dumps(itens), now_str))
-        conn.commit()
-        pauta_cache[cache_key] = {'timestamp': now, 'itens': itens}
-        conn.close()
-        return itens, False
-
-    except Exception as e:
-        logger.warning(f"⚠️ Scraping falhou: {e}. Usando cache...")
-        c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
-        cached = c.fetchone()
-        conn.close()
-        if cached:
-            try:
-                itens = json.loads(cached[0])
-                pauta_cache[cache_key] = {'timestamp': now, 'itens': itens}
-                return itens, True
-            except Exception:
-                pass
-        return [], True
-
-# --------------------------------------------------------------------------
-# FILTRO DE DATA
-# --------------------------------------------------------------------------
-@app.template_filter('datetimeformat')
-def datetimeformat(value, format='%d/%m/%Y %H:%M'):
-    try:
-        return datetime.fromisoformat(value).strftime(format)
-    except Exception:
-        return value
-
-# --------------------------------------------------------------------------
-# ROTAS
-# --------------------------------------------------------------------------
-@app.route('/')
-@login_required
-def home():
-    return redirect(url_for('selecionar_data'))
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if current_user.is_authenticated:
-        return redirect(url_for('selecionar_data'))
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        conn = sqlite3.connect(DB)
-        c = conn.cursor()
-        c.execute('SELECT id, username, password, role, categoria FROM users WHERE username = ?', (username,))
-        u = c.fetchone()
-        conn.close()
-        if u and bcrypt.check_password_hash(u[2], password):
-            login_user(User(u[0], u[1], u[3], u[4] if len(u) > 4 else 'geral'))
-            return redirect(url_for('selecionar_data'))
-        flash('Usuário ou senha inválidos.', 'error')
-
-    # Busca lista de usuários para o dropdown
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    try:
-        c.execute('SELECT username, categoria FROM users ORDER BY username')
-        usuarios = [{'username': r[0], 'categoria': r[1]} for r in c.fetchall()]
-    except Exception:
-        usuarios = []
-    finally:
-        conn.close()
-    return render_template('login.html', usuarios=usuarios)
-
-@app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for('login'))
-
-@app.route('/selecionar-data', methods=['GET', 'POST'])
-@login_required
-def selecionar_data():
-    data = request.form.get('data', datetime.now().strftime('%Y-%m-%d'))
-    eventos = fetch_eventos_por_data(data)
-    return render_template('selecionar_data.html', data_selecionada=data, eventos=eventos, user_role=current_user.role)
-
-@app.route('/pauta/<int:evento_id>/view')
-@login_required
-def view_pauta(evento_id):
-    force_reload = request.args.get('force_reload', 'false').lower() == 'true'
-    itens, from_cache = fetch_pauta(evento_id, force_reload)
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    last_updated = None
-    last_saved_user = None
-    try:
-        c.execute("SELECT last_updated, last_saved_by FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
-        row = c.fetchone()
-        if row:
-            last_updated = row[0]
-            last_saved_user = row[1]
-    except Exception:
-        pass
-    finally:
-        conn.close()
-
-    try:
-        r = requests.get(f"https://dadosabertos.camara.leg.br/api/v2/eventos/{evento_id}", timeout=10)
-        d = r.json().get("dados", {})
-        evento = {
-            'id': evento_id,
-            'dataHoraInicio': d.get('dataHoraInicio', 'N/D'),
-            'situacao': d.get('situacao', 'N/D'),
-            'descricao': d.get('descricao', 'Sessão Deliberativa'),
-            'local': d.get('localCamara', {}).get('nome', 'N/D') if isinstance(d.get('localCamara'), dict) else d.get('localCamara', 'N/D')
+          });
+
+          if (conteudo) quill.clipboard.dangerouslyPasteHTML(conteudo);
+          quillInstances[ordem] = quill;
+        });
+      });
+
+      // Botão SALVAR
+      document.querySelectorAll('.save-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const ordem = btn.dataset.ordem;
+          const idPrincipal = btn.dataset.idPrincipal;
+
+          const quill = quillInstances[ordem];
+          const resumoMateria = quill ? quill.root.innerHTML : '';
+
+          const orientacaoEl = document.querySelector(`.orientacao[data-ordem="${ordem}"]`);
+          const orientacao = orientacaoEl ? orientacaoEl.value : '';
+
+          const dataToSend = {
+            evento_id: {{ evento_id|safe }},
+            ordem,
+            id_principal: idPrincipal,
+            resumo_materia: resumoMateria,
+            orientacao,
+            resumo_parecer: '',
+            destaques: []
+          };
+
+          const originalHtml = btn.innerHTML;
+          btn.disabled = true;
+          btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Salvando...';
+
+          try {
+            const r = await fetch('/save_item', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(dataToSend)
+            });
+            const j = await r.json();
+            btn.innerHTML = '<i class="fas fa-check me-1"></i>Salvo!';
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-outline-success');
+
+            // Atualiza info de salvamento ao lado do botão
+            const agora = new Date();
+            const horaFmt = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
+            const infoEl = document.getElementById(`info-salvo-${ordem}`);
+            if (infoEl) infoEl.innerHTML = `<i class="fas fa-check-circle text-success me-1"></i>Salvo por <strong>{{ current_user.username }}</strong> em ${horaFmt}`;
+
+            // Atualiza cabeçalho da sessão
+            const ultimoEl = document.getElementById('ultimo-salvamento');
+            const usuarioEl = document.getElementById('ultimo-usuario');
+            if (ultimoEl) ultimoEl.textContent = horaFmt;
+            if (usuarioEl) usuarioEl.innerHTML = ` — por <strong>{{ current_user.username }}</strong>`;
+
+            setTimeout(() => {
+              btn.innerHTML = originalHtml;
+              btn.classList.remove('btn-outline-success');
+              btn.classList.add('btn-success');
+              btn.disabled = false;
+            }, 2500);
+          } catch (error) {
+            alert('Erro ao salvar: falha na conexão.');
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+          }
+        });
+      });
+
+      // Enriquece ementas nos cabeçalhos dos itens com complemento IA
+      (async () => {
+        const ementaEls = document.querySelectorAll('[data-ementa-id]');
+        for (const el of ementaEls) {
+          const idP    = el.dataset.ementaId;
+          const proj   = el.dataset.projeto || '';
+          const ementa = el.dataset.ementa  || '';
+          const autor  = el.dataset.autor   || '';
+          if (!ementa || ementa.length < 10) continue;
+          const enriquecida = await enriquecerEmenta(idP, proj, ementa, autor);
+          if (enriquecida && enriquecida !== ementa) {
+            el.textContent = enriquecida;
+          }
         }
-    except Exception:
-        evento = {'id': evento_id, 'dataHoraInicio': 'N/D', 'situacao': 'N/D', 'descricao': 'Sessão Deliberativa', 'local': 'Plenário'}
+      })();
+      document.querySelectorAll('.btn-buscar-destaques').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const idProp  = btn.dataset.idProposicao;
+          const ordem   = btn.dataset.ordem;
+          const spinner = document.querySelector(`.spinner-busca-${ordem}`);
+          const tabela  = document.getElementById(`tabela-destaques-${ordem}`);
+          const tbody   = document.getElementById(`tbody-destaques-${ordem}`);
+          const semMsg  = document.getElementById(`sem-destaques-${ordem}`);
 
-    return render_template('pauta.html', evento_id=evento_id, evento=evento, itens=itens,
-                           from_cache=from_cache, user_role=current_user.role,
-                           user_categoria=current_user.categoria,
-                           last_updated=last_updated, last_saved_user=last_saved_user)
+          btn.disabled = true;
+          spinner.style.display = 'inline-flex';
+          tabela.style.display  = 'none';
+          tbody.innerHTML = '';
+          semMsg.style.display = 'none';
 
-@app.route('/save_item', methods=['POST'])
-@login_required
-def save_item():
-    data = request.get_json()
-    evento_id   = data.get('evento_id')
-    id_principal = data.get('id_principal')
-    ordem       = data.get('ordem')
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    try:
-        prop_key = f"PROP_{id_principal}"
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        saved_by = current_user.display_name()
-        c.execute('INSERT OR REPLACE INTO notas (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                  (prop_key, evento_id, ordem, data.get('resumo_materia', ''), data.get('orientacao', ''), data.get('resumo_parecer', ''), saved_by, now_str))
-        conn.commit()
+          try {
+            const r = await fetch(`/destaques/${idProp}`);
+            const j = await r.json();
+            tabela.style.display = 'block';
+            if (j.destaques && j.destaques.length > 0) {
+              j.destaques.forEach(d => {
+                const badge = d.situacao.toLowerCase().includes('tramitação')
+                  ? `<span class="badge bg-warning text-dark">${d.situacao}</span>`
+                  : `<span class="badge bg-secondary">${d.situacao}</span>`;
+                tbody.innerHTML += `<tr>
+                  <td><strong>${d.numero}</strong></td>
+                  <td>${d.autoria}</td>
+                  <td>${d.descricao}</td>
+                  <td>${d.tipo_destaque}</td>
+                  <td>${badge}</td>
+                </tr>`;
+              });
+            } else {
+              semMsg.style.display = 'block';
+            }
+          } catch(e) {
+            tabela.style.display = 'block';
+            semMsg.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>Erro: ${e.message}`;
+            semMsg.style.display = 'block';
+          } finally {
+            spinner.style.display = 'none';
+            btn.disabled = false;
+          }
+        });
+      });
 
-        # Atualiza o cache persistente com as notas salvas e usuário
-        c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
-        row = c.fetchone()
-        if row:
-            try:
-                itens = json.loads(row[0])
-                for item in itens:
-                    if str(item.get('id_principal')) == str(id_principal):
-                        item['resumo_materia'] = data.get('resumo_materia', '')
-                        item['orientacao']     = data.get('orientacao', '')
-                        item['resumo_parecer'] = data.get('resumo_parecer', '')
-                c.execute('UPDATE pauta_cache_db SET json_pauta = ?, last_updated = ?, last_saved_by = ? WHERE evento_id = ?',
-                          (json.dumps(itens), now_str, saved_by, evento_id))
-                conn.commit()
-            except Exception:
-                pass
+    });
 
-        pauta_cache.clear()
-        return jsonify({'message': 'Salvo com sucesso!'})
-    except Exception as e:
-        conn.rollback()
-        return jsonify({'message': f'Erro ao salvar: {e}'})
-    finally:
-        conn.close()
+    // Botão Gerar Análise — usa ementa da proposição via Groq
+    async function gerarAnalise(ordem, btn) {
+      const overlay      = document.getElementById("overlay-" + ordem);
+      const ementa       = btn.dataset.ementa || '';
+      const projeto      = btn.dataset.projeto || '';
+      const autor        = btn.dataset.autor || '';
+      const relator      = btn.dataset.relator || '';
+      const id_principal = btn.dataset.idPrincipal || '';
 
-def _clean_html(raw):
-    if raw is None:
-        return ''
-    s = re.sub(r'<[^>]+>', '', raw, flags=re.S | re.I)
-    s = ihtml.unescape(s)
-    return re.sub(r'\s+', ' ', s, flags=re.S).strip()
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando...';
+      overlay.style.display = "flex";
 
-@app.route('/destaques/<id_proposicao>')
-@login_required
-def buscar_destaques(id_proposicao):
-    """Busca destaques em tempo real para uma proposição via scraping do site da Câmara."""
-    url = f"https://www.camara.leg.br/pplen/destaques.html?codOrgao=180&codProposicao={id_proposicao}"
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        html = r.text
-        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, flags=re.S | re.I)
-        destaques = []
-        for row in rows:
-            cols = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, flags=re.S | re.I)
-            if len(cols) < 5:
-                continue
-            numero    = _clean_html(cols[0])
-            autoria   = _clean_html(cols[1])
-            descricao = _clean_html(cols[2])
-            tipo      = _clean_html(cols[3])
-            situacao  = _clean_html(cols[4])
-            if 'DTQ' not in numero.upper():
-                continue
-            destaques.append({
-                'numero':        numero,
-                'autoria':       autoria,
-                'descricao':     descricao,
-                'tipo_destaque': tipo,
-                'situacao':      situacao,
-            })
-        return jsonify({'destaques': destaques, 'total': len(destaques)})
-    except Exception as e:
-        logger.warning(f"Falha ao buscar destaques de {id_proposicao}: {e}")
-        return jsonify({'destaques': [], 'total': 0, 'erro': str(e)})
-
-def buscar_texto_prlp_ou_sbt(id_proposicao):
-    """
-    Busca o texto do último PRLP ou Substitutivo de plenário.
-    Usa o Avulso e as últimas tramitações, verificando o conteúdo do PDF.
-    """
-    from bs4 import BeautifulSoup
-    import pdfplumber
-    from io import BytesIO
-
-    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
-
-    try:
-        url_pag = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}"
-        r = requests.get(url_pag, headers=headers, timeout=12)
-        if not r.ok:
-            return None
-
-        soup = BeautifulSoup(r.text, 'html.parser')
-
-        # Coleta links: primeiro PRLP/SBT pelo filename, depois tramitações recentes, depois avulso
-        prlp_sbt_urls = []  # [(label, url)] com PRLP/SBT no filename
-        tramitacoes   = []  # [(num, url)]
-        avulso_url    = None
-
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            if 'codteor' not in href.lower():
-                continue
-            url_doc  = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-            m_fn     = re.search(r'filename=([^&"]+)', href)
-            filename = (m_fn.group(1) if m_fn else '').upper()
-
-            # PRLP ou SBT no filename — prioridade máxima
-            # Filenames: PRLP-1-PL-X, SBT-1-PL-X, Parecer-PLEN-*, Substitutivo-*
-            eh_prlp_fn = any(p in filename for p in ['PRLP', 'SBT', 'SUBSTITUT'])
-            eh_parecer_plen = ('PARECER' in filename and
-                               any(p in filename for p in ['PLEN', 'PLENARIO', 'PLENÁRIO']))
-
-            if eh_prlp_fn or eh_parecer_plen:
-                tipo = 'Substitutivo' if any(p in filename for p in ['SBT', 'SUBSTITUT']) else 'PRLP'
-                prlp_sbt_urls.append((tipo, url_doc))
-            elif 'AVULSO' in filename:
-                avulso_url = url_doc
-            else:
-                m_tram = re.search(r'Tramitacao-(\d+)-', filename)
-                if m_tram:
-                    tramitacoes.append((int(m_tram.group(1)), url_doc))
-
-        # Ordena: PRLP/SBT por filename → tramitações recentes (verifica PDF) → avulso
-        tramitacoes.sort(key=lambda x: x[0], reverse=True)
-        candidatos = []
-        for tipo, url in reversed(prlp_sbt_urls):
-            candidatos.append((tipo, url))
-        for num, url in tramitacoes[:8]:  # aumenta para 8 tramitações
-            candidatos.append((f'tram-{num}', url))
-        if avulso_url:
-            candidatos.append(('avulso', avulso_url))
-
-        # Estratégia extra: rastreia links próximos às menções de PRLP/SBT no HTML
-        # As menções são "Apresentação do PRLP n. X PLEN" mas o link está na linha anterior/posterior
-        texto_html = r.text
-        for m in re.finditer(r'PRLP|SUBSTITUT', texto_html, re.IGNORECASE):
-            # Pega trecho ao redor da menção
-            inicio = max(0, m.start() - 500)
-            fim    = min(len(texto_html), m.end() + 500)
-            trecho = texto_html[inicio:fim]
-            # Extrai codteors do trecho
-            for ct in re.findall(r'codteor=(\d+)', trecho):
-                url_doc = f"https://www.camara.leg.br/proposicoesWeb/prop_mostrarintegra?codteor={ct}"
-                # Evita duplicatas
-                if not any(url_doc in c[1] for c in candidatos):
-                    candidatos.append((f'prlp-html-{ct}', url_doc))
-
-        # Remove duplicatas preservando ordem
-        vistos = set()
-        candidatos_unicos = []
-        for label, url in candidatos:
-            if url not in vistos:
-                vistos.add(url)
-                candidatos_unicos.append((label, url))
-        candidatos = candidatos_unicos
-
-        palavras_prlp_sbt = [
-            'PRLP',
-            'PARECER PRELIMINAR',
-            'SUBSTITUTIVO',
-            'PARECER DE PLEN',
-            'PARECER DO RELATOR DE PLEN',
-        ]
-
-        for label, url_doc in candidatos:
-            url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
-            try:
-                rp = requests.get(url_pdf, headers=headers, timeout=20)
-                if not rp.ok or 'pdf' not in rp.headers.get('Content-Type','').lower():
-                    continue
-                with pdfplumber.open(BytesIO(rp.content)) as pdf:
-                    pag1  = (pdf.pages[0].extract_text() or '').upper()
-                    texto = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
-
-                # PRLP/SBT identificados pelo filename: aceita sempre
-                # Tramitações e Avulso: só aceita se contiver PRLP/Substitutivo
-                eh_prlp_fn = label in ('PRLP', 'Substitutivo')
-                eh_prlp_txt = any(p in pag1 for p in palavras_prlp_sbt)
-
-                if not eh_prlp_fn and not eh_prlp_txt:
-                    continue
-
-                tipo = label if eh_prlp_fn else (
-                    'Substitutivo' if 'SUBSTITUTIVO' in pag1 else 'PRLP'
-                )
-
-                # Extrai número do PRLP (ex: "PRLP n.6", "PRLP N. 6", "PRLP n.°6")
-                numero_prlp = None
-                m_num = re.search(r'PRLP\s+[Nn][º°.]?\s*(\d+)', pag1)
-                if m_num:
-                    numero_prlp = m_num.group(1)
-
-                # Extrai data — prioriza "Apresentação DD/MM/AAAA" (data do PRLP)
-                # No PDF da Câmara aparece como texto rotacionado: "Apresentação: 13/05/2026"
-                data = ''
-                for padrao_data in [
-                    r'Apresenta[cç][aã]o[:\s]+(\d{2}/\d{2}/\d{4})',
-                    r'APRESENTA[CÇ][AÃ]O[:\s]+(\d{2}/\d{2}/\d{4})',
-                    r'(\d{2}/\d{2}/\d{4})',
-                ]:
-                    m_data = re.search(padrao_data, pag1, re.IGNORECASE)
-                    if m_data:
-                        data = m_data.group(1)
-                        break
-
-                # Se não achou no PDF, busca na API
-                if not data:
-                    try:
-                        r_api = requests.get(
-                            f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}",
-                            headers=headers, timeout=8
-                        )
-                        if r_api.ok:
-                            dh = r_api.json().get('dados', {}).get('statusProposicao', {}).get('dataHora', '')
-                            if dh:
-                                data = datetime.fromisoformat(str(dh)[:10]).strftime('%d/%m/%Y')
-                    except Exception:
-                        pass
-                logger.info(f"Documento {tipo} ({label}) para {id_proposicao}: {len(texto)} chars, PRLP nº {numero_prlp}, data {data}")
-                return {'tipo': tipo, 'numero': numero_prlp, 'data': data, 'texto': texto[:8000]}
-            except Exception as e:
-                logger.warning(f"Erro ao processar {label}: {e}")
-                continue
-
-        return None
-
-    except Exception as e:
-        logger.warning(f"Erro buscar_texto_prlp_ou_sbt({id_proposicao}): {e}")
-    return None
-
-def buscar_ultimo_parecer(id_proposicao):
-    """
-    Busca o último PRLP ou Substitutivo de Plenário via tramitações da proposição.
-    Filtra apenas documentos do Plenário (PLEN, MESA, PRLP, SBT em plenário).
-    """
-    headers = {'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}
-
-    ORGAOS_PLENARIO = {'PLEN', 'MESA', 'PRESID', 'CVT'}
-    SIGLAS_DOC      = {'PRLP', 'SBT', 'SUBSTITUT', 'PARECER PRELIMINAR DE PLEN'}
-
-    try:
-        # Busca tramitações em ordem DESC (mais recente primeiro)
-        url = (f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
-               f"/{id_proposicao}/tramitacoes?itens=50&ordem=DESC")
-        r = requests.get(url, headers=headers, timeout=12)
-
-        if r.ok:
-            trams = r.json().get('dados', [])
-            for t in trams:
-                sigla_orgao = (t.get('siglaOrgao') or '').upper()
-                descricao   = (t.get('descricaoTramitacao') or '').upper()
-                despacho    = (t.get('despacho') or '').upper()
-                texto_busca = f"{descricao} {despacho}"
-
-                # Só plenário
-                eh_plenario = (sigla_orgao in ORGAOS_PLENARIO or
-                               'PLEN' in sigla_orgao or
-                               'PLENÁRIO' in texto_busca or
-                               'PLENARIO' in texto_busca)
-                if not eh_plenario:
-                    continue
-
-                # Verifica se é PRLP ou Substitutivo
-                eh_prlp_ou_sbt = (
-                    'PRLP' in texto_busca or
-                    'SUBSTITUT' in texto_busca or
-                    'PARECER PRELIMINAR' in texto_busca
-                )
-                if not eh_prlp_ou_sbt:
-                    continue
-
-                # Encontrou — extrai data e tipo
-                data_hora = t.get('dataHora', '') or ''
-                data_fmt  = ''
-                if data_hora:
-                    try:
-                        dt = datetime.fromisoformat(str(data_hora)[:10])
-                        data_fmt = dt.strftime('%d/%m/%Y')
-                    except Exception:
-                        data_fmt = str(data_hora)[:10]
-
-                tipo_label = 'Substitutivo' if 'SUBSTITUT' in texto_busca else 'Parecer Preliminar de Plenário (PRLP)'
-                despacho_orig = t.get('despacho', '') or ''
-                nome_doc = _extrair_nome_doc_despacho(despacho_orig, tipo_label)
-
-                logger.info(f"Parecer plenário encontrado para {id_proposicao}: {tipo_label} em {data_fmt}")
-                return {
-                    'tipo':  tipo_label,
-                    'nome':  nome_doc,
-                    'data':  data_fmt,
-                    'orgao': t.get('siglaOrgao', ''),
-                }
-
-        # Fallback: usa statusProposicao do endpoint principal
-        r2 = requests.get(
-            f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}",
-            headers=headers, timeout=10
-        )
-        if r2.ok:
-            status = r2.json().get('dados', {}).get('statusProposicao', {}) or {}
-            despacho   = (status.get('despacho', '') or '').upper()
-            tramitacao = (status.get('descricaoTramitacao', '') or '').upper()
-            sigla_orgao = (status.get('siglaOrgao', '') or '').upper()
-            data_hora   = status.get('dataHora', '') or ''
-
-            eh_plenario   = sigla_orgao in ORGAOS_PLENARIO or 'PLEN' in sigla_orgao
-            eh_prlp_ou_sbt = ('SUBSTITUT' in despacho or 'PRLP' in despacho or
-                               'SUBSTITUT' in tramitacao or 'PRLP' in tramitacao)
-
-            if eh_plenario and eh_prlp_ou_sbt:
-                data_fmt = ''
-                if data_hora:
-                    try:
-                        dt = datetime.fromisoformat(str(data_hora)[:10])
-                        data_fmt = dt.strftime('%d/%m/%Y')
-                    except Exception:
-                        data_fmt = str(data_hora)[:10]
-
-                despacho_orig = status.get('despacho', '') or ''
-                tramitacao_orig = status.get('descricaoTramitacao', '') or ''
-                texto_upper = f"{despacho_orig} {tramitacao_orig}".upper()
-                tipo_label = 'Substitutivo' if 'SUBSTITUT' in texto_upper else 'PRLP'
-
-                # Extrai nome descritivo do despacho
-                nome_doc = _extrair_nome_doc_despacho(despacho_orig, tipo_label)
-
-                return {
-                    'tipo':  tipo_label,
-                    'nome':  nome_doc,
-                    'data':  data_fmt,
-                    'orgao': status.get('siglaOrgao', ''),
-                }
-
-    except Exception as e:
-        logger.warning(f"Erro ao buscar parecer de {id_proposicao}: {e}")
-
-    return None
-
-@app.route('/analisar_ia', methods=['POST'])
-@login_required
-def analisar_ia():
-    data         = request.get_json()
-    projeto      = data.get('projeto', '')
-    ementa       = data.get('ementa', '')
-    autor        = data.get('autor', '')
-    relator      = data.get('relator', '')
-    id_principal = data.get('id_principal', '')
-
-    gemini_key = os.environ.get('GEMINI_API_KEY', '')
-    groq_key   = os.environ.get('GROQ_API_KEY', '')
-
-    # Busca texto completo do último PRLP ou Substitutivo de plenário
-    doc_plenario = None
-    parecer_info = None
-    if id_principal:
-        doc_plenario = buscar_texto_prlp_ou_sbt(id_principal)
-        if not doc_plenario:
-            parecer_info = buscar_ultimo_parecer(id_principal)
-
-    # Monta contexto do documento para o prompt
-    if doc_plenario and doc_plenario.get('texto'):
-        contexto_doc = f"""
-Documento de referência: {doc_plenario['tipo']} de {doc_plenario['data']}
-
-TEXTO COMPLETO DO DOCUMENTO:
-{doc_plenario['texto']}
-
----
-Faça a análise com base no texto acima, não na ementa original."""
-        num_str   = f" nº {doc_plenario['numero']}" if doc_plenario.get('numero') else ''
-        ref_linha = f"{doc_plenario['tipo']}{num_str} de {doc_plenario.get('data','')}"
-    elif parecer_info:
-        contexto_doc = f"\nDocumento de referência: {parecer_info['tipo']} de {parecer_info.get('data','')}"
-        ref_linha = f"{parecer_info['tipo']} de {parecer_info.get('data','')}"
-    else:
-        contexto_doc = ''
-        ref_linha = 'texto original da proposição'
-
-    prompt = f"""Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil.
-
-**Proposição:** {projeto}
-**Autor(es):** {autor}
-**Relator:** {relator}
-**Ementa:** {ementa}
-{contexto_doc}
-
-Gere uma nota técnica em HTML com EXATAMENTE este formato:
-
-<p><strong>Nota Técnica: Análise do {projeto}</strong></p>
-<p><em style="color:red;">Análise baseada em: {ref_linha}</em></p>
-<br>
-<p><strong>Objetivo da Proposição</strong><br>[texto detalhado]</p>
-<br>
-<p><strong>Principais Alterações</strong><br><ul><li>[item]</li><li>[item]</li><li>[item]</li></ul></p>
-<br>
-<p><strong>Impacto Esperado</strong><br>[texto detalhado]</p>
-<br>
-<p><strong>Pontos de Atenção</strong><br><ul><li>[item]</li><li>[item]</li></ul></p>
-
-Seja detalhado e técnico. Máximo 500 palavras. Não use ### ou ** no texto, apenas HTML."""
-
-    # Tenta Gemini primeiro, fallback para Groq
-    if gemini_key:
-        try:
-            r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={gemini_key}",
-                headers={"Content-Type": "application/json"},
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.3}
-                },
-                timeout=30
-            )
-            r.raise_for_status()
-            texto = r.json()['candidates'][0]['content']['parts'][0]['text']
-            return jsonify({'resumo': texto, 'fonte': 'gemini', 'parecer': parecer_info})
-        except Exception as e:
-            logger.warning(f"Gemini falhou, usando Groq: {e}")
-
-    # Fallback: Groq
-    if groq_key:
-        try:
-            r = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                json={
-                    "model": "llama-3.3-70b-versatile",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 1024,
-                    "temperature": 0.3
-                },
-                timeout=30
-            )
-            r.raise_for_status()
-            return jsonify({'resumo': r.json()['choices'][0]['message']['content'], 'fonte': 'groq', 'parecer': parecer_info})
-        except Exception as e:
-            logger.error(f"Groq também falhou: {e}")
-            return jsonify({'error': str(e)}), 500
-
-    return jsonify({'error': 'Nenhuma chave de IA configurada (GEMINI_API_KEY ou GROQ_API_KEY).'}), 500
-
-@app.route('/infografico/<int:evento_id>')
-@login_required
-def gerar_infografico(evento_id):
-    from gerar_infografico import gerar_infografico_pdf
-    itens, _ = fetch_pauta(evento_id, force_reload=False)
-    try:
-        r = requests.get(f"https://dadosabertos.camara.leg.br/api/v2/eventos/{evento_id}", timeout=10)
-        d = r.json().get("dados", {})
-        evento = {
-            'id': evento_id,
-            'dataHoraInicio': d.get('dataHoraInicio', ''),
-            'situacao': d.get('situacao', ''),
-            'descricao': d.get('descricao', 'Sessão Deliberativa'),
-            'local': d.get('localCamara', {}).get('nome', 'Plenário') if isinstance(d.get('localCamara'), dict) else 'Plenário'
+      try {
+        const r = await fetch('/analisar_ia', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projeto, ementa, autor, relator, id_principal })
+        });
+        if (!r.ok) { alert('Erro do servidor: ' + await r.text()); return; }
+        const j = await r.json();
+        if (j.resumo) {
+          if (!quillInstances[ordem]) {
+            const quill = new Quill(`#quill-editor-${ordem}`, {
+              theme: 'snow',
+              modules: { toolbar: [['bold','italic','underline'],[{'list':'ordered'},{'list':'bullet'}],['clean']] }
+            });
+            quillInstances[ordem] = quill;
+          }
+          quillInstances[ordem].clipboard.dangerouslyPasteHTML(j.resumo);
+        } else {
+          alert('Erro da IA: ' + (j.error || 'Resposta vazia'));
         }
-    except Exception:
-        evento = {'id': evento_id, 'dataHoraInicio': '', 'situacao': '', 'descricao': 'Sessão Deliberativa', 'local': 'Plenário'}
-
-    static_path = os.path.join(app.root_path, 'static')
-    pdf = gerar_infografico_pdf(evento, itens,
-                                 os.path.join(static_path, 'logo_minoria.png'),
-                                 os.path.join(static_path, 'logo_oposicao.png'))
-    resp = make_response(pdf)
-    resp.headers['Content-Type'] = 'application/pdf'
-    resp.headers['Content-Disposition'] = f'inline; filename="infografico_plenario_{evento_id}.pdf"'
-    return resp
-
-@app.route('/export-resumo/<int:evento_id>')
-@login_required
-def export_resumo(evento_id):
-    return redirect(url_for('exportar.exportar_pauta', evento_id=evento_id))
-
-from exportar_pauta import exportar_bp
-app.register_blueprint(exportar_bp)
-
-@app.route('/trocar-senha', methods=['GET', 'POST'])
-@login_required
-def trocar_senha():
-    if request.method == 'POST':
-        data         = request.get_json()
-        senha_atual  = data.get('senha_atual', '')
-        nova_senha   = data.get('nova_senha', '').strip()
-        confirma     = data.get('confirma', '').strip()
-        if not nova_senha or len(nova_senha) < 4:
-            return jsonify({'error': 'Nova senha deve ter ao menos 4 caracteres.'}), 400
-        if nova_senha != confirma:
-            return jsonify({'error': 'Nova senha e confirmação não coincidem.'}), 400
-        conn = sqlite3.connect(DB)
-        c    = conn.cursor()
-        c.execute('SELECT password FROM users WHERE id=?', (current_user.id,))
-        row = c.fetchone()
-        if not row or not bcrypt.check_password_hash(row[0], senha_atual):
-            conn.close()
-            return jsonify({'error': 'Senha atual incorreta.'}), 400
-        nova_hash = bcrypt.generate_password_hash(nova_senha).decode('utf-8')
-        c.execute('UPDATE users SET password=? WHERE id=?', (nova_hash, current_user.id))
-        conn.commit()
-        conn.close()
-        return jsonify({'message': 'Senha alterada com sucesso!'})
-    return render_template('trocar_senha.html')
-
-@app.route('/admin/usuarios')
-@login_required
-def admin_usuarios():
-    if current_user.role != 'Admin':
-        flash('Acesso restrito.', 'error')
-        return redirect(url_for('selecionar_data'))
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute('SELECT id, username, role, categoria FROM users ORDER BY id DESC')
-    usuarios = c.fetchall()
-    conn.close()
-    return render_template('admin_usuarios.html', usuarios=usuarios)
-
-@app.route('/admin/usuarios/add', methods=['POST'])
-@login_required
-def add_usuario():
-    if current_user.role != 'Admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    data      = request.get_json()
-    username  = data.get('username', '').strip()
-    password  = data.get('password', '').strip()
-    role      = data.get('role', 'Assessor').strip()
-    categoria = data.get('categoria', 'geral').strip()
-    if not username or not password:
-        return jsonify({'error': 'Usuário e senha obrigatórios'}), 400
-    hashed = bcrypt.generate_password_hash(password).decode('utf-8')
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    try:
-        c.execute('INSERT INTO users (username, password, role, categoria) VALUES (?, ?, ?, ?)',
-                  (username, hashed, role, categoria))
-        conn.commit()
-        return jsonify({'message': 'Usuário criado!'})
-    except sqlite3.IntegrityError:
-        return jsonify({'error': 'Usuário já existe'}), 409
-    finally:
-        conn.close()
-
-@app.route('/exportar_orientacoes_pdf', methods=['POST'])
-@login_required
-def exportar_orientacoes_pdf():
-    from io import BytesIO
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.units import cm
-    from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT
-    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                     Table, TableStyle, HRFlowable)
-
-    data     = request.get_json()
-    itens    = data.get('itens', [])
-    ori_data = data.get('orientacoes', {})
-    colunas  = data.get('colunas', [])
-    evento_id = data.get('evento_id', '')
-
-    COR_VERDE  = colors.HexColor("#1A6B3A")
-    COR_AZUL   = colors.HexColor("#0D2B5E")
-    COR_CINZA  = colors.HexColor("#555555")
-    CORES_ORI  = {
-        'a favor':   colors.HexColor("#d4edda"),
-        'contra':    colors.HexColor("#f8d7da"),
-        'obstrução': colors.HexColor("#fff3cd"),
-        'liberado':  colors.HexColor("#cce5ff"),
-        'abstenção': colors.HexColor("#e2e3e5"),
-        '—':         colors.white,
-        '':          colors.white,
+      } catch(e) {
+        alert('Erro ao conectar com a IA: ' + e.message);
+      } finally {
+        overlay.style.display = "none";
+        btn.disabled = false;
+        btn.innerHTML = '<img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">Gerar Análise';
+      }
     }
-    CORES_COL = {
-        'PL':       colors.HexColor("#dceefb"),
-        'NOVO':     colors.HexColor("#fde8d8"),
-        'oposicao': colors.HexColor("#fdeaea"),
-        'minoria':  colors.HexColor("#e8f5ee"),
+  </script>
+
+<!-- MODAL MENSAGENS PLENÁRIO -->
+<div class="modal fade" id="modalMensagens" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#25D366,#128C7E);">
+        <h5 class="modal-title text-white">
+          <i class="fab fa-whatsapp me-2"></i>Mensagens para o Plenário
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <div class="mb-3" id="select-item-container">
+          <label class="form-label fw-bold">Selecione o Item:</label>
+          <select class="form-select" id="select-item-msg">
+            <option value="">-- Selecione --</option>
+            {% for item in itens %}
+            <option value="{{ loop.index0 }}"
+              data-projeto="{{ item.projeto }}"
+              data-ementa="{{ item.ementa | replace('"','') | truncate(300, True, '') }}"
+              data-autor="{{ item.autor }}"
+              data-relator="{{ item.relator }}"
+              data-orientacao="{{ item.orientacao or '' }}">
+              Item {{ item.ordem }} — {{ item.projeto }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold">Tipo de Mensagem:</label>
+          <div class="d-flex gap-2 flex-wrap">
+            <button class="btn btn-outline-primary btn-sm btn-tipo-msg" data-tipo="apresentacao">
+              <i class="fas fa-file-alt me-1"></i>Apresentação do Item
+            </button>
+            <button class="btn btn-outline-danger btn-sm btn-tipo-msg" data-tipo="votacao">
+              <i class="fas fa-vote-yea me-1"></i>Votação Nominal
+            </button>
+            <button class="btn btn-outline-success btn-sm btn-tipo-msg" data-tipo="iniciada">
+              <i class="fas fa-play-circle me-1"></i>Iniciada a Ordem do Dia
+            </button>
+            <button class="btn btn-outline-warning btn-sm btn-tipo-msg" data-tipo="encerrada_ordem">
+              <i class="fas fa-stop-circle me-1"></i>Encerrada a Ordem do Dia
+            </button>
+            <button class="btn btn-outline-dark btn-sm btn-tipo-msg" data-tipo="encerrada_sessao">
+              <i class="fas fa-flag-checkered me-1"></i>Encerrada a Sessão
+            </button>
+          </div>
+        </div>
+
+        <div class="mb-3" id="campo-objeto" style="display:none;">
+          <label class="form-label fw-bold">Objeto da Votação:</label>
+          <div class="d-flex gap-2 flex-wrap mb-2">
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Mérito">Mérito</button>
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Substitutivo">Substitutivo</button>
+            <div class="dropdown">
+              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="btnRequerimento" data-bs-toggle="dropdown" aria-expanded="false">
+                Requerimento
+              </button>
+              <ul class="dropdown-menu" aria-labelledby="btnRequerimento">
+                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Urgência">De Urgência</a></li>
+                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Discussão">De Discussão</a></li>
+                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Votação">De Votação</a></li>
+              </ul>
+            </div>
+            <div class="dropdown" id="dropdown-dtq-container">
+              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                id="btnDTQ" data-bs-toggle="dropdown" aria-expanded="false"
+                onclick="carregarDestaquesDTQ()">
+                DTQ
+              </button>
+              <ul class="dropdown-menu" id="menu-dtq" aria-labelledby="btnDTQ">
+                <li><span class="dropdown-item text-muted fst-italic" id="dtq-loading">
+                  <span class="spinner-border spinner-border-sm me-1"></span>Buscando destaques...
+                </span></li>
+              </ul>
+            </div>
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Redação Final">Redação Final</button>
+          </div>
+          <input type="text" class="form-control" id="input-objeto" placeholder="Ou digite o objeto manualmente...">
+        </div>
+
+        <div id="preview-msg-container" style="display:none;">
+          <label class="form-label fw-bold">Mensagem Gerada:</label>
+          <textarea id="preview-msg" class="form-control" rows="12"
+            style="font-family:monospace;font-size:0.88rem;background:#f0fdf4;border:2px solid #25D366;resize:vertical;"></textarea>
+          <div class="d-flex gap-2 mt-2">
+            <button class="btn btn-success btn-sm" id="btn-copiar-msg">
+              <i class="fas fa-copy me-1"></i>Copiar Mensagem
+            </button>
+            <span id="copiado-msg" class="text-success align-self-center" style="display:none;font-size:0.85rem;">✅ Copiado!</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Lógica do modal de mensagens
+  const itensData = [
+    {% for item in itens %}
+    {
+      ordem:        "{{ item.ordem }}",
+      id_principal: "{{ item.id_principal }}",
+      projeto:      "{{ item.projeto }}",
+      ementa:       "{{ item.ementa | replace('"','') | replace('\n',' ') | truncate(400, True, '') }}",
+      autor:        "{{ item.autor | replace('"','') }}",
+      relator:      "{{ item.relator | replace('"','') }}",
+      orientacao:   "{{ item.orientacao or '' }}"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ];
+
+  // Cache de ementas enriquecidas pela IA
+  const ementaCache = {};
+
+  async function enriquecerEmenta(idPrincipal, projeto, ementa, autor) {
+    if (ementaCache[idPrincipal]) return ementaCache[idPrincipal];
+    try {
+      const r = await fetch('/enriquecer_ementa', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({projeto, ementa, autor})
+      });
+      const j = await r.json();
+      ementaCache[idPrincipal] = j.ementa_enriquecida || ementa;
+    } catch(e) {
+      ementaCache[idPrincipal] = ementa;
+    }
+    return ementaCache[idPrincipal];
+  }
+
+  let tipoAtual = null;
+  let itemAtual = null;
+
+  async function gerarMensagem() {
+    if (!itemAtual || !tipoAtual) return;
+    const ori = itemAtual.orientacao ? itemAtual.orientacao.toUpperCase() : 'A DEFINIR';
+    const obj = document.getElementById('input-objeto').value.trim();
+    let msg = '';
+
+    // Enriquece ementa com IA (original + complemento entre parênteses)
+    let ementa = itemAtual.ementa;
+    if (tipoAtual !== 'iniciada' && tipoAtual !== 'encerrada_ordem' && tipoAtual !== 'encerrada_sessao') {
+      ementa = await enriquecerEmenta(
+        itemAtual.id_principal, itemAtual.projeto, itemAtual.ementa, itemAtual.autor
+      );
     }
 
-    buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
-                            leftMargin=1.2*cm, rightMargin=1.2*cm,
-                            topMargin=1.5*cm, bottomMargin=1.5*cm)
-    SS = getSampleStyleSheet()
-    T  = ParagraphStyle("T", parent=SS["Title"],  fontSize=12, textColor=COR_VERDE, alignment=TA_CENTER)
-    S  = ParagraphStyle("S", parent=SS["Normal"], fontSize=7.5, textColor=COR_CINZA, leading=10, wordWrap='CJK')
-    SB = ParagraphStyle("SB",parent=SS["Normal"], fontSize=7.5, fontName="Helvetica-Bold", leading=10, wordWrap='CJK')
-    SC = ParagraphStyle("SC",parent=SS["Normal"], fontSize=7,   textColor=COR_CINZA, leading=9, wordWrap='CJK', alignment=TA_CENTER)
+    if (tipoAtual === 'apresentacao') {
+      msg =
+`*${itemAtual.projeto}*
 
-    story = []
-    story.append(Paragraph("Quadro de Orientações — Plenário da Câmara dos Deputados", T))
-    story.append(Paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ParagraphStyle("sm", parent=SS["Normal"], fontSize=7.5, textColor=COR_CINZA, alignment=TA_CENTER)))
-    story.append(Spacer(1, 8))
-    story.append(HRFlowable(width="100%", thickness=1, color=COR_VERDE))
-    story.append(Spacer(1, 6))
+${ementa}
 
-    # Cabeçalho
-    header = [Paragraph("<b>#</b>", SC),
-              Paragraph("<b>Proposição</b>", SC),
-              Paragraph("<b>Ementa</b>", SC)]
-    for col in colunas:
-        header.append(Paragraph(f"<b>{col['label']}</b>", SC))
+Autor: ${itemAtual.autor}
+Relator: ${itemAtual.relator}
 
-    rows = [header]
-    col_widths = [0.7*cm, 2.5*cm, 7*cm] + [4.5*cm] * len(colunas)
+*OPOSIÇÃO ORIENTA: ${ori}*`;
 
-    style_cmds = [
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#f0f0f0")),
-        ("GRID",       (0,0), (-1,-1), 0.4, colors.HexColor("#CCCCCC")),
-        ("VALIGN",     (0,0), (-1,-1), "TOP"),
-        ("TOPPADDING", (0,0), (-1,-1), 3),
-        ("BOTTOMPADDING",(0,0),(-1,-1),3),
-        ("FONTSIZE",   (0,0), (-1,-1), 7.5),
-    ]
+    } else if (tipoAtual === 'votacao') {
+      if (!obj) {
+        document.getElementById('preview-msg-container').style.display = 'none';
+        return;
+      }
+      const descDtq = document.getElementById('input-objeto').dataset.descricaoDtq || '';
+      const linhaDescricao = descDtq ? `\n${descDtq}` : '';
+      msg =
+`‼ *ATENÇÃO* ‼
 
-    for i, item in enumerate(itens):
-        row_num = i + 1
-        row = [
-            Paragraph(str(item.get('ordem','')), SC),
-            Paragraph(f"<b>{item.get('projeto','')}</b>", SB),
-            Paragraph(item.get('ementa',''), S),
-        ]
-        for j, col in enumerate(colunas):
-            key   = f"{item.get('id_principal')}|{col['grupo']}"
-            salvo = ori_data.get(key, {}) or {}
-            ori   = salvo.get('orientacao', '') if isinstance(salvo, dict) else ''
-            com   = salvo.get('comentario', '') if isinstance(salvo, dict) else ''
-            texto = f"<b>{ori}</b>" if ori else "—"
-            if com:
-                texto += f"<br/><font size='6.5' color='#555555'>{com}</font>"
-            row.append(Paragraph(texto, ParagraphStyle("oc", parent=S, alignment=TA_CENTER)))
-            # Cor de fundo da célula
-            cor_bg = CORES_ORI.get(ori, colors.white)
-            col_idx = 3 + j
-            style_cmds.append(("BACKGROUND", (col_idx, row_num), (col_idx, row_num), cor_bg))
-        rows.append(row)
+*VOTAÇÃO NOMINAL EM PLENÁRIO AGORA*
 
-    tbl = Table(rows, colWidths=col_widths, repeatRows=1)
-    tbl.setStyle(TableStyle(style_cmds))
-    story.append(tbl)
+_${obj}_ - ${itemAtual.projeto}${linhaDescricao}
 
-    doc.build(story)
-    pdf = buf.getvalue(); buf.close()
+${ementa}
 
-    resp = make_response(pdf)
-    resp.headers["Content-Type"] = "application/pdf"
-    resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
-    return resp
+*OPOSIÇÃO ORIENTA: ${ori}*`;
 
-@app.route('/verificar_doc/<int:id_prop>')
-@login_required
-def verificar_doc(id_prop):
-    """Retorna tipo, número e data do último PRLP/Substitutivo de plenário."""
-    doc = buscar_texto_prlp_ou_sbt(id_prop)
-    if doc:
-        return jsonify({
-            'tipo':      doc.get('tipo'),
-            'numero':    doc.get('numero'),
-            'data':      doc.get('data'),
-            'tem_texto': bool(doc.get('texto'))
-        })
-    return jsonify({'tipo': None, 'data': None, 'numero': None})
+    } else if (tipoAtual === 'iniciada') {
+      msg =
+`🟢 *INICIADA A ORDEM DO DIA*
 
-@app.route('/debug_docs/<path:codigo>')
-@login_required
-def debug_docs(codigo):
-    """Debug dos documentos. Aceita id numérico ou 'PL-1054-2019'."""
-    headers = {'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}
-    resultado = {'codigo': codigo}
+A sessão deliberativa foi iniciada no Plenário da Câmara dos Deputados.
 
-    # Resolve id
-    id_prop = None
-    if '-' in str(codigo):
-        partes = str(codigo).split('-')
-        if len(partes) == 3:
-            sigla, numero, ano = partes
-            # Parâmetro correto é siglaTipo
-            url_busca = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla}&numero={numero}&ano={ano}&itens=1"
-            try:
-                r = requests.get(url_busca, headers=headers, timeout=10)
-                resultado['busca_status'] = r.status_code
-                resultado['busca_url'] = url_busca
-                if r.ok:
-                    dados = r.json().get('dados', [])
-                    resultado['busca_dados'] = dados
-                    if dados:
-                        id_prop = dados[0].get('id')
-            except Exception as e:
-                resultado['busca_erro'] = str(e)
-    else:
-        id_prop = int(codigo)
+Acompanhe a pauta em tempo real.`;
 
-    resultado['id_prop'] = id_prop
-    if not id_prop:
-        return jsonify(resultado)
+    } else if (tipoAtual === 'encerrada_ordem') {
+      msg =
+`🔴 *ENCERRADA A ORDEM DO DIA*
 
-    # Testa vários endpoints
-    urls = [
-        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}/documentos?itens=10&ordem=DESC",
-        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}/textos",
-        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}",
-    ]
-    resultado['endpoints'] = []
-    for url in urls:
-        try:
-            r = requests.get(url, headers=headers, timeout=10)
-            body = r.json() if r.ok else r.text[:200]
-            resultado['endpoints'].append({
-                'url': url.split('camara.leg.br')[1],
-                'status': r.status_code,
-                'body': body if isinstance(body, dict) else body
-            })
-        except Exception as e:
-            resultado['endpoints'].append({'url': url.split('camara.leg.br')[1], 'erro': str(e)})
+A Ordem do Dia foi encerrada no Plenário da Câmara dos Deputados.`;
 
-    resultado['parecer'] = buscar_ultimo_parecer(id_prop)
+    } else if (tipoAtual === 'encerrada_sessao') {
+      msg =
+`⛔ *ENCERRADA A SESSÃO DELIBERATIVA*
 
-    # Debug da página de tramitação
-    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
-    url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_prop}"
-    try:
-        from bs4 import BeautifulSoup
-        r_tram = requests.get(url_tram, headers=headers, timeout=12)
-        resultado['tram_status'] = r_tram.status_code
-        resultado['tram_url'] = url_tram
-        if r_tram.ok:
-            soup = BeautifulSoup(r_tram.text, 'html.parser')
-            # Todos os links com codteor
-            links_codteor = []
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                txt  = a.get_text(strip=True)
-                if 'codteor' in href.lower() or 'mostrarintegra' in href.lower():
-                    links_codteor.append({'texto': txt[:60], 'href': href[:120]})
-            resultado['links_codteor'] = links_codteor[:20]
-            # Texto bruto com PRLP ou SBT
-            texto_pag = soup.get_text()
-            prlp_mencoes = [l.strip() for l in texto_pag.split('\n') if 'PRLP' in l.upper() or 'SBT' in l.upper() or 'SUBSTITUT' in l.upper()]
-            resultado['mencoes_prlp_sbt'] = prlp_mencoes[:10]
-    except Exception as e:
-        resultado['tram_erro'] = str(e)
+A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
+    }
 
-    resultado['texto_prlp_sbt'] = buscar_texto_prlp_ou_sbt(id_prop)
-    return jsonify(resultado)
+    document.getElementById('preview-msg').value = msg;
+    document.getElementById('preview-msg-container').style.display = 'block';
+  }
 
-@app.route('/debug_matching/<int:evento_id>')
-@login_required
-def debug_matching(evento_id):
-    """Mostra exatamente como os códigos da API batem com a ordem do PDF."""
-    itens, _ = fetch_pauta(evento_id)
-    ordem = buscar_ordem_oficial(evento_id)
-    
-    resultado = []
-    for item in itens:
-        proj_orig = item.get('projeto_original') or item.get('projeto', '')
-        proj_base = proj_orig.split(' ao ')[0].strip()
-        cod_norm  = _normalizar_codigo(proj_base)
-        pos_pdf   = ordem.get(cod_norm, 'NÃO ENCONTRADO')
-        resultado.append({
-            'ordem_app':      item.get('ordem'),
-            'projeto_orig':   proj_orig,
-            'projeto_base':   proj_base,
-            'cod_normalizado': cod_norm,
-            'posicao_pdf':    pos_pdf,
-        })
-    
-    return jsonify({
-        'ordem_pdf': ordem,
-        'itens_api': resultado
-    })
+  document.getElementById('select-item-msg').addEventListener('change', function() {
+    const idx = this.value;
+    itemAtual = idx !== '' ? itensData[parseInt(idx)] : null;
+    gerarMensagem();
+  });
 
-@app.route('/debug_ordem/<int:evento_id>')
-@login_required
-def debug_ordem(evento_id):
-    """Debug da extração de ordem oficial do PDF por coordenadas."""
-    resultado = {'evento_id': evento_id, 'etapas': []}
-    try:
-        from bs4 import BeautifulSoup
-        import pdfplumber
-        from io import BytesIO
+  document.querySelectorAll('.btn-tipo-msg').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.btn-tipo-msg').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      tipoAtual = btn.dataset.tipo;
+      const campoObj = document.getElementById('campo-objeto');
+      const selectContainer = document.getElementById('select-item-container');
 
-        # 1. Página do evento
-        url = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
-        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}, timeout=12)
-        resultado['etapas'].append({'etapa': '1_evento', 'status': r.status_code})
-        if not r.ok:
-            return jsonify(resultado)
+      // Tipos que não precisam de item específico
+      const semItem = ['iniciada', 'encerrada_ordem', 'encerrada_sessao'];
+      if (selectContainer) selectContainer.style.display = semItem.includes(tipoAtual) ? 'none' : 'block';
 
-        # 2. Acha PDF de Pauta
-        soup = BeautifulSoup(r.text, 'html.parser')
-        pdf_url = None
-        for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
-            if a.get_text(strip=True).lower() == 'pauta':
-                href = a['href']
-                pdf_url = (href if href.startswith('http') else f"https://www.camara.leg.br{href}")
-                pdf_url += ('&' if '?' in pdf_url else '?') + 'tipo=PDF'
-                break
-        resultado['etapas'].append({'etapa': '2_pdf_url', 'url': pdf_url})
-        if not pdf_url:
-            return jsonify(resultado)
+      campoObj.style.display = tipoAtual === 'votacao' ? 'block' : 'none';
+      if (tipoAtual !== 'votacao') {
+        document.getElementById('input-objeto').value = '';
+        document.getElementById('input-objeto').dataset.descricaoDtq = '';
+      }
+      gerarMensagem();
+    });
+  });
 
-        # 3. Baixa PDF
-        rp = requests.get(pdf_url, headers={'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}, timeout=20)
-        resultado['etapas'].append({'etapa': '3_download', 'status': rp.status_code, 'size': len(rp.content), 'ct': rp.headers.get('Content-Type','')})
-        if not rp.ok:
-            return jsonify(resultado)
+  document.querySelectorAll('.btn-objeto').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.btn-objeto').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('input-objeto').value = btn.dataset.objeto;
+      gerarMensagem();
+    });
+  });
 
-        # 4. Extrai palavras com coordenadas
-        numeros_centrais = []
-        page_width = 595.0
-        with pdfplumber.open(BytesIO(rp.content)) as pdf:
-            page_width = float(pdf.pages[0].width) if pdf.pages else 595.0
-            for pnum, page in enumerate(pdf.pages):
-                words = page.extract_words(x_tolerance=3, y_tolerance=3)
-                linhas = {}
-                for w in words:
-                    y = round(float(w['top']))
-                    linhas.setdefault(y, []).append(w)
-                ys = sorted(linhas.keys())
-                for i, y in enumerate(ys):
-                    ws = linhas[y]
-                    # Procura palavra 1-2 dígitos centralizada (ignora resto da linha)
-                    num_encontrado = None
-                    for w in ws:
-                        txt = w['text'].strip()
-                        if not re.match(r'^\d{1,2}$', txt):
-                            continue
-                        centro_w = (float(w['x0']) + float(w['x1'])) / 2
-                        if abs(centro_w - page_width / 2) <= page_width * 0.05:
-                            num_encontrado = (int(txt), float(w['x0']), float(w['x1']))
-                            break
-                    if not num_encontrado:
-                        continue
-                    num, x0, x1 = num_encontrado
-                    if num < 1 or num > 30:
-                        continue
-                    centro = (x0 + x1) / 2
-                    dist_centro = abs(centro - page_width / 2)
-                    margem = page_width * 0.20
-                    # Próximas linhas
-                    prox = ys[i+1:i+6]
-                    bloco = ' '.join(' '.join(w['text'] for w in linhas[ny]) for ny in prox if ny in linhas)
-                    # Mostra todas as palavras da linha (incluindo possíveis invisíveis)
-                    palavras_linha_raw = [{'text': w['text'], 'x0': round(float(w['x0']),1), 'x1': round(float(w['x1']),1)} for w in ws]
-                    numeros_centrais.append({
-                        'num': num, 'page': pnum+1,
-                        'centro_x': round(centro, 1),
-                        'dist_centro': round(dist_centro, 1),
-                        'margem_max': round(margem, 1),
-                        'centralizado': dist_centro <= margem,
-                        'palavras_na_linha': palavras_linha_raw,
-                        'bloco_seguinte': bloco[:120]
-                    })
+  document.querySelectorAll('.btn-objeto-req').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.querySelectorAll('.btn-objeto').forEach(b => b.classList.remove('active'));
+      document.getElementById('btnRequerimento').classList.add('active', 'btn-secondary');
+      document.getElementById('btnRequerimento').classList.remove('btn-outline-secondary');
+      document.getElementById('input-objeto').value = link.dataset.objeto;
+      gerarMensagem();
+    });
+  });
 
-        resultado['page_width'] = page_width
-        resultado['numeros_encontrados'] = numeros_centrais
+  document.getElementById('input-objeto').addEventListener('input', gerarMensagem);
 
-        # 5. Resultado final
-        ordem = buscar_ordem_oficial(evento_id)
-        resultado['ordem_extraida'] = ordem
-        resultado['total'] = len(ordem)
+  document.getElementById('btn-copiar-msg').addEventListener('click', () => {
+    const txt = document.getElementById('preview-msg').value;
+    navigator.clipboard.writeText(txt).then(() => {
+      const el = document.getElementById('copiado-msg');
+      el.style.display = 'inline';
+      setTimeout(() => { el.style.display = 'none'; }, 2500);
+    });
+  });
 
-    except Exception as e:
-        import traceback
-        resultado['erro'] = str(e)
-        resultado['tb'] = traceback.format_exc()[-500:]
-    return jsonify(resultado)
+  // Carregar destaques para o dropdown DTQ
+  let dtqCarregado = false;
+  async function carregarDestaquesDTQ() {
+    if (!itemAtual || dtqCarregado) return;
+    const menu = document.getElementById('menu-dtq');
+    const loading = document.getElementById('dtq-loading');
 
-@app.route('/admin/limpar_todo_cache', methods=['POST'])
-@login_required
-def limpar_todo_cache():
-    if current_user.role != 'Admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute('DELETE FROM pauta_cache_db')
-    n = c.rowcount
-    conn.commit()
-    conn.close()
-    pauta_cache.clear()
-    return jsonify({'message': f'{n} eventos removidos do cache.'})
+    // Descobre id_proposicao do item selecionado
+    const sel = document.getElementById('select-item-msg');
+    const opt = sel.options[sel.selectedIndex];
+    if (!opt || !opt.value) return;
 
-@app.route('/limpar_cache/<int:evento_id>', methods=['POST'])
-@login_required
-def limpar_cache(evento_id):
-    """Remove cache de um evento específico para forçar reprocessamento do título REQ."""
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    try:
-        c.execute('DELETE FROM pauta_cache_db WHERE evento_id = ?', (evento_id,))
-        conn.commit()
-        pauta_cache.pop(str(evento_id), None)
-        return jsonify({'message': f'Cache do evento {evento_id} limpo. Atualize a pauta.'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conn.close()
+    // Pega id_proposicao dos itensData
+    const idx = parseInt(opt.value);
+    const idProp = itensData[idx]?.id_principal;
+    if (!idProp) {
+      menu.innerHTML = '<li><span class="dropdown-item text-muted">ID da proposição não encontrado.</span></li>';
+      return;
+    }
 
-@app.route('/enriquecer_ementa', methods=['POST'])
-@login_required
-def enriquecer_ementa():
-    """Retorna ementa original + complemento IA entre parênteses SOMENTE se a ementa for vaga."""
-    data    = request.get_json()
-    projeto = data.get('projeto', '')
-    ementa  = data.get('ementa', '').strip()
-    autor   = data.get('autor', '')
+    loading.style.display = 'block';
+    dtqCarregado = false;
 
-    # Detecta se ementa é vaga — só menciona lei/artigo mas não explica o conteúdo
-    def ementa_e_vaga(txt):
-        txt_lower = txt.lower()
-        # Padrões de ementa vaga: só referencia lei sem explicar o que faz
-        padroes_vagos = [
-            r'^altera\s+.{0,80}lei\s+n[º°.]?\s*[\d\.]+.*?(e\s+dá\s+outras\s+providências\.?)?$',
-            r'^acrescenta\s+(artigo|inciso|parágrafo).{0,80}(e\s+dá\s+outras\s+providências\.?)?$',
-            r'^revoga\s+.{0,80}(e\s+dá\s+outras\s+providências\.?)?$',
-            r'^dá\s+nova\s+redação.{0,80}(e\s+dá\s+outras\s+providências\.?)?$',
-        ]
-        # Se ementa é muito curta ou só faz referência formal
-        if len(txt) < 60:
-            return True
-        for padrao in padroes_vagos:
-            if re.match(padrao, txt_lower, re.IGNORECASE | re.DOTALL):
-                return True
-        # Se contém palavras que explicam o conteúdo, não é vaga
-        palavras_explicativas = [
-            'para', 'visando', 'com o objetivo', 'com a finalidade',
-            'destinado', 'dispõe sobre', 'institui', 'cria', 'estabelece',
-            'regulamenta', 'define', 'determina', 'proíbe', 'autoriza a',
-            'concede', 'assegura', 'garante', 'prevê'
-        ]
-        if any(p in txt_lower for p in palavras_explicativas) and len(txt) > 80:
-            return False
-        return len(txt) < 120
+    try {
+      const r = await fetch(`/destaques/${idProp}`);
+      const j = await r.json();
+      menu.innerHTML = '';
 
-    if not ementa_e_vaga(ementa):
-        return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
+      if (j.destaques && j.destaques.length > 0) {
+        // Opção genérica DTQ
+        const liGen = document.createElement('li');
+        liGen.innerHTML = `<a class="dropdown-item btn-objeto-dtq" href="#"
+          data-objeto="DTQ" data-descricao="">DTQ (genérico)</a>`;
+        menu.appendChild(liGen);
 
-    groq_key = os.environ.get('GROQ_API_KEY')
-    if not groq_key:
-        return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
+        const div = document.createElement('li');
+        div.innerHTML = '<hr class="dropdown-divider">';
+        menu.appendChild(div);
 
-    prompt = f"""Você é um especialista legislativo. Em UMA frase direta (máximo 20 palavras), \
-explique de forma simples o que esta proposição trata na prática para os cidadãos.
-Não repita o número da lei. Use linguagem clara e objetiva.
+        j.destaques.forEach(d => {
+          const li = document.createElement('li');
+          const label = `${d.numero} — ${d.autoria}`;
+          li.innerHTML = `<a class="dropdown-item btn-objeto-dtq" href="#"
+            data-objeto="DTQ" data-numero="${d.numero}"
+            data-descricao="${d.descricao.replace(/"/g,"'")}"
+            data-autoria="${d.autoria.replace(/"/g,"'")}"
+            title="${d.descricao}">
+            <strong>${d.numero}</strong> — ${d.autoria}<br>
+            <small class="text-muted">${d.descricao.substring(0,80)}${d.descricao.length>80?'...':''}</small>
+          </a>`;
+          menu.appendChild(li);
+        });
+      } else {
+        menu.innerHTML = `<li><span class="dropdown-item text-muted fst-italic">
+          Nenhum destaque encontrado.<br>
+          <a class="dropdown-item btn-objeto-dtq mt-1" href="#" data-objeto="DTQ" data-descricao="">
+            Usar DTQ genérico
+          </a>
+        </span></li>`;
+      }
 
-Proposição: {projeto}
-Autor: {autor}
-Ementa: {ementa}
+      // Adiciona listeners nos itens do menu
+      menu.querySelectorAll('.btn-objeto-dtq').forEach(link => {
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          const numero  = link.dataset.numero || '';
+          const descricao = link.dataset.descricao || '';
+          const autoria = link.dataset.autoria || '';
+          const objetoTexto = numero
+            ? `DTQ ${numero} (${autoria})`
+            : 'DTQ';
 
-Responda APENAS com a frase explicativa, sem introdução, sem aspas, sem ponto final."""
+          document.getElementById('input-objeto').value = objetoTexto;
 
-    try:
-        r = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-            json={"model": "llama-3.3-70b-versatile",
-                  "messages": [{"role": "user", "content": prompt}],
-                  "max_tokens": 60, "temperature": 0.2},
-            timeout=10
-        )
-        if r.ok:
-            comp = r.json()['choices'][0]['message']['content'].strip().rstrip('.')
-            ementa_enriquecida = f"{ementa} ({comp})"
-            return jsonify({'ementa_enriquecida': ementa_enriquecida, 'complemento': comp})
-    except Exception as e:
-        logger.warning(f"Erro enriquecer ementa: {e}")
+          // Guarda a descrição para usar na mensagem
+          document.getElementById('input-objeto').dataset.descricaoDtq = descricao;
+          document.getElementById('btnDTQ').classList.add('active','btn-secondary');
+          document.getElementById('btnDTQ').classList.remove('btn-outline-secondary');
+          document.querySelectorAll('.btn-objeto').forEach(b => b.classList.remove('active'));
+          gerarMensagem();
+        });
+      });
 
-    return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
+      dtqCarregado = true;
+    } catch(e) {
+      menu.innerHTML = `<li><span class="dropdown-item text-danger">Erro ao buscar destaques.</span></li>`;
+    }
+  }
 
-@app.route('/complementar_ementa', methods=['POST'])
-@login_required
-def complementar_ementa():
-    """Usa Groq para complementar ementa vaga com resumo do que se trata."""
-    data    = request.get_json()
-    projeto = data.get('projeto', '')
-    ementa  = data.get('ementa', '')
-    autor   = data.get('autor', '')
+  // Reset dtqCarregado ao trocar de item
+  document.getElementById('select-item-msg').addEventListener('change', function() {
+    dtqCarregado = false;
+    document.getElementById('menu-dtq').innerHTML = `<li><span class="dropdown-item text-muted fst-italic" id="dtq-loading">
+      <span class="spinner-border spinner-border-sm me-1"></span>Buscando destaques...
+    </span></li>`;
+    document.getElementById('btnDTQ').classList.remove('active','btn-secondary');
+    document.getElementById('btnDTQ').classList.add('btn-outline-secondary');
+  });
+  document.getElementById('modalMensagens').addEventListener('hidden.bs.modal', () => {
+    tipoAtual = null;
+    itemAtual = null;
+    document.getElementById('select-item-msg').value = '';
+    document.getElementById('campo-objeto').style.display = 'none';
+    document.getElementById('preview-msg-container').style.display = 'none';
+    document.getElementById('input-objeto').value = '';
+    document.querySelectorAll('.btn-tipo-msg, .btn-objeto').forEach(b => b.classList.remove('active'));
+  });
+  async function verificarUltimoDoc(btn) {
+    const idPrincipal = btn.dataset.idPrincipal;
 
-    groq_key = os.environ.get('GROQ_API_KEY')
-    if not groq_key:
-        return jsonify({'complemento': ementa})
+    if (!idPrincipal) {
+      alert('ID da proposição não encontrado.');
+      return;
+    }
 
-    prompt = f"""Você é um especialista legislativo. Sobre a proposição abaixo, escreva em UMA frase direta (máximo 30 palavras) o que ela trata, de forma clara para leigos.
-Se a ementa já for clara, retorne ela resumida.
+    // Pega o div de resultado que é irmão imediato do botão
+    const resultadoDiv = btn.parentElement.querySelector('[id^="ultimo-doc-resultado-"]');
 
-Proposição: {projeto}
-Autor: {autor}
-Ementa: {ementa}
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando...';
 
-Responda APENAS com a frase descritiva, sem introdução, sem aspas."""
+    try {
+      const r = await fetch(`/verificar_doc/${idPrincipal}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
 
-    try:
-        r = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-            json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}],
-                  "max_tokens": 80, "temperature": 0.2},
-            timeout=10
-        )
-        if r.ok:
-            complemento = r.json()['choices'][0]['message']['content'].strip()
-            return jsonify({'complemento': complemento})
-    except Exception as e:
-        logger.warning(f"Erro ao complementar ementa: {e}")
+      let html = '';
+      if (j.tipo) {
+        const numStr  = j.numero ? ` nº ${j.numero}` : '';
+        const dataStr = j.data   ? ` — ${j.data}` : '';
+        html = `<i class="fas fa-check-circle text-success me-1"></i>` +
+               `Último documento: <strong>${j.tipo}${numStr}</strong>${dataStr} ` +
+               `<span class="text-success">(texto disponível para análise)</span>`;
+      } else {
+        html = `<i class="fas fa-info-circle text-warning me-1"></i>` +
+               `Nenhum PRLP ou Substitutivo encontrado. A análise usará a ementa.`;
+      }
 
-    return jsonify({'complemento': ementa})
+      if (resultadoDiv) {
+        resultadoDiv.querySelector('small').innerHTML = html;
+        resultadoDiv.style.display = 'block';
+      } else {
+        // Fallback: insere após o botão
+        const span = document.createElement('div');
+        span.className = 'mt-1';
+        span.innerHTML = `<small class="fw-bold">${html}</small>`;
+        btn.parentElement.appendChild(span);
+      }
+    } catch(e) {
+      alert('Erro ao buscar documento: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-search me-1"></i>Procurar último parecer (PRLP/Substitutivo)';
+    }
+  }
+    if (!confirm('Limpar cache desta pauta? Os títulos de REQ serão reprocessados ao atualizar.')) return;
+    const r = await fetch(`/limpar_cache/${eventoId}`, {method: 'POST'});
+    const j = await r.json();
+    if (j.message) {
+      window.location.href = window.location.href.split('?')[0] + '?force_reload=true';
+    } else {
+      alert(j.error || 'Erro ao limpar cache');
+    }
+  }
+</script>
 
-@app.route('/salvar_orientacoes', methods=['POST'])
-@login_required
-def salvar_orientacoes():
-    """Salva orientações por grupo (PL, NOVO, oposicao, minoria) para cada item."""
-    data      = request.get_json()
-    evento_id = data.get('evento_id')
-    orientacoes = data.get('orientacoes', [])  # [{id_principal, grupo, orientacao, comentario}]
+<!-- MODAL ORIENTAÇÕES -->
+<div class="modal fade" id="modalOrientacoes" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#B8860B,#DAA520);">
+        <h5 class="modal-title text-white">
+          <i class="fas fa-vote-yea me-2"></i>Orientações — Pauta do Plenário
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div id="ori-loading" class="text-center p-4">
+          <div class="spinner-border text-warning"></div>
+          <p class="mt-2">Carregando orientações...</p>
+        </div>
+        <div id="ori-conteudo" style="display:none; overflow-x:auto;">
+          <table class="table table-bordered table-sm mb-0" id="tabela-orientacoes"
+                 style="font-size:0.82rem; min-width:1000px;">
+            <thead>
+              <tr style="background:#f0f0f0;">
+                <th style="width:35px;">#</th>
+                <th style="width:130px;">Proposição</th>
+                <th>Ementa</th>
+                <th style="width:150px;">Orientação PL</th>
+                <th style="width:150px;">Orientação NOVO</th>
+                <th style="width:150px;">Orientação Oposição</th>
+                <th style="width:150px;">Orientação Minoria</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-orientacoes"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <small class="text-muted me-auto">
+          <i class="fas fa-info-circle me-1"></i>
+          Cada grupo edita apenas sua coluna. Salvo automaticamente ao selecionar.
+        </small>
+        <button class="btn btn-outline-danger btn-sm" onclick="exportarOrientacoesPDF()">
+          <i class="fas fa-file-pdf me-2"></i>Exportar PDF
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
 
-    conn = sqlite3.connect(DB)
-    c    = conn.cursor()
+<script>
+// ============================================================
+// MODAL ORIENTAÇÕES
+// ============================================================
+const USER_CATEGORIA = "{{ user_categoria }}";
+const EVENTO_ID_ORI  = {{ evento_id|safe }};
 
-    # Cria tabela se não existir
-    c.execute('''CREATE TABLE IF NOT EXISTS orientacoes_grupo (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        evento_id INTEGER,
-        id_principal TEXT,
-        grupo TEXT,
-        orientacao TEXT,
-        comentario TEXT,
-        saved_by TEXT,
-        saved_at TEXT,
-        UNIQUE(evento_id, id_principal, grupo))''')
+const ITENS_ORI = [
+  {% for item in itens %}
+  {
+    ordem:        "{{ item.ordem }}",
+    id_principal: "{{ item.id_principal }}",
+    projeto:      "{{ item.projeto }}",
+    ementa:       {{ item.ementa | tojson }}
+  }{% if not loop.last %},{% endif %}
+  {% endfor %}
+];
 
-    now_str  = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    saved_by = current_user.display_name()
+const ORI_OPCOES = ['a favor', 'contra', 'obstrução', 'liberado', 'abstenção', '—'];
+const ORI_CORES  = {
+  'a favor':   '#d4edda',
+  'contra':    '#f8d7da',
+  'obstrução': '#fff3cd',
+  'liberado':  '#cce5ff',
+  'abstenção': '#e2e3e5',
+  '—':         '#ffffff',
+  '':          '#ffffff',
+};
 
-    for ori in orientacoes:
-        c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
-                     (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                  (evento_id, ori.get('id_principal'), ori.get('grupo'),
-                   ori.get('orientacao'), ori.get('comentario', ''), saved_by, now_str))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Orientações salvas!'})
+function grupoDoUsuario() {
+  const un = "{{ current_user.username }}".toUpperCase();
+  if (USER_CATEGORIA === 'restrito') {
+    if (un === 'PL')   return 'PL';
+    if (un === 'NOVO') return 'NOVO';
+  }
+  if (USER_CATEGORIA === 'oposicao') return 'oposicao';
+  if (USER_CATEGORIA === 'minoria')  return 'minoria';
+  return 'todos';
+}
 
-@app.route('/get_orientacoes/<int:evento_id>')
-@login_required
-def get_orientacoes(evento_id):
-    """Retorna orientações salvas para um evento."""
-    conn = sqlite3.connect(DB)
-    c    = conn.cursor()
-    try:
-        c.execute('''SELECT id_principal, grupo, orientacao, comentario, saved_by, saved_at
-                     FROM orientacoes_grupo WHERE evento_id=?''', (evento_id,))
-        rows = c.fetchall()
-        result = [{'id_principal': r[0], 'grupo': r[1], 'orientacao': r[2],
-                   'comentario': r[3], 'saved_by': r[4], 'saved_at': r[5]} for r in rows]
-    except Exception:
-        result = []
-    conn.close()
-    return jsonify(result)
+const COLUNAS = [
+  { grupo: 'PL',       label: 'PL'       },
+  { grupo: 'NOVO',     label: 'NOVO'     },
+  { grupo: 'oposicao', label: 'Oposição' },
+  { grupo: 'minoria',  label: 'Minoria'  },
+];
 
-@app.route('/admin/reset_todas_senhas', methods=['POST'])
-@login_required
-def reset_todas_senhas():
-    if current_user.role != 'Admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    nova_hash = bcrypt.generate_password_hash('123').decode('utf-8')
-    conn = sqlite3.connect(DB)
-    c    = conn.cursor()
-    c.execute('UPDATE users SET password=?', (nova_hash,))
-    affected = c.rowcount
-    conn.commit()
-    conn.close()
-    return jsonify({'message': f'Senha 123 definida para {affected} usuários.'})
+let oriData = {};
 
-@app.route('/admin/usuarios/reset_senha', methods=['POST'])
-@login_required
-def reset_senha():
-    if current_user.role != 'Admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    data       = request.get_json()
-    user_id    = data.get('user_id')
-    nova_senha = data.get('nova_senha', '').strip()
-    if not nova_senha or len(nova_senha) < 3:
-        return jsonify({'error': 'Senha deve ter ao menos 3 caracteres.'}), 400
-    nova_hash = bcrypt.generate_password_hash(nova_senha).decode('utf-8')
-    conn = sqlite3.connect(DB)
-    c    = conn.cursor()
-    c.execute('UPDATE users SET password=? WHERE id=?', (nova_hash, user_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Senha redefinida!'})
+async function carregarOrientacoes() {
+  document.getElementById('ori-loading').style.display = 'block';
+  document.getElementById('ori-conteudo').style.display = 'none';
+  try {
+    const r = await fetch(`/get_orientacoes/${EVENTO_ID_ORI}`);
+    const j = await r.json();
+    oriData = {};
+    j.forEach(o => {
+      oriData[`${o.id_principal}|${o.grupo}`] = {
+        orientacao: o.orientacao || '',
+        comentario: o.comentario || ''
+      };
+    });
+    renderizarTabela();
+  } catch(e) {
+    alert('Erro ao carregar orientações: ' + e.message);
+  } finally {
+    document.getElementById('ori-loading').style.display = 'none';
+    document.getElementById('ori-conteudo').style.display = 'block';
+  }
+}
 
-@app.route('/admin/usuarios/update_categoria', methods=['POST'])
-@login_required
-def update_categoria():
-    if current_user.role != 'Admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    data      = request.get_json()
-    user_id   = data.get('user_id')
-    categoria = data.get('categoria', 'geral')
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute('UPDATE users SET categoria=? WHERE id=?', (categoria, user_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Categoria atualizada!'})
+function renderizarTabela() {
+  const tbody    = document.getElementById('tbody-orientacoes');
+  const meuGrupo = grupoDoUsuario();
+  tbody.innerHTML = '';
 
-@app.route('/admin/usuarios/delete/<int:user_id>', methods=['POST'])
-@login_required
-def delete_usuario(user_id):
-    if current_user.role != 'Admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    if user_id == current_user.id:
-        return jsonify({'error': 'Não pode excluir sua própria conta'}), 400
-    conn = sqlite3.connect(DB)
-    c = conn.cursor()
-    c.execute('DELETE FROM users WHERE id = ?', (user_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Usuário removido.'})
+  ITENS_ORI.forEach(async (item) => {
+    const tr = document.createElement('tr');
+    // Enriquece ementa com IA
+    const ementaEnr = await enriquecerEmenta(item.id_principal, item.projeto, item.ementa, '');
+    tr.innerHTML = `
+      <td class="text-center fw-bold align-top">${item.ordem}</td>
+      <td class="align-top"><strong>${item.projeto}</strong></td>
+      <td style="font-size:0.78rem; color:#333; min-width:200px;">${ementaEnr}</td>`;
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    COLUNAS.forEach(col => {
+      const key   = `${item.id_principal}|${col.grupo}`;
+      const salvo = oriData[key] || {orientacao: '', comentario: ''};
+      const podeEditar = (meuGrupo === 'todos' || meuGrupo === col.grupo);
+      const corSelect  = ORI_CORES[salvo.orientacao] || '#fff';
+
+      const td = document.createElement('td');
+      td.style.background = ORI_CORES[salvo.orientacao] || '#ffffff';
+      td.style.padding = '5px';
+      td.style.verticalAlign = 'top';
+      td.style.transition = 'background 0.2s';
+
+      if (podeEditar) {
+        td.innerHTML = `
+          <select class="form-select form-select-sm mb-1"
+                  style="background:${corSelect}; font-size:0.78rem; font-weight:600;"
+                  onchange="salvarOrientacao('${item.id_principal}','${col.grupo}',this.value,this)">
+            <option value="">— selecione —</option>
+            ${ORI_OPCOES.map(op =>
+              `<option value="${op}" ${salvo.orientacao===op?'selected':''}>${op}</option>`
+            ).join('')}
+          </select>
+          <textarea class="form-control form-control-sm"
+                    rows="4"
+                    placeholder="Comentário / justificativa..."
+                    style="font-size:0.75rem; resize:vertical; min-height:80px;"
+                    onchange="salvarComentario('${item.id_principal}','${col.grupo}',this.value)"
+                    >${salvo.comentario}</textarea>`;
+      } else {
+        const badgeCor = salvo.orientacao === 'a favor' ? '#1A6B3A'
+                       : salvo.orientacao === 'contra' || salvo.orientacao === 'obstrução' ? '#8B0000'
+                       : salvo.orientacao === 'liberado' ? '#7B5C00'
+                       : '#555';
+        td.innerHTML = salvo.orientacao
+          ? `<div style="background:${ORI_CORES[salvo.orientacao]};border-radius:4px;padding:3px 6px;
+                         color:${badgeCor};font-weight:700;font-size:0.78rem;text-align:center;">
+               ${salvo.orientacao}
+             </div>
+             ${salvo.comentario
+               ? `<div style="font-size:0.72rem;color:#555;margin-top:4px;white-space:pre-wrap;">${salvo.comentario}</div>`
+               : ''}`
+          : `<span class="text-muted" style="font-size:0.75rem;">—</span>`;
+      }
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+}
+
+async function salvarOrientacao(id_principal, grupo, orientacao, selectEl) {
+  const cor = ORI_CORES[orientacao] || '#ffffff';
+  // Muda fundo do select
+  selectEl.style.background = cor;
+  // Muda fundo da célula inteira
+  const td = selectEl.closest('td');
+  if (td) td.style.background = cor;
+
+  const key = `${id_principal}|${grupo}`;
+  if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
+  oriData[key].orientacao = orientacao;
+  await _enviarOrientacao(id_principal, grupo);
+}
+
+async function salvarComentario(id_principal, grupo, comentario) {
+  const key = `${id_principal}|${grupo}`;
+  if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
+  oriData[key].comentario = comentario;
+  await _enviarOrientacao(id_principal, grupo);
+}
+
+async function _enviarOrientacao(id_principal, grupo) {
+  const key   = `${id_principal}|${grupo}`;
+  const dados = oriData[key] || {};
+  try {
+    await fetch('/salvar_orientacoes', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        evento_id: EVENTO_ID_ORI,
+        orientacoes: [{
+          id_principal,
+          grupo,
+          orientacao: dados.orientacao || '',
+          comentario: dados.comentario || ''
+        }]
+      })
+    });
+  } catch(e) {
+    console.error('Erro ao salvar:', e);
+  }
+}
+
+async function exportarOrientacoesPDF() {
+  // Monta dados para enviar ao servidor
+  const payload = {
+    evento_id: EVENTO_ID_ORI,
+    itens: ITENS_ORI,
+    orientacoes: oriData,
+    colunas: COLUNAS.map(c => ({grupo: c.grupo, label: c.label}))
+  };
+  const r = await fetch('/exportar_orientacoes_pdf', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const blob = await r.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `orientacoes_plenario_${EVENTO_ID_ORI}.pdf`;
+  a.click();
+}
+</script>
+
+</body>
+</html>
