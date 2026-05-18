@@ -971,6 +971,19 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
         logger.warning(f"Erro buscar_texto_prlp_ou_sbt({id_proposicao}): {e}")
     return None
 
+def _extrair_nome_doc_despacho(despacho, tipo_label):
+    """Extrai nome descritivo do documento a partir do texto do despacho."""
+    if not despacho:
+        return tipo_label
+    m = re.search(
+        r'adotad[ao]\s+pel[ao]\s+(?:relator[a]?\s+)?(?:dep\.\s+)?(.{5,80}?)(?:\s*[\.\(]|$)',
+        despacho, re.IGNORECASE
+    )
+    if m:
+        quem = m.group(1).strip().rstrip('.,;')
+        return f"{tipo_label} adotado por {quem}"
+    return f"{tipo_label} ({despacho[:80].strip()}...)" if len(despacho) > 80 else tipo_label
+
 def buscar_ultimo_parecer(id_proposicao):
     """
     Busca o último PRLP ou Substitutivo de Plenário via tramitações da proposição.
