@@ -1458,6 +1458,74 @@ def exportar_orientacoes_pdf():
     resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
     return resp
 
+@app.route('/analisar_destaque', methods=['POST'])
+@login_required
+def analisar_destaque():
+    data         = request.get_json()
+    id_principal = data.get('id_principal', '')
+    descricao    = data.get('descricao', '')
+    numero       = data.get('numero', '')
+    projeto      = data.get('projeto', '')
+
+    gemini_key = os.environ.get('GEMINI_API_KEY', '')
+    groq_key   = os.environ.get('GROQ_API_KEY', '')
+
+    # Busca texto do último PRLP/Substitutivo
+    doc = buscar_texto_prlp_ou_sbt(id_principal) if id_principal else None
+    texto_doc = doc.get('texto', '') if doc else ''
+    tipo_doc  = f"{doc.get('tipo','')} nº {doc.get('numero','')} de {doc.get('data','')}" if doc else 'texto original'
+
+    prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
+
+**Proposição:** {projeto}
+**Destaque:** {numero}
+**Descrição do Destaque:** {descricao}
+**Documento analisado:** {tipo_doc}
+
+{f'TEXTO DO DOCUMENTO:{chr(10)}{texto_doc[:6000]}' if texto_doc else ''}
+
+O destaque acima vota em separado um trecho específico do texto.
+Com base na descrição do destaque e no texto do documento:
+
+1. Identifique qual artigo/inciso/trecho está sendo votado em separado
+2. Explique o que esse trecho específico propõe
+3. Indique o impacto prático de aprovar ou rejeitar esse destaque
+
+Responda em HTML conciso (máx 200 palavras) usando <strong>, <br>, <ul>, <li>.
+Não use ### ou **."""
+
+    if gemini_key:
+        try:
+            r = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={gemini_key}",
+                headers={"Content-Type": "application/json"},
+                json={"contents": [{"parts": [{"text": prompt}]}],
+                      "generationConfig": {"maxOutputTokens": 512, "temperature": 0.3}},
+                timeout=30
+            )
+            r.raise_for_status()
+            texto = r.json()['candidates'][0]['content']['parts'][0]['text']
+            return jsonify({'resumo': texto, 'doc_usado': tipo_doc})
+        except Exception as e:
+            logger.warning(f"Gemini falhou: {e}")
+
+    if groq_key:
+        try:
+            r = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                json={"model": "llama-3.3-70b-versatile",
+                      "messages": [{"role": "user", "content": prompt}],
+                      "max_tokens": 512, "temperature": 0.3},
+                timeout=30
+            )
+            r.raise_for_status()
+            return jsonify({'resumo': r.json()['choices'][0]['message']['content'], 'doc_usado': tipo_doc})
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    return jsonify({'error': 'Nenhuma chave de IA configurada.'}), 500
+
 @app.route('/verificar_doc/<int:id_prop>')
 @login_required
 def verificar_doc(id_prop):
