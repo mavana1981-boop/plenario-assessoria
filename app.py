@@ -927,24 +927,42 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                     'Substitutivo' if 'SUBSTITUTIVO' in pag1 else 'PRLP'
                 )
 
-                # Extrai número do PRLP — busca em todo o texto, não só na pag1
+                # Extrai número do PRLP — busca em todo o texto extraído
                 numero_prlp = None
-                for busca_num in [pag1, texto.upper()[:2000]]:
-                    m_num = re.search(r'PRLP\s*[Nn]?[º°.]?\s*[Nn]?\s*[º°.]?\s*(\d+)', busca_num)
-                    if not m_num:
-                        m_num = re.search(r'PRLP\s+N\.\s*(\d+)', busca_num)
-                    if not m_num:
-                        m_num = re.search(r'N\.\s*(\d+)\s*PLEN', busca_num)
-                    if m_num:
-                        numero_prlp = m_num.group(1)
+                for busca_num in [pag1, texto.upper()[:3000]]:
+                    for pat in [
+                        r'PRLP\s*N[º°.]?\s*(\d+)',
+                        r'PRLP\s+N\.\s*(\d+)',
+                        r'N\.\s*(\d+)\s*PLEN',
+                        r'PARECER\s+N[º°.]?\s*(\d+)',
+                    ]:
+                        m_num = re.search(pat, busca_num, re.IGNORECASE)
+                        if m_num:
+                            numero_prlp = m_num.group(1)
+                            break
+                    if numero_prlp:
                         break
 
-                # Extrai data — o texto rotacionado da lateral vem invertido/fragmentado
-                # Tenta múltiplos padrões em todo o texto
+                # Se não achou no PDF, tenta extrair do HTML da página de tramitação
+                # O HTML contém "PRLP n. 6 PLEN" próximo ao link do documento
+                if not numero_prlp:
+                    codteor_atual = re.search(r'codteor=(\d+)', url_doc)
+                    if codteor_atual:
+                        ct = codteor_atual.group(1)
+                        # Busca no HTML da página de tramitação a menção a este codteor
+                        trecho_html = ''
+                        for m_ct in re.finditer(rf'codteor={ct}', texto_html):
+                            ini = max(0, m_ct.start() - 800)
+                            fim = min(len(texto_html), m_ct.end() + 800)
+                            trecho_html += texto_html[ini:fim]
+                        # Procura "PRLP n. X" próximo ao codteor
+                        m_prlp = re.search(r'PRLP\s+n\.?\s*(\d+)', trecho_html, re.IGNORECASE)
+                        if m_prlp:
+                            numero_prlp = m_prlp.group(1)
+
+                # Extrai data — busca em todo o texto do documento
                 data = ''
                 texto_busca_data = texto.upper()[:3000]
-
-                # Padrão 1: "APRESENTAÇÃO: DD/MM/AAAA" ou "APRESENTAÇÃO DD/MM/AAAA"
                 for padrao_data in [
                     r'APRESENTA[CÇ][AÃ]O[:\s]+(\d{2}/\d{2}/\d{4})',
                     r'APRESENTA[CÇ][AÃ]O\s*:\s*(\d{2}/\d{2}/\d{4})',
@@ -954,16 +972,13 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                         data = m_data.group(1)
                         break
 
-                # Padrão 2: data mais recente no texto (última ocorrência de DD/MM/AAAA)
                 if not data:
                     todas_datas = re.findall(r'(\d{2}/\d{2}/\d{4})', texto_busca_data)
-                    if todas_datas:
-                        # Filtra datas plausíveis (ano >= 2024)
-                        datas_recentes = [d for d in todas_datas if int(d[6:]) >= 2024]
-                        if datas_recentes:
-                            data = datas_recentes[-1]  # última data recente
-                        else:
-                            data = todas_datas[-1]
+                    datas_recentes = [d for d in todas_datas if int(d[6:]) >= 2024]
+                    if datas_recentes:
+                        data = datas_recentes[-1]
+                    elif todas_datas:
+                        data = todas_datas[-1]
 
                 # Se não achou no PDF, busca na API
                 if not data:
