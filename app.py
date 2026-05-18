@@ -945,12 +945,14 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
 
                 # Se não achou no PDF, conta total de PRLPs na página = número do último
                 if not numero_prlp:
-                    # Conta quantas vezes "PRLP n. X PLEN" aparece no HTML
-                    # O último PRLP tem o maior número = total de PRLPs
-                    todos_prlp = re.findall(r'PRLP\s+n\.?\s*(\d+)', texto_html, re.IGNORECASE)
+                    # Vários formatos possíveis: "PRLP n. 6", "PRLP nº 6", "PRLP n.° 6", "PRLP N. 6 PLEN"
+                    todos_prlp = re.findall(
+                        r'PRLP\s+[Nn][º°.\s]*(\d+)',
+                        texto_html, re.IGNORECASE
+                    )
                     if todos_prlp:
-                        # Pega o maior número encontrado no HTML inteiro
                         numero_prlp = str(max(int(n) for n in todos_prlp))
+                        logger.info(f"Números PRLP encontrados no HTML: {todos_prlp} → usando {numero_prlp}")
 
                 # Extrai data — busca em todo o texto do documento
                 data = ''
