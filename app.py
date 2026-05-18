@@ -901,29 +901,19 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
         # Conta PRLPs de plenário para saber o número do último
         numero_ultimo_prlp = None
         try:
-            url_trams = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/tramitacoes?itens=100&ordem=DESC"
-            r_trams = requests.get(url_trams, headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}, timeout=10)
-            if r_trams.ok:
-                trams = r_trams.json().get('dados', [])
-                for t in trams:
-                    desc  = (t.get('descricaoTramitacao') or '')
-                    desp  = (t.get('despacho') or '')
-                    orgao = (t.get('siglaOrgao') or '').upper()
-                    texto_t = f"{desc} {desp}"
-                    eh_plen = orgao in ('PLEN', 'MESA', 'PRESID') or 'PLEN' in orgao
-                    if not eh_plen:
-                        continue
-                    # Tenta extrair número PRLP do texto do despacho/descrição
-                    m_num = re.search(r'PRLP\s+[Nn]?[º°.]?\s*(\d+)', texto_t, re.IGNORECASE)
-                    if m_num:
-                        numero_ultimo_prlp = m_num.group(1)
-                        logger.info(f"Número PRLP extraído do despacho API: {numero_ultimo_prlp}")
-                        break
-                    # Se menciona PRLP sem número, conta
-                    if 'PRLP' in texto_t.upper() or 'PARECER PRELIMINAR' in texto_t.upper():
-                        logger.info(f"PRLP sem número: orgao={orgao} desc={desc[:80]}")
+            url_pareceres = f"https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao={id_proposicao}"
+            r_par = requests.get(url_pareceres, headers=headers, timeout=12)
+            logger.info(f"Página pareceres: status={r_par.status_code}, tamanho={len(r_par.text)}")
+            if r_par.ok:
+                html_par = r_par.text
+                # Busca todos os PRLP listados — pega o maior número
+                todos_prlp = re.findall(r'PRLP\s*[Nn]?[º°.\s]*(\d+)', html_par, re.IGNORECASE)
+                logger.info(f"PRLPs encontrados na página de pareceres: {todos_prlp}")
+                if todos_prlp:
+                    numero_ultimo_prlp = str(max(int(n) for n in todos_prlp))
+                    logger.info(f"Último PRLP: {numero_ultimo_prlp}")
         except Exception as e:
-            logger.warning(f"Erro API tramitações: {e}")
+            logger.warning(f"Erro ao scrappear pareceres: {e}")
 
         palavras_prlp_sbt = [
             'PRLP', 'PARECER PRELIMINAR', 'SUBSTITUTIVO',
@@ -955,16 +945,42 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                 # Número do PRLP: API tem prioridade sobre extração do PDF/HTML
                 numero_prlp = numero_ultimo_prlp  # já calculado via API acima
 
-                # Confirma no texto do PDF se possível
-                if not numero_prlp:
-                    for busca_num in [pag1, texto.upper()[:3000]]:
-                        for pat in [r'PRLP\s*N[º°.]?\s*(\d+)', r'N\.\s*(\d+)\s*PLEN']:
-                            m_num = re.search(pat, busca_num, re.IGNORECASE)
-                            if m_num:
-                                numero_prlp = m_num.group(1)
-                                break
-                        if numero_prlp:
+                # Confirma/sobrescreve com busca no PDF
+                for busca_num in [pag1, texto.upper()[:3000]]:
+                    for pat in [r'PRLP\s*N[º°.]?\s*(\d+)', r'N\.\s*(\d+)\s*PLEN']:
+                        m_num = re.search(pat, busca_num, re.IGNORECASE)
+                        if m_num:
+                            numero_prlp = m_num.group(1)
                             break
+                    if numero_prlp:
+                        break
+
+                # Fallback: busca no HTML com janela ampla ao redor do codteor
+                if not numero_prlp:
+                    codteor_atual = re.search(r'codteor=(\d+)', url_doc)
+                    if codteor_atual:
+                        ct = codteor_atual.group(1)
+                        for m_ct in re.finditer(rf'codteor={ct}', texto_html):
+                            ini = max(0, m_ct.start() - 3000)
+                            fim = min(len(texto_html), m_ct.end() + 3000)
+                            trecho = texto_html[ini:fim]
+                            logger.info(f"Trecho HTML ao redor de codteor={ct}: {trecho[:500]}")
+                            m_prlp = re.search(r'PRLP\s+[Nn]?[º°.\s]*(\d+)', trecho, re.IGNORECASE)
+                            if m_prlp:
+                                numero_prlp = m_prlp.group(1)
+                                break
+
+                # Último fallback: maior número no HTML + 1 se o doc é mais recente
+                if not numero_prlp:
+                    todos_prlp = re.findall(r'PRLP\s+[Nn][º°.\s]*(\d+)', texto_html, re.IGNORECASE)
+                    if todos_prlp:
+                        maior = max(int(n) for n in todos_prlp)
+                        # Se o documento é uma tramitação recente não listada, é maior+1
+                        if label.startswith('prlp-html-') or label.startswith('tram-'):
+                            numero_prlp = str(maior + 1)
+                        else:
+                            numero_prlp = str(maior)
+                        logger.info(f"Número PRLP estimado: {numero_prlp} (maior no HTML={maior})")
 
                 # Extrai data — busca em todo o texto do documento
                 data = ''
