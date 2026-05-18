@@ -943,19 +943,37 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                     if numero_prlp:
                         break
 
-                # Se não achou no PDF, conta total de PRLPs na página = número do último
+                # Se não achou no PDF, usa API de tramitações para contar PRLPs
                 if not numero_prlp:
-                    # Log para debug: mostra todas as menções de PRLP no HTML
-                    todas_mencoes = re.findall(r'PRLP.{0,15}', texto_html, re.IGNORECASE)
-                    logger.info(f"Todas menções PRLP no HTML ({len(todas_mencoes)}): {list(set(todas_mencoes))[:20]}")
+                    try:
+                        url_trams = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/tramitacoes?itens=100&ordem=ASC"
+                        r_trams = requests.get(url_trams, headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0'}, timeout=10)
+                        if r_trams.ok:
+                            trams = r_trams.json().get('dados', [])
+                            contador_prlp = 0
+                            trams_plen = []
+                            for t in trams:
+                                desc  = (t.get('descricaoTramitacao') or '').upper()
+                                desp  = (t.get('despacho') or '').upper()
+                                orgao = (t.get('siglaOrgao') or '').upper()
+                                texto_t = f"{desc} {desp}"
+                                eh_plen = orgao in ('PLEN', 'MESA', 'PRESID') or 'PLEN' in orgao
+                                if eh_plen and ('PRLP' in texto_t or 'PARECER PRELIMINAR' in texto_t):
+                                    contador_prlp += 1
+                                    trams_plen.append(f"{t.get('dataHora','')} | {orgao} | {desc[:50]}")
+                            logger.info(f"Tramitações PRLP encontradas ({contador_prlp}): {trams_plen}")
+                            if contador_prlp > 0:
+                                numero_prlp = str(contador_prlp)
+                    except Exception as e:
+                        logger.warning(f"Erro ao contar PRLPs via API: {e}")
 
-                    todos_prlp = re.findall(
-                        r'PRLP\s+[Nn][º°.\s]*(\d+)',
-                        texto_html, re.IGNORECASE
-                    )
+                # Fallback: conta no HTML
+                if not numero_prlp:
+                    todas_mencoes = re.findall(r'PRLP.{0,15}', texto_html, re.IGNORECASE)
+                    logger.info(f"Menções PRLP no HTML: {list(set(todas_mencoes))[:15]}")
+                    todos_prlp = re.findall(r'PRLP\s+[Nn][º°.\s]*(\d+)', texto_html, re.IGNORECASE)
                     if todos_prlp:
                         numero_prlp = str(max(int(n) for n in todos_prlp))
-                        logger.info(f"Números PRLP encontrados: {todos_prlp} → usando {numero_prlp}")
 
                 # Extrai data — busca em todo o texto do documento
                 data = ''
