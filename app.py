@@ -897,12 +897,31 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                 candidatos_unicos.append((label, url))
         candidatos = candidatos_unicos
 
+        # ESTRATÉGIA PRIORITÁRIA: busca via API de tramitações (dados mais atualizados)
+        # Conta PRLPs de plenário para saber o número do último
+        numero_ultimo_prlp = None
+        try:
+            url_trams = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/tramitacoes?itens=100&ordem=ASC"
+            r_trams = requests.get(url_trams, headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}, timeout=10)
+            if r_trams.ok:
+                trams = r_trams.json().get('dados', [])
+                contador = 0
+                for t in trams:
+                    desc  = (t.get('descricaoTramitacao') or '').upper()
+                    desp  = (t.get('despacho') or '').upper()
+                    orgao = (t.get('siglaOrgao') or '').upper()
+                    eh_plen = orgao in ('PLEN', 'MESA', 'PRESID') or 'PLEN' in orgao
+                    if eh_plen and ('PRLP' in f"{desc} {desp}" or 'PARECER PRELIMINAR' in f"{desc} {desp}"):
+                        contador += 1
+                if contador > 0:
+                    numero_ultimo_prlp = str(contador)
+                    logger.info(f"Total PRLPs via API: {contador}")
+        except Exception as e:
+            logger.warning(f"Erro API tramitações: {e}")
+
         palavras_prlp_sbt = [
-            'PRLP',
-            'PARECER PRELIMINAR',
-            'SUBSTITUTIVO',
-            'PARECER DE PLEN',
-            'PARECER DO RELATOR DE PLEN',
+            'PRLP', 'PARECER PRELIMINAR', 'SUBSTITUTIVO',
+            'PARECER DE PLEN', 'PARECER DO RELATOR DE PLEN',
         ]
 
         for label, url_doc in candidatos:
@@ -927,53 +946,19 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                     'Substitutivo' if 'SUBSTITUTIVO' in pag1 else 'PRLP'
                 )
 
-                # Extrai número do PRLP — busca em todo o texto extraído
-                numero_prlp = None
-                for busca_num in [pag1, texto.upper()[:3000]]:
-                    for pat in [
-                        r'PRLP\s*N[º°.]?\s*(\d+)',
-                        r'PRLP\s+N\.\s*(\d+)',
-                        r'N\.\s*(\d+)\s*PLEN',
-                        r'PARECER\s+N[º°.]?\s*(\d+)',
-                    ]:
-                        m_num = re.search(pat, busca_num, re.IGNORECASE)
-                        if m_num:
-                            numero_prlp = m_num.group(1)
+                # Número do PRLP: API tem prioridade sobre extração do PDF/HTML
+                numero_prlp = numero_ultimo_prlp  # já calculado via API acima
+
+                # Confirma no texto do PDF se possível
+                if not numero_prlp:
+                    for busca_num in [pag1, texto.upper()[:3000]]:
+                        for pat in [r'PRLP\s*N[º°.]?\s*(\d+)', r'N\.\s*(\d+)\s*PLEN']:
+                            m_num = re.search(pat, busca_num, re.IGNORECASE)
+                            if m_num:
+                                numero_prlp = m_num.group(1)
+                                break
+                        if numero_prlp:
                             break
-                    if numero_prlp:
-                        break
-
-                # Se não achou no PDF, usa API de tramitações para contar PRLPs
-                if not numero_prlp:
-                    try:
-                        url_trams = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/tramitacoes?itens=100&ordem=ASC"
-                        r_trams = requests.get(url_trams, headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0'}, timeout=10)
-                        if r_trams.ok:
-                            trams = r_trams.json().get('dados', [])
-                            contador_prlp = 0
-                            trams_plen = []
-                            for t in trams:
-                                desc  = (t.get('descricaoTramitacao') or '').upper()
-                                desp  = (t.get('despacho') or '').upper()
-                                orgao = (t.get('siglaOrgao') or '').upper()
-                                texto_t = f"{desc} {desp}"
-                                eh_plen = orgao in ('PLEN', 'MESA', 'PRESID') or 'PLEN' in orgao
-                                if eh_plen and ('PRLP' in texto_t or 'PARECER PRELIMINAR' in texto_t):
-                                    contador_prlp += 1
-                                    trams_plen.append(f"{t.get('dataHora','')} | {orgao} | {desc[:50]}")
-                            logger.info(f"Tramitações PRLP encontradas ({contador_prlp}): {trams_plen}")
-                            if contador_prlp > 0:
-                                numero_prlp = str(contador_prlp)
-                    except Exception as e:
-                        logger.warning(f"Erro ao contar PRLPs via API: {e}")
-
-                # Fallback: conta no HTML
-                if not numero_prlp:
-                    todas_mencoes = re.findall(r'PRLP.{0,15}', texto_html, re.IGNORECASE)
-                    logger.info(f"Menções PRLP no HTML: {list(set(todas_mencoes))[:15]}")
-                    todos_prlp = re.findall(r'PRLP\s+[Nn][º°.\s]*(\d+)', texto_html, re.IGNORECASE)
-                    if todos_prlp:
-                        numero_prlp = str(max(int(n) for n in todos_prlp))
 
                 # Extrai data — busca em todo o texto do documento
                 data = ''
