@@ -333,7 +333,7 @@
                   <table class="table table-sm table-striped align-middle">
                     <thead class="table-light">
                       <tr>
-                        <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo Destaque</th><th>Situação</th>
+                        <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo Destaque</th><th>Situação</th><th>IA</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -344,9 +344,19 @@
                         <td>{{ d.descricao }}</td>
                         <td>{{ d.tipo_destaque }}</td>
                         <td><span class="badge {{ 'bg-warning' if d.situacao|lower == 'em tramitação' else 'bg-secondary' }}">{{ d.situacao }}</span></td>
+                        <td>
+                          <button class="btn btn-outline-primary btn-sm"
+                            onclick="analisarDestaque(this)"
+                            data-id-principal="{{ item.id_principal }}"
+                            data-descricao="{{ d.descricao | replace('"','') }}"
+                            data-numero="{{ d.numero }}"
+                            data-projeto="{{ item.projeto }}">
+                            <i class="fas fa-robot"></i>
+                          </button>
+                        </td>
                       </tr>
                       <tr>
-                        <td colspan="5">
+                        <td colspan="6">
                           <label class="form-label small"><strong>Resumo/Nota Técnica — {{ d.numero }}:</strong></label>
                           <textarea id="editor-resumo-destaque-{{ item.ordem }}-{{ loop.index }}" class="editable-field" data-numero="{{ d.numero }}">{% if d.resumo_nota %}{{ d.resumo_nota | safe }}{% endif %}</textarea>
                         </td>
@@ -376,7 +386,8 @@
                   <h6 class="mb-0"><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
                   <button class="btn btn-outline-warning btn-sm btn-buscar-destaques"
                           data-id-proposicao="{{ item.id_principal }}"
-                          data-ordem="{{ item.ordem }}">
+                          data-ordem="{{ item.ordem }}"
+                          data-projeto="{{ item.projeto }}">
                     <i class="fas fa-search me-1"></i>Buscar Destaques
                   </button>
                   <span class="spinner-busca-{{ item.ordem }}" style="display:none;">
@@ -394,6 +405,7 @@
                           <th>Descrição</th>
                           <th>Tipo</th>
                           <th>Situação</th>
+                          <th>IA</th>
                         </tr>
                       </thead>
                       <tbody id="tbody-destaques-{{ item.ordem }}"></tbody>
@@ -553,13 +565,33 @@
                 const badge = d.situacao.toLowerCase().includes('tramitação')
                   ? `<span class="badge bg-warning text-dark">${d.situacao}</span>`
                   : `<span class="badge bg-secondary">${d.situacao}</span>`;
+                const idProp = btn.dataset.idProposicao;
+                const projeto = btn.dataset.projeto || '';
                 tbody.innerHTML += `<tr>
                   <td><strong>${d.numero}</strong></td>
                   <td>${d.autoria}</td>
                   <td>${d.descricao}</td>
                   <td>${d.tipo_destaque}</td>
                   <td>${badge}</td>
+                  <td>
+                    <button class="btn btn-outline-primary btn-sm"
+                      onclick="analisarDestaque(this)"
+                      data-id-principal="${idProp}"
+                      data-descricao="${d.descricao.replace(/"/g,"'")}"
+                      data-numero="${d.numero}"
+                      data-projeto="${projeto}">
+                      <i class="fas fa-robot"></i>
+                    </button>
+                  </td>
+                </tr>
+                <tr>
+                  <td colspan="6">
+                    <div id="analise-destaque-${d.numero.replace(/\s/g,'-')}" class="mt-1" style="display:none;">
+                      <div class="p-2 border rounded bg-light" style="font-size:0.85rem; white-space:pre-wrap;"></div>
+                    </div>
+                  </td>
                 </tr>`;
+              });
               });
             } else {
               semMsg.style.display = 'block';
@@ -1029,6 +1061,48 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
     } finally {
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-search me-1"></i>Procurar último parecer (PRLP/Substitutivo)';
+    }
+  }
+
+  async function analisarDestaque(btn) {
+    const idPrincipal = btn.dataset.idPrincipal;
+    const descricao   = btn.dataset.descricao;
+    const numero      = btn.dataset.numero;
+    const projeto     = btn.dataset.projeto;
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+    try {
+      const r = await fetch('/analisar_destaque', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id_principal: idPrincipal, descricao, numero, projeto})
+      });
+      const j = await r.json();
+
+      if (j.resumo) {
+        // Mostra resultado na linha abaixo do botão
+        const tr = btn.closest('tr');
+        const nextTr = tr.nextElementSibling;
+        if (nextTr) {
+          const div = nextTr.querySelector('div');
+          if (div) {
+            div.querySelector('div').innerHTML = j.resumo;
+            div.style.display = 'block';
+          }
+        } else {
+          // Fallback: alert
+          alert(j.resumo.replace(/<[^>]+>/g,''));
+        }
+      } else {
+        alert('Erro: ' + (j.error || 'Resposta vazia'));
+      }
+    } catch(e) {
+      alert('Erro: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-robot"></i>';
     }
   }
 
