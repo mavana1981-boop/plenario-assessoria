@@ -1458,6 +1458,79 @@ def exportar_orientacoes_pdf():
     resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
     return resp
 
+def buscar_documentos_disponiveis(id_proposicao):
+    """Lista documentos disponíveis na página de tramitação para o usuário selecionar."""
+    from bs4 import BeautifulSoup
+    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
+    try:
+        r = requests.get(f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}", headers=headers, timeout=12)
+        if not r.ok:
+            return []
+        soup = BeautifulSoup(r.text, 'html.parser')
+        docs = []
+        vistos = set()
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            if 'codteor' not in href.lower():
+                continue
+            url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+            if url_doc in vistos:
+                continue
+            vistos.add(url_doc)
+            m_fn     = re.search(r'filename=([^&"]+)', href)
+            filename = (m_fn.group(1) if m_fn else '').replace('+', ' ')
+            fn_up    = filename.upper()
+            if 'AVULSO' in fn_up:
+                label, ordem = f"📄 Avulso", 0
+            elif 'SBT' in fn_up or 'SUBSTITUT' in fn_up:
+                label, ordem = f"📝 Substitutivo — {filename}", 1
+            elif 'PRLP' in fn_up:
+                label, ordem = f"📋 {filename}", 2
+            elif 'PARECER' in fn_up:
+                label, ordem = f"📋 Parecer — {filename}", 3
+            elif 'ULTIMO' in fn_up or 'DESPACHO' in fn_up:
+                label, ordem = f"📌 Último Despacho", 4
+            elif 'TRAMITACAO' in fn_up or 'TRAMITAC' in fn_up:
+                m_n = re.search(r'Tramitacao-(\d+)-', filename, re.IGNORECASE)
+                if m_n:
+                    label, ordem = f"📁 Tramitação {m_n.group(1)}", 1000 - int(m_n.group(1))
+                else:
+                    continue
+            elif filename:
+                label, ordem = f"📁 {filename}", 9
+            else:
+                continue
+            docs.append({'label': label, 'url': url_doc, 'filename': filename, 'ordem': ordem})
+        docs.sort(key=lambda x: x['ordem'])
+        principais   = [d for d in docs if d['ordem'] < 5]
+        tramitacoes  = sorted([d for d in docs if d['ordem'] >= 5], key=lambda x: x['ordem'])[:8]
+        return principais + tramitacoes
+    except Exception as e:
+        logger.warning(f"Erro ao listar documentos: {e}")
+        return []
+
+def extrair_texto_documento(url_doc):
+    """Baixa PDF e extrai texto completo."""
+    import pdfplumber
+    from io import BytesIO
+    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
+    url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
+    try:
+        rp = requests.get(url_pdf, headers=headers, timeout=25)
+        if not rp.ok or 'pdf' not in rp.headers.get('Content-Type', '').lower():
+            return None
+        with pdfplumber.open(BytesIO(rp.content)) as pdf:
+            return '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
+    except Exception as e:
+        logger.warning(f"Erro ao extrair texto: {e}")
+        return None
+
+@app.route('/listar_documentos/<int:id_prop>')
+@login_required
+def listar_documentos(id_prop):
+    docs = buscar_documentos_disponiveis(id_prop)
+    return jsonify({'documentos': docs})
+
 @app.route('/analisar_destaque', methods=['POST'])
 @login_required
 def analisar_destaque():
@@ -1466,14 +1539,23 @@ def analisar_destaque():
     descricao    = data.get('descricao', '')
     numero       = data.get('numero', '')
     projeto      = data.get('projeto', '')
+    url_doc_sel  = data.get('url_documento', '')  # documento selecionado pelo usuário
+    label_doc    = data.get('label_documento', '')
 
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     groq_key   = os.environ.get('GROQ_API_KEY', '')
 
-    # Busca texto do último PRLP/Substitutivo
-    doc = buscar_texto_prlp_ou_sbt(id_principal) if id_principal else None
-    texto_doc = doc.get('texto', '') if doc else ''
-    tipo_doc  = f"{doc.get('tipo','')} nº {doc.get('numero','')} de {doc.get('data','')}" if doc else 'texto original'
+    # Extrai texto do documento selecionado
+    texto_doc = ''
+    tipo_doc  = label_doc or 'documento selecionado'
+    if url_doc_sel:
+        texto_doc = extrair_texto_documento(url_doc_sel) or ''
+    elif id_principal:
+        # Fallback: usa último PRLP/SBT
+        doc = buscar_texto_prlp_ou_sbt(id_principal)
+        if doc:
+            texto_doc = doc.get('texto', '')
+            tipo_doc  = f"{doc.get('tipo','')} nº {doc.get('numero','')} de {doc.get('data','')}"
 
     prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
 
