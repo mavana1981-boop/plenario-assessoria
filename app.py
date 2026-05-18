@@ -911,11 +911,15 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                     desp  = (t.get('despacho') or '').upper()
                     orgao = (t.get('siglaOrgao') or '').upper()
                     eh_plen = orgao in ('PLEN', 'MESA', 'PRESID') or 'PLEN' in orgao
+                    if eh_plen:
+                        logger.info(f"TRAM PLEN: orgao={orgao} desc={desc[:60]} desp={desp[:60]}")
                     if eh_plen and ('PRLP' in f"{desc} {desp}" or 'PARECER PRELIMINAR' in f"{desc} {desp}"):
                         contador += 1
                 if contador > 0:
                     numero_ultimo_prlp = str(contador)
                     logger.info(f"Total PRLPs via API: {contador}")
+                else:
+                    logger.info(f"Nenhuma tramitação PRLP encontrada — total trams: {len(trams)}")
         except Exception as e:
             logger.warning(f"Erro API tramitações: {e}")
 
