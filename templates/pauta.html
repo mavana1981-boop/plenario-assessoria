@@ -992,15 +992,9 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
   });
   async function verificarUltimoDoc(btn) {
     const idPrincipal = btn.dataset.idPrincipal;
+    if (!idPrincipal) { alert('ID da proposição não encontrado.'); return; }
 
-    if (!idPrincipal) {
-      alert('ID da proposição não encontrado.');
-      return;
-    }
-
-    // Pega o div de resultado que é irmão imediato do botão
     const resultadoDiv = btn.parentElement.querySelector('[id^="ultimo-doc-resultado-"]');
-
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando...';
 
@@ -1025,7 +1019,6 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
         resultadoDiv.querySelector('small').innerHTML = html;
         resultadoDiv.style.display = 'block';
       } else {
-        // Fallback: insere após o botão
         const span = document.createElement('div');
         span.className = 'mt-1';
         span.innerHTML = `<small class="fw-bold">${html}</small>`;
@@ -1038,6 +1031,8 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
       btn.innerHTML = '<i class="fas fa-search me-1"></i>Procurar último parecer (PRLP/Substitutivo)';
     }
   }
+
+  async function limparCacheEvento(eventoId) {
     if (!confirm('Limpar cache desta pauta? Os títulos de REQ serão reprocessados ao atualizar.')) return;
     const r = await fetch(`/limpar_cache/${eventoId}`, {method: 'POST'});
     const j = await r.json();
