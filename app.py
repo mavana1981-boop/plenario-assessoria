@@ -927,24 +927,43 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                     'Substitutivo' if 'SUBSTITUTIVO' in pag1 else 'PRLP'
                 )
 
-                # Extrai número do PRLP (ex: "PRLP n.6", "PRLP N. 6", "PRLP n.°6")
+                # Extrai número do PRLP — busca em todo o texto, não só na pag1
                 numero_prlp = None
-                m_num = re.search(r'PRLP\s+[Nn][º°.]?\s*(\d+)', pag1)
-                if m_num:
-                    numero_prlp = m_num.group(1)
+                for busca_num in [pag1, texto.upper()[:2000]]:
+                    m_num = re.search(r'PRLP\s*[Nn]?[º°.]?\s*[Nn]?\s*[º°.]?\s*(\d+)', busca_num)
+                    if not m_num:
+                        m_num = re.search(r'PRLP\s+N\.\s*(\d+)', busca_num)
+                    if not m_num:
+                        m_num = re.search(r'N\.\s*(\d+)\s*PLEN', busca_num)
+                    if m_num:
+                        numero_prlp = m_num.group(1)
+                        break
 
-                # Extrai data — prioriza "Apresentação DD/MM/AAAA" (data do PRLP)
-                # No PDF da Câmara aparece como texto rotacionado: "Apresentação: 13/05/2026"
+                # Extrai data — o texto rotacionado da lateral vem invertido/fragmentado
+                # Tenta múltiplos padrões em todo o texto
                 data = ''
+                texto_busca_data = texto.upper()[:3000]
+
+                # Padrão 1: "APRESENTAÇÃO: DD/MM/AAAA" ou "APRESENTAÇÃO DD/MM/AAAA"
                 for padrao_data in [
-                    r'Apresenta[cç][aã]o[:\s]+(\d{2}/\d{2}/\d{4})',
                     r'APRESENTA[CÇ][AÃ]O[:\s]+(\d{2}/\d{2}/\d{4})',
-                    r'(\d{2}/\d{2}/\d{4})',
+                    r'APRESENTA[CÇ][AÃ]O\s*:\s*(\d{2}/\d{2}/\d{4})',
                 ]:
-                    m_data = re.search(padrao_data, pag1, re.IGNORECASE)
+                    m_data = re.search(padrao_data, texto_busca_data, re.IGNORECASE)
                     if m_data:
                         data = m_data.group(1)
                         break
+
+                # Padrão 2: data mais recente no texto (última ocorrência de DD/MM/AAAA)
+                if not data:
+                    todas_datas = re.findall(r'(\d{2}/\d{2}/\d{4})', texto_busca_data)
+                    if todas_datas:
+                        # Filtra datas plausíveis (ano >= 2024)
+                        datas_recentes = [d for d in todas_datas if int(d[6:]) >= 2024]
+                        if datas_recentes:
+                            data = datas_recentes[-1]  # última data recente
+                        else:
+                            data = todas_datas[-1]
 
                 # Se não achou no PDF, busca na API
                 if not data:
@@ -959,6 +978,7 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                                 data = datetime.fromisoformat(str(dh)[:10]).strftime('%d/%m/%Y')
                     except Exception:
                         pass
+                logger.info(f"PDF pag1 (300 chars): {pag1[:300]}")
                 logger.info(f"Documento {tipo} ({label}) para {id_proposicao}: {len(texto)} chars, PRLP nº {numero_prlp}, data {data}")
                 return {'tipo': tipo, 'numero': numero_prlp, 'data': data, 'texto': texto[:8000]}
             except Exception as e:
