@@ -901,25 +901,27 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
         # Conta PRLPs de plenário para saber o número do último
         numero_ultimo_prlp = None
         try:
-            url_trams = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/tramitacoes?itens=100&ordem=ASC"
+            url_trams = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/tramitacoes?itens=100&ordem=DESC"
             r_trams = requests.get(url_trams, headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}, timeout=10)
             if r_trams.ok:
                 trams = r_trams.json().get('dados', [])
-                contador = 0
                 for t in trams:
-                    desc  = (t.get('descricaoTramitacao') or '').upper()
-                    desp  = (t.get('despacho') or '').upper()
+                    desc  = (t.get('descricaoTramitacao') or '')
+                    desp  = (t.get('despacho') or '')
                     orgao = (t.get('siglaOrgao') or '').upper()
+                    texto_t = f"{desc} {desp}"
                     eh_plen = orgao in ('PLEN', 'MESA', 'PRESID') or 'PLEN' in orgao
-                    if eh_plen:
-                        logger.info(f"TRAM PLEN: orgao={orgao} desc={desc[:60]} desp={desp[:60]}")
-                    if eh_plen and ('PRLP' in f"{desc} {desp}" or 'PARECER PRELIMINAR' in f"{desc} {desp}"):
-                        contador += 1
-                if contador > 0:
-                    numero_ultimo_prlp = str(contador)
-                    logger.info(f"Total PRLPs via API: {contador}")
-                else:
-                    logger.info(f"Nenhuma tramitação PRLP encontrada — total trams: {len(trams)}")
+                    if not eh_plen:
+                        continue
+                    # Tenta extrair número PRLP do texto do despacho/descrição
+                    m_num = re.search(r'PRLP\s+[Nn]?[º°.]?\s*(\d+)', texto_t, re.IGNORECASE)
+                    if m_num:
+                        numero_ultimo_prlp = m_num.group(1)
+                        logger.info(f"Número PRLP extraído do despacho API: {numero_ultimo_prlp}")
+                        break
+                    # Se menciona PRLP sem número, conta
+                    if 'PRLP' in texto_t.upper() or 'PARECER PRELIMINAR' in texto_t.upper():
+                        logger.info(f"PRLP sem número: orgao={orgao} desc={desc[:80]}")
         except Exception as e:
             logger.warning(f"Erro API tramitações: {e}")
 
