@@ -1484,15 +1484,20 @@ def analisar_destaque():
 
 {f'TEXTO DO DOCUMENTO:{chr(10)}{texto_doc[:6000]}' if texto_doc else ''}
 
-O destaque acima vota em separado um trecho específico do texto.
-Com base na descrição do destaque e no texto do documento:
+Gere a análise em HTML com EXATAMENTE este formato:
 
-1. Identifique qual artigo/inciso/trecho está sendo votado em separado
-2. Explique o que esse trecho específico propõe
-3. Indique o impacto prático de aprovar ou rejeitar esse destaque
+<p><strong>Objeto do Destaque:</strong> [descreva em uma frase o que o destaque vota em separado]</p>
+<br>
+<p><strong>Trecho do Texto:</strong></p>
+<blockquote style="border-left:3px solid #1A6B3A; padding-left:10px; color:#333; font-style:italic;">
+[Copie aqui o trecho LITERAL do artigo/inciso/parágrafo referenciado, extraído do texto do documento acima. Se não localizar o trecho exato, escreva: "Trecho não localizado no documento."]
+</blockquote>
+<br>
+<p><strong>Análise:</strong><br>
+[Explique o que esse trecho propõe e o impacto prático de aprovar ou rejeitar este destaque. Máx 150 palavras.]
+</p>
 
-Responda em HTML conciso (máx 200 palavras) usando <strong>, <br>, <ul>, <li>.
-Não use ### ou **."""
+Não use ### ou ** fora do HTML."""
 
     if gemini_key:
         try:
