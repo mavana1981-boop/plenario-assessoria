@@ -949,16 +949,22 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                     codteor_atual = re.search(r'codteor=(\d+)', url_doc)
                     if codteor_atual:
                         ct = codteor_atual.group(1)
-                        # Busca no HTML da página de tramitação a menção a este codteor
-                        trecho_html = ''
+                        # Busca no HTML da página a menção MAIS PRÓXIMA ao codteor
+                        melhor_num = None
+                        melhor_dist = 99999
                         for m_ct in re.finditer(rf'codteor={ct}', texto_html):
-                            ini = max(0, m_ct.start() - 800)
-                            fim = min(len(texto_html), m_ct.end() + 800)
-                            trecho_html += texto_html[ini:fim]
-                        # Procura "PRLP n. X" próximo ao codteor
-                        m_prlp = re.search(r'PRLP\s+n\.?\s*(\d+)', trecho_html, re.IGNORECASE)
-                        if m_prlp:
-                            numero_prlp = m_prlp.group(1)
+                            # Pega trecho de 2000 chars ao redor do codteor
+                            ini = max(0, m_ct.start() - 1000)
+                            fim = min(len(texto_html), m_ct.end() + 1000)
+                            trecho = texto_html[ini:fim]
+                            # Acha todas as menções de PRLP n.X no trecho
+                            for m_prlp in re.finditer(r'PRLP\s+n\.?\s*(\d+)', trecho, re.IGNORECASE):
+                                num_candidate = int(m_prlp.group(1))
+                                dist = abs(m_prlp.start() - (m_ct.start() - ini))
+                                if melhor_num is None or num_candidate > melhor_num:
+                                    melhor_num = num_candidate
+                        if melhor_num:
+                            numero_prlp = str(melhor_num)
 
                 # Extrai data — busca em todo o texto do documento
                 data = ''
