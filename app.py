@@ -1564,7 +1564,9 @@ def analisar_destaque():
 **Descrição do Destaque:** {descricao}
 **Documento analisado:** {tipo_doc}
 
-{f'TEXTO DO DOCUMENTO:{chr(10)}{texto_doc[:6000]}' if texto_doc else ''}
+{f'TEXTO DO DOCUMENTO (primeiros 6000 chars):{chr(10)}{texto_doc[:6000]}' if texto_doc else '(texto não disponível)'}
+
+ATENÇÃO: Projetos de lei frequentemente alteram leis existentes. Se o destaque menciona um artigo de uma lei existente (ex: "art. 9 da Lei 14.193/21"), procure no texto do documento o artigo que ALTERA ou ACRESCENTA essa disposição (ex: "Art. 2º Esta Lei altera o art. 9º da Lei nº 14.193..."). O trecho a reproduzir é o do DOCUMENTO ACIMA, não da lei original.
 
 Gere a análise em HTML com EXATAMENTE este formato:
 
@@ -1572,7 +1574,7 @@ Gere a análise em HTML com EXATAMENTE este formato:
 <br>
 <p><strong>Trecho do Texto:</strong></p>
 <blockquote style="border-left:3px solid #1A6B3A; padding-left:10px; color:#333; font-style:italic;">
-[Copie aqui o trecho LITERAL do artigo/inciso/parágrafo referenciado, extraído do texto do documento acima. Se não localizar o trecho exato, escreva: "Trecho não localizado no documento."]
+[Copie aqui o trecho LITERAL do artigo/inciso do documento acima que corresponde ao objeto do destaque. Procure por variações: artigo que altera a lei citada, ou o artigo diretamente numerado. Se não localizar, escreva: "Trecho não localizado — sugere-se consultar o documento diretamente."]
 </blockquote>
 <br>
 <p><strong>Análise:</strong><br>
