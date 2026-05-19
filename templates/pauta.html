@@ -212,7 +212,7 @@
                    data-ementa-id="{{ item.id_principal }}"
                    data-projeto="{{ item.projeto }}"
                    data-ementa="{{ item.ementa | replace('"','&quot;') }}"
-                   data-autor="{{ item.autor | replace('"','&quot;') | truncate(80, True, '') }}">
+                   data-autor="{{ item.autor | replace('"','&quot;')  }}">
                 {{ item.ementa }}
               </div>
             </div>
@@ -291,7 +291,7 @@
                   <button class="btn btn-outline-primary btn-gerar-analise" type="button"
                     data-ordem="{{ item.ordem }}"
                     data-projeto="{{ item.projeto }}"
-                    data-ementa="{{ item.ementa | replace('"', '') | replace("'", '') | truncate(400, True, '') }}"
+                    data-ementa="{{ item.ementa | replace('"', '') | replace("'", '')  }}"
                     data-autor="{{ item.autor }}"
                     data-relator="{{ item.relator }}"
                     data-id-principal="{{ item.id_principal }}"
@@ -672,7 +672,7 @@
             {% for item in itens %}
             <option value="{{ loop.index0 }}"
               data-projeto="{{ item.projeto }}"
-              data-ementa="{{ item.ementa | replace('"','') | truncate(300, True, '') }}"
+              data-ementa="{{ item.ementa | replace('"','')  }}"
               data-autor="{{ item.autor }}"
               data-relator="{{ item.relator }}"
               data-orientacao="{{ item.orientacao or '' }}">
@@ -693,6 +693,9 @@
             </button>
             <button class="btn btn-outline-success btn-sm btn-tipo-msg" data-tipo="iniciada">
               <i class="fas fa-play-circle me-1"></i>Iniciada a Ordem do Dia
+            </button>
+            <button class="btn btn-outline-success btn-sm btn-tipo-msg" data-tipo="aprovada_simbolica">
+              <i class="fas fa-check-circle me-1"></i>Aprovada Simbolicamente
             </button>
             <button class="btn btn-outline-warning btn-sm btn-tipo-msg" data-tipo="encerrada_ordem">
               <i class="fas fa-stop-circle me-1"></i>Encerrada a Ordem do Dia
@@ -760,7 +763,7 @@
       ordem:        "{{ item.ordem }}",
       id_principal: "{{ item.id_principal }}",
       projeto:      "{{ item.projeto }}",
-      ementa:       "{{ item.ementa | replace('"','') | replace('\n',' ') | truncate(400, True, '') }}",
+      ementa:       "{{ item.ementa | replace('"','') | replace('\n',' ')  }}",
       autor:        "{{ item.autor | replace('"','') }}",
       relator:      "{{ item.relator | replace('"','') }}",
       orientacao:   "{{ item.orientacao or '' }}"
@@ -849,6 +852,17 @@ _${obj}_ - ${itemAtual.projeto}${linhaDescricao}
 ${ementa}
 
 *OPOSIÇÃO ORIENTA: ${ori}*`;
+
+    } else if (tipoAtual === 'aprovada_simbolica') {
+      msg =
+`✅ *APROVADA SIMBOLICAMENTE*
+
+*${itemAtual.projeto}*
+
+${ementa}
+
+Autor: ${itemAtual.autor}
+Relator: ${itemAtual.relator}`;
 
     } else if (tipoAtual === 'iniciada') {
       msg =
@@ -1489,14 +1503,14 @@ function renderizarTabela() {
   const meuGrupo = grupoDoUsuario();
   tbody.innerHTML = '';
 
-  ITENS_ORI.forEach(async (item) => {
+  ITENS_ORI.forEach((item) => {
     const tr = document.createElement('tr');
-    // Enriquece ementa com IA
-    const ementaEnr = await enriquecerEmenta(item.id_principal, item.projeto, item.ementa, '');
+    // Usa ementa diretamente sem enriquecimento IA (mais rápido e confiável)
+    const ementaTxt = item.ementa || '';
     tr.innerHTML = `
       <td class="text-center fw-bold align-top">${item.ordem}</td>
       <td class="align-top"><strong>${item.projeto}</strong></td>
-      <td style="font-size:0.78rem; color:#333; min-width:200px;">${ementaEnr}</td>`;
+      <td style="font-size:0.78rem; color:#333; min-width:200px;">${ementaTxt}</td>`;
 
     COLUNAS.forEach(col => {
       const key   = `${item.id_principal}|${col.grupo}`;
