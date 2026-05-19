@@ -1079,6 +1079,98 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
     }
   }
 
+  async function gerarQuadroDTQ(btn) {
+    const projeto   = btn.dataset.projeto;
+    const numero    = btn.dataset.numero;
+    const descricao = btn.dataset.descricao;
+    const analise   = btn.dataset.analise;
+    const urlDoc    = btn.dataset.urlDoc;
+    const labelDoc  = btn.dataset.labelDoc;
+
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Gerando quadro...';
+
+    try {
+      const r = await fetch('/gerar_quadro_dtq', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          projeto, numero, descricao,
+          analise_html: analise,
+          url_documento: urlDoc,
+          label_documento: labelDoc
+        })
+      });
+      const j = await r.json();
+      if (!j.ok) { alert('Erro: ' + j.error); return; }
+      const d = j.dados;
+
+      // Abre popup com o quadro formatado
+      const popup = window.open('', '_blank', 'width=900,height=700,scrollbars=yes,resizable=yes');
+      popup.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+        <title>Quadro DTQ</title>
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Arial&display=swap');
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { font-family: Arial, sans-serif; padding: 30px; background: #fff; }
+          .quadro { border: 2px solid #1a1a2e; border-radius: 4px; overflow: hidden; max-width: 820px; margin: 0 auto; }
+          .header { background: #1a1a2e; color: #fff; padding: 10px 16px; display: flex; justify-content: space-between; align-items: center; }
+          .header-titulo { font-size: 14px; font-weight: bold; flex: 1; }
+          .header-logos { display: flex; gap: 6px; align-items: center; }
+          .header-logos img { height: 36px; object-fit: contain; }
+          .dtq-bar { background: #2c3e6b; color: #fff; text-align: center; padding: 6px; font-size: 13px; font-weight: bold; }
+          .descricao { background: #f0f4ff; text-align: center; padding: 8px 16px; font-size: 12px; color: #333; border-bottom: 1px solid #ccc; }
+          .votos { display: grid; grid-template-columns: 1fr 1fr; }
+          .voto-sim { border-right: 1px solid #ccc; padding: 12px; }
+          .voto-nao { padding: 12px; }
+          .voto-label-sim { color: #1A6B3A; font-weight: bold; font-size: 12px; margin-bottom: 6px; }
+          .voto-label-nao { color: #cc0000; font-weight: bold; font-size: 12px; margin-bottom: 6px; }
+          .voto-conteudo-sim { color: #1A6B3A; font-size: 13px; font-weight: bold; line-height: 1.4; }
+          .voto-conteudo-nao { color: #cc0000; font-size: 13px; font-weight: bold; line-height: 1.4; }
+          .explicacao { background: #f9f9f9; border-top: 2px solid #1a1a2e; padding: 12px 16px; }
+          .explicacao-titulo { text-align: center; font-weight: bold; font-size: 12px; color: #1a1a2e; margin-bottom: 8px; letter-spacing: 1px; }
+          .explicacao-texto { font-size: 12px; color: #333; line-height: 1.6; }
+          .btn-imprimir { display: block; margin: 16px auto 0; padding: 8px 24px; background: #1a1a2e; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
+          @media print { .btn-imprimir { display: none; } body { padding: 0; } }
+        </style>
+      </head><body>
+        <div class="quadro">
+          <div class="header">
+            <div class="header-titulo">${d.titulo}</div>
+            <div class="header-logos">
+              <img src="${window.location.origin}/static/logo_oposicao.png" onerror="this.style.display='none'">
+              <img src="${window.location.origin}/static/logo_minoria.png" onerror="this.style.display='none'">
+            </div>
+          </div>
+          <div class="dtq-bar">${d.dtq}</div>
+          <div class="descricao">${d.descricao}</div>
+          <div class="votos">
+            <div class="voto-sim">
+              <div class="voto-label-sim">Voto SIM: ${d.sim_label}</div>
+              <div class="voto-conteudo-sim">${d.sim_conteudo}</div>
+            </div>
+            <div class="voto-nao">
+              <div class="voto-label-nao">Voto NÃO: ${d.nao_label}</div>
+              <div class="voto-conteudo-nao">${d.nao_conteudo}</div>
+            </div>
+          </div>
+          <div class="explicacao">
+            <div class="explicacao-titulo">EXPLICAÇÃO</div>
+            <div class="explicacao-texto">${d.explicacao}</div>
+          </div>
+        </div>
+        <button class="btn-imprimir" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button>
+      </body></html>`);
+      popup.document.close();
+
+    } catch(e) {
+      alert('Erro: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '🖼️ Criar Quadro do DTQ';
+    }
+  }
+
   async function verTextoDoc(urlDoc, label) {
     // Abre popup com o texto extraído do PDF
     const popup = window.open('', '_blank', 'width=800,height=700,scrollbars=yes,resizable=yes');
@@ -1206,7 +1298,18 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
             if (nextTr) {
               const div = nextTr.querySelector('div');
               if (div) {
-                div.querySelector('div').innerHTML = j2.resumo;
+                div.querySelector('div').innerHTML = j2.resumo +
+                  `<div class="mt-2">
+                    <button class="btn btn-sm btn-dark" onclick="gerarQuadroDTQ(this)"
+                      data-projeto="${projeto}"
+                      data-numero="${numero}"
+                      data-descricao="${descricao.replace(/"/g,"'")}"
+                      data-analise="${j2.resumo.replace(/"/g,"'").replace(/\n/g,' ')}"
+                      data-url-doc="${docEscolhido.url}"
+                      data-label-doc="${docEscolhido.label.replace(/"/g,"'")}">
+                      🖼️ Criar Quadro do DTQ
+                    </button>
+                  </div>`;
                 div.style.display = 'block';
               }
             }
