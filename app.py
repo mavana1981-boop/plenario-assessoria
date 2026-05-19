@@ -1569,6 +1569,80 @@ def listar_documentos(id_prop):
     docs = buscar_documentos_disponiveis(id_prop)
     return jsonify({'documentos': docs})
 
+@app.route('/gerar_quadro_dtq', methods=['POST'])
+@login_required
+def gerar_quadro_dtq():
+    """Gera conteúdo do quadro DTQ: sim/não e explicação."""
+    data         = request.get_json()
+    projeto      = data.get('projeto', '')
+    numero       = data.get('numero', '')
+    descricao    = data.get('descricao', '')
+    analise_html = data.get('analise_html', '')
+    url_doc_sel  = data.get('url_documento', '')
+    label_doc    = data.get('label_documento', '')
+
+    gemini_key = os.environ.get('GEMINI_API_KEY', '')
+    groq_key   = os.environ.get('GROQ_API_KEY', '')
+
+    # Extrai texto limpo da análise já feita
+    analise_texto = re.sub(r'<[^>]+>', ' ', analise_html).strip()
+
+    prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
+
+**Proposição:** {projeto}
+**Destaque:** {numero}
+**Descrição:** {descricao}
+**Análise já realizada:** {analise_texto}
+
+REGRA FUNDAMENTAL dos destaques de votação em separado:
+- Voto SIM = MANTÉM o texto do relator (aprovado como está)
+- Voto NÃO = ALTERA ou SUPRIME o texto do relator
+
+Com base na descrição e análise acima, gere APENAS um JSON válido (sem markdown, sem explicações):
+
+{{
+  "titulo": "{projeto} – [título curto da proposição, máx 60 chars]",
+  "dtq": "{numero} - [autoria resumida]",
+  "descricao": "[descrição resumida do destaque, máx 120 chars]",
+  "sim_label": "Mantém o texto do relator",
+  "sim_conteudo": "[O que significa votar SIM — efeito prático em 1-2 frases curtas]",
+  "nao_label": "Altera o texto do relator",
+  "nao_conteudo": "[O que significa votar NÃO — efeito prático em 1-2 frases curtas]",
+  "explicacao": "[Explicação completa do dispositivo destacado e impacto, 3-5 frases]"
+}}
+
+Responda APENAS com o JSON, sem ```json, sem comentários."""
+
+    for key, model, url_ai in [
+        (gemini_key, None, f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={gemini_key}"),
+        (groq_key,   "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1/chat/completions")
+    ]:
+        if not key:
+            continue
+        try:
+            if 'generativelanguage' in url_ai:
+                r = requests.post(url_ai, headers={"Content-Type": "application/json"},
+                    json={"contents": [{"parts": [{"text": prompt}]}],
+                          "generationConfig": {"maxOutputTokens": 512, "temperature": 0.2}}, timeout=30)
+                r.raise_for_status()
+                texto = r.json()['candidates'][0]['content']['parts'][0]['text']
+            else:
+                r = requests.post(url_ai,
+                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                    json={"model": model, "messages": [{"role": "user", "content": prompt}],
+                          "max_tokens": 512, "temperature": 0.2}, timeout=30)
+                r.raise_for_status()
+                texto = r.json()['choices'][0]['message']['content']
+
+            # Extrai JSON
+            texto = re.sub(r'```(?:json)?|```', '', texto).strip()
+            dados = json.loads(texto)
+            return jsonify({'ok': True, 'dados': dados})
+        except Exception as e:
+            logger.warning(f"Erro ao gerar quadro DTQ: {e}")
+
+    return jsonify({'ok': False, 'error': 'Falha na IA'}), 500
+
 @app.route('/analisar_destaque', methods=['POST'])
 @login_required
 def analisar_destaque():
