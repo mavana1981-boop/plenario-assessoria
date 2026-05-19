@@ -355,6 +355,8 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                     )
 
                     codigo = _extrair_codigo_do_bloco(bloco)
+                    if num == 15 or (codigo and '3066' in codigo):
+                        logger.info(f"  DEBUG item {num}: bloco='{bloco[:150]}' → codigo={codigo}")
                     if codigo:
                         chave = _normalizar_codigo(codigo)
                         # Cada número de posição só pode ter UM item
