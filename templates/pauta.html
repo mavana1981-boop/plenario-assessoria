@@ -350,6 +350,7 @@
                             data-id-principal="{{ item.id_principal }}"
                             data-descricao="{{ d.descricao | replace('"','') }}"
                             data-numero="{{ d.numero }}"
+                            data-autoria="{{ d.autoria | replace('"','') }}"
                             data-projeto="{{ item.projeto }}">
                             <i class="fas fa-robot"></i>
                           </button>
@@ -579,6 +580,7 @@
                       data-id-principal="${idProp}"
                       data-descricao="${d.descricao.replace(/"/g,"'")}"
                       data-numero="${d.numero}"
+                      data-autoria="${d.autoria.replace(/"/g,"'")}"
                       data-projeto="${projeto}">
                       <i class="fas fa-robot"></i>
                     </button>
@@ -1143,7 +1145,7 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
               <img src="${window.location.origin}/static/logo_minoria.png" onerror="this.style.display='none'">
             </div>
           </div>
-          <div class="dtq-bar">${d.dtq}${autoria ? ' - ' + autoria : ''}</div>
+          <div class="dtq-bar">${numero}${autoria ? ' - ' + autoria : ''}</div>
           <div class="descricao">${d.descricao}</div>
           <div class="votos">
             <div class="voto-sim">
