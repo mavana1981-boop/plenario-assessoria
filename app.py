@@ -468,8 +468,9 @@ def _normalizar_codigo(codigo):
 
 def reordenar_por_ordem_oficial(itens, ordem_oficial):
     """
-    Reordena itens pelo PDF. Itens não encontrados são inseridos
-    na posição correta baseada nos vizinhos conhecidos da API.
+    Reordena itens SEMPRE pelo PDF quando há ao menos 1 item encontrado.
+    Itens não encontrados são inseridos pela posição relativa da API.
+    Sem threshold — a ordem do PDF é sempre prioritária.
     """
     if not ordem_oficial or not itens:
         return itens
@@ -478,7 +479,6 @@ def reordenar_por_ordem_oficial(itens, ordem_oficial):
         proj = item.get('projeto_original') or item.get('projeto', '')
         return _normalizar_codigo(proj.split(' ao ')[0].strip())
 
-    # Separa encontrados e não encontrados
     encontrados = [(i, item, ordem_oficial[normalizar_item(item)])
                    for i, item in enumerate(itens)
                    if normalizar_item(item) in ordem_oficial]
@@ -489,27 +489,27 @@ def reordenar_por_ordem_oficial(itens, ordem_oficial):
     cobertura = len(encontrados) / len(itens)
     logger.info(f"Cobertura PDF: {len(encontrados)}/{len(itens)} ({cobertura:.0%})")
 
-    if cobertura < 0.70:
-        logger.warning("Cobertura insuficiente — mantendo ordem da API.")
+    if not encontrados:
+        logger.warning("Nenhum item encontrado no PDF — mantendo ordem da API.")
         return itens
 
-    # Ordena os encontrados pela posição do PDF
+    if cobertura < 0.50:
+        logger.warning(f"Cobertura muito baixa ({cobertura:.0%}) — mantendo ordem da API.")
+        return itens
+
+    # Sempre ordena pelos encontrados, independente de cobertura
     encontrados.sort(key=lambda x: x[2])
 
-    # Insere os não encontrados na posição relativa correta:
-    # um item não encontrado na posição i da API vai entre o último
-    # encontrado com api_pos < i e o primeiro com api_pos > i
-    resultado = list(encontrados)  # lista de (api_idx, item, pdf_pos)
-
+    # Insere não encontrados na posição relativa correta
+    resultado = list(encontrados)
     for api_idx, item in nao_encontrados:
-        # Encontra onde inserir: após o último encontrado com api_idx menor
         insert_pos = 0
         for j, (enc_api_idx, enc_item, enc_pdf_pos) in enumerate(resultado):
             if enc_api_idx < api_idx:
                 insert_pos = j + 1
         resultado.insert(insert_pos, (api_idx, item, -1))
+        logger.info(f"Item não encontrado no PDF: {item.get('projeto_original','')} → inserido na posição {insert_pos+1}")
 
-    # Atualiza ordem
     itens_ordenados = [item for (_, item, _) in resultado]
     for i, item in enumerate(itens_ordenados, start=1):
         item['ordem'] = str(i)
