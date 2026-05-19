@@ -1545,7 +1545,9 @@ def extrair_texto_documento(url_doc):
         if not rp.ok or 'pdf' not in rp.headers.get('Content-Type', '').lower():
             return None
         with pdfplumber.open(BytesIO(rp.content)) as pdf:
-            return '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
+            texto = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
+        logger.info(f"Texto extraído: {len(texto)} chars de {len(pdf.pages) if hasattr(pdf, 'pages') else '?'} páginas")
+        return texto
     except Exception as e:
         logger.warning(f"Erro ao extrair texto: {e}")
         return None
@@ -1587,11 +1589,13 @@ def analisar_destaque():
     if url_doc_sel:
         texto_doc = extrair_texto_documento(url_doc_sel) or ''
     elif id_principal:
-        # Fallback: usa último PRLP/SBT
         doc = buscar_texto_prlp_ou_sbt(id_principal)
         if doc:
             texto_doc = doc.get('texto', '')
             tipo_doc  = f"{doc.get('tipo','')} nº {doc.get('numero','')} de {doc.get('data','')}"
+
+    # Limita mas preserva mais texto para encontrar artigos no meio do documento
+    texto_truncado = texto_doc[:12000] if texto_doc else ''
 
     prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
 
@@ -1600,9 +1604,22 @@ def analisar_destaque():
 **Descrição do Destaque:** {descricao}
 **Documento analisado:** {tipo_doc}
 
-{f'TEXTO DO DOCUMENTO (primeiros 6000 chars):{chr(10)}{texto_doc[:6000]}' if texto_doc else '(texto não disponível)'}
+TEXTO COMPLETO DO DOCUMENTO:
+{texto_truncado if texto_truncado else '(texto não disponível)'}
 
-ATENÇÃO: Projetos de lei frequentemente alteram leis existentes. Se o destaque menciona um artigo de uma lei existente (ex: "art. 9 da Lei 14.193/21"), procure no texto do documento o artigo que ALTERA ou ACRESCENTA essa disposição (ex: "Art. 2º Esta Lei altera o art. 9º da Lei nº 14.193..."). O trecho a reproduzir é o do DOCUMENTO ACIMA, não da lei original.
+---
+INSTRUÇÕES PARA LOCALIZAR O TRECHO:
+
+A descrição do destaque menciona um artigo específico. Para localizá-lo no texto acima:
+
+1. Se o destaque menciona "art. X da Lei Y", procure no texto por frases como:
+   - "Art. 2º" ou "Art. 3º" etc. que ALTERAM esse artigo da lei Y
+   - Exemplo: "Art. 2º O art. 9º da Lei nº 14.193..." ou "dá nova redação ao art. 9º"
+   - O artigo do destaque está dentro de um artigo do PROJETO, não da lei original
+
+2. Se o destaque menciona "art. X do substitutivo/texto", procure diretamente "Art. Xº" no texto
+
+3. Copie o trecho LITERAL encontrado, incluindo caput e incisos relevantes
 
 Gere a análise em HTML com EXATAMENTE este formato:
 
@@ -1610,7 +1627,7 @@ Gere a análise em HTML com EXATAMENTE este formato:
 <br>
 <p><strong>Trecho do Texto:</strong></p>
 <blockquote style="border-left:3px solid #1A6B3A; padding-left:10px; color:#333; font-style:italic;">
-[Copie aqui o trecho LITERAL do artigo/inciso do documento acima que corresponde ao objeto do destaque. Procure por variações: artigo que altera a lei citada, ou o artigo diretamente numerado. Se não localizar, escreva: "Trecho não localizado — sugere-se consultar o documento diretamente."]
+[Trecho literal encontrado no documento. Se não localizar, explique qual artigo buscou e por quê não encontrou.]
 </blockquote>
 <br>
 <p><strong>Análise:</strong><br>
