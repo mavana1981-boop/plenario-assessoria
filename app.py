@@ -1975,7 +1975,7 @@ def limpar_todo_cache():
     pauta_cache.clear()
     return jsonify({'message': f'{n} eventos removidos do cache.'})
 
-@app.route('/limpar_cache/<int:evento_id>', methods=['POST'])
+@app.route('/limpar_cache/<int:evento_id>', methods=['GET', 'POST'])
 @login_required
 def limpar_cache(evento_id):
     """Remove cache de um evento específico para forçar reprocessamento do título REQ."""
@@ -1985,6 +1985,8 @@ def limpar_cache(evento_id):
         c.execute('DELETE FROM pauta_cache_db WHERE evento_id = ?', (evento_id,))
         conn.commit()
         pauta_cache.pop(str(evento_id), None)
+        if request.method == 'GET':
+            return redirect(url_for('view_pauta', evento_id=evento_id, force_reload='true'))
         return jsonify({'message': f'Cache do evento {evento_id} limpo. Atualize a pauta.'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
