@@ -1550,6 +1550,17 @@ def extrair_texto_documento(url_doc):
         logger.warning(f"Erro ao extrair texto: {e}")
         return None
 
+@app.route('/extrair_texto_doc', methods=['POST'])
+@login_required
+def extrair_texto_doc():
+    """Extrai e retorna o texto de um PDF para visualização."""
+    data    = request.get_json()
+    url_doc = data.get('url_documento', '')
+    if not url_doc:
+        return jsonify({'texto': '', 'erro': 'URL não fornecida'})
+    texto = extrair_texto_documento(url_doc) or '(texto não extraído — verifique se o PDF está acessível)'
+    return jsonify({'texto': texto, 'chars': len(texto)})
+
 @app.route('/listar_documentos/<int:id_prop>')
 @login_required
 def listar_documentos(id_prop):
