@@ -1349,7 +1349,14 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
 
   async function limparCacheEvento(eventoId) {
     if (!confirm('Limpar cache desta pauta? Os títulos de REQ serão reprocessados ao atualizar.')) return;
-    const r = await fetch(`/limpar_cache/${eventoId}`, {method: 'POST'});
+    const r = await fetch(`/limpar_cache/${eventoId}`, {
+      method: 'POST',
+      credentials: 'same-origin'
+    });
+    if (!r.ok) {
+      alert('Erro HTTP: ' + r.status);
+      return;
+    }
     const j = await r.json();
     if (j.message) {
       window.location.href = window.location.href.split('?')[0] + '?force_reload=true';
