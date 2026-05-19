@@ -1082,6 +1082,7 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
   async function gerarQuadroDTQ(btn) {
     const projeto   = btn.dataset.projeto;
     const numero    = btn.dataset.numero;
+    const autoria   = btn.dataset.autoria || '';
     const descricao = btn.dataset.descricao;
     const analise   = btn.dataset.analise;
     const urlDoc    = btn.dataset.urlDoc;
@@ -1142,7 +1143,7 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
               <img src="${window.location.origin}/static/logo_minoria.png" onerror="this.style.display='none'">
             </div>
           </div>
-          <div class="dtq-bar">${d.dtq}</div>
+          <div class="dtq-bar">${d.dtq}${autoria ? ' - ' + autoria : ''}</div>
           <div class="descricao">${d.descricao}</div>
           <div class="votos">
             <div class="voto-sim">
@@ -1210,6 +1211,7 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
     const descricao   = btn.dataset.descricao;
     const numero      = btn.dataset.numero;
     const projeto     = btn.dataset.projeto;
+    const autoria     = btn.dataset.autoria || '';
 
     // Busca documentos disponíveis
     btn.disabled = true;
@@ -1303,6 +1305,7 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
                     <button class="btn btn-sm btn-dark" onclick="gerarQuadroDTQ(this)"
                       data-projeto="${projeto}"
                       data-numero="${numero}"
+                      data-autoria="${autoria.replace(/"/g,"'")}"
                       data-descricao="${descricao.replace(/"/g,"'")}"
                       data-analise="${j2.resumo.replace(/"/g,"'").replace(/\n/g,' ')}"
                       data-url-doc="${docEscolhido.url}"
