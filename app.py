@@ -497,18 +497,22 @@ def reordenar_por_ordem_oficial(itens, ordem_oficial):
         logger.warning(f"Cobertura muito baixa ({cobertura:.0%}) — mantendo ordem da API.")
         return itens
 
-    # Sempre ordena pelos encontrados, independente de cobertura
+    # Ordena os encontrados pela posição do PDF — essa é a ordem definitiva
     encontrados.sort(key=lambda x: x[2])
 
-    # Insere não encontrados na posição relativa correta
+    # Renumera posições para sequência contínua (elimina gaps de pauta reserva)
+    for idx, (api_i, item, pdf_pos) in enumerate(encontrados):
+        encontrados[idx] = (api_i, item, idx + 1)
+
+    # Para cada item não encontrado, insere pela posição relativa na API
     resultado = list(encontrados)
-    for api_idx, item in nao_encontrados:
+    for api_idx, item in sorted(nao_encontrados, key=lambda x: x[0]):
         insert_pos = 0
         for j, (enc_api_idx, enc_item, enc_pdf_pos) in enumerate(resultado):
             if enc_api_idx < api_idx:
                 insert_pos = j + 1
         resultado.insert(insert_pos, (api_idx, item, -1))
-        logger.info(f"Item não encontrado no PDF: {item.get('projeto_original','')} → inserido na posição {insert_pos+1}")
+        logger.info(f"Não encontrado no PDF: {item.get('projeto_original','')} → inserido na posição {insert_pos+1}")
 
     itens_ordenados = [item for (_, item, _) in resultado]
     for i, item in enumerate(itens_ordenados, start=1):
@@ -1978,17 +1982,20 @@ def limpar_todo_cache():
 @app.route('/limpar_cache/<int:evento_id>', methods=['GET', 'POST'])
 @login_required
 def limpar_cache(evento_id):
-    """Remove cache de um evento específico para forçar reprocessamento do título REQ."""
+    """Remove cache de um evento específico para forçar reprocessamento."""
     conn = sqlite3.connect(DB)
     c = conn.cursor()
     try:
         c.execute('DELETE FROM pauta_cache_db WHERE evento_id = ?', (evento_id,))
         conn.commit()
         pauta_cache.pop(str(evento_id), None)
+        pauta_cache.clear()  # limpa todo cache em memória para garantir
+        logger.info(f"✅ Cache limpo para evento {evento_id}")
         if request.method == 'GET':
             return redirect(url_for('view_pauta', evento_id=evento_id, force_reload='true'))
-        return jsonify({'message': f'Cache do evento {evento_id} limpo. Atualize a pauta.'})
+        return jsonify({'message': f'Cache do evento {evento_id} limpo.'})
     except Exception as e:
+        logger.error(f"Erro ao limpar cache: {e}")
         return jsonify({'error': str(e)}), 500
     finally:
         conn.close()
