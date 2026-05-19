@@ -25,13 +25,15 @@
       justify-content: space-between;
     }
     .header-logos {
+      background: #fff;
+      padding: 4px 8px;
+      border-radius: 3px;
       display: flex;
-      flex-direction: column;
       align-items: center;
+      gap: 8px;
       margin-right: 1rem;
     }
-    .logo { width: 80px; height: auto; }
-    .logo-pl { height: 45px; opacity: 0.9; }
+    .header-logos img { height: 34px; width: 100px; object-fit: contain; display: block; }
     .titulo-app {
       font-size: 1.4rem;
       font-weight: 700;
@@ -117,8 +119,8 @@
     <div class="container header-wrap">
       <div class="d-flex align-items-center">
         <div class="header-logos me-3">
-          <img src="/static/logo_minoria.png" alt="Logo da Câmara" style="width:80px;height:50px;object-fit:contain;" class="logo-header">
-          <img src="/static/logo_oposicao.png" alt="Logo do PL" style="width:80px;height:50px;object-fit:contain;" class="logo-header">
+          <img src="/static/logo_oposicao.png" alt="Oposição" onerror="this.style.display='none'">
+          <img src="/static/logo_minoria.png" alt="Minoria" onerror="this.style.display='none'">
         </div>
         <div>
           <h1 class="titulo-app mb-0">Assessoria</h1>
@@ -126,15 +128,13 @@
         </div>
       </div>
       <div class="text-end">
-        <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm mb-1">
+        <a href="{{ url_for('usuarios.logout') }}" class="btn btn-outline-light btn-sm mb-1">
           <i class="fas fa-sign-out-alt me-2"></i>Sair
-        </a>
-        <a href="{{ url_for('trocar_senha') }}" class="btn btn-outline-light btn-sm mb-1 ms-1">
-          <i class="fas fa-key me-1"></i>Senha
         </a><br>
+
         <small class="text-light">{{ current_user.username }}</small>
         {% if current_user.is_authenticated and current_user.role == 'Admin' %}
-          <a href="{{ url_for('admin_usuarios') }}" 
+          <a href="{{ url_for('usuarios.admin_usuarios') }}" 
             class="btn btn-sm mb-1 ms-1" 
             style="color:#e5e5e5; border:none; background:transparent;">
             <i class="fas fa-cog"></i>
