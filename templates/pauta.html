@@ -810,18 +810,25 @@
   }
 
   async function gerarMensagem() {
-    if (!itemAtual || !tipoAtual) return;
-    const ori = itemAtual.orientacao ? itemAtual.orientacao.toUpperCase() : 'A DEFINIR';
-    const obj = document.getElementById('input-objeto').value.trim();
+    if (!tipoAtual) return;
+
+    const semItem = ['iniciada', 'encerrada_ordem', 'encerrada_sessao'];
+    if (!semItem.includes(tipoAtual) && !itemAtual) {
+      document.getElementById('preview-msg-container').style.display = 'none';
+      return;
+    }
+
+    const ori = itemAtual ? (itemAtual.orientacao ? itemAtual.orientacao.toUpperCase() : 'A DEFINIR') : '';
+    const obj = document.getElementById('input-objeto') ? document.getElementById('input-objeto').value.trim() : '';
     let msg = '';
 
-    // Enriquece ementa com IA (original + complemento entre parênteses)
-    let ementa = itemAtual.ementa;
-    if (tipoAtual !== 'iniciada' && tipoAtual !== 'encerrada_ordem' && tipoAtual !== 'encerrada_sessao') {
+    // Enriquece ementa com IA
+    let ementa = itemAtual ? itemAtual.ementa : '';
+    if (itemAtual && !semItem.includes(tipoAtual)) {
       ementa = await enriquecerEmenta(
         itemAtual.id_principal, itemAtual.projeto, itemAtual.ementa, itemAtual.autor
       );
-      ementa = stripHTML(ementa);  // garante texto limpo para WhatsApp
+      ementa = stripHTML(ementa);
     }
 
     if (tipoAtual === 'apresentacao') {
@@ -834,6 +841,17 @@ Autor: ${itemAtual.autor}
 Relator: ${itemAtual.relator}
 
 *OPOSIÇÃO ORIENTA: ${ori}*`;
+
+    } else if (tipoAtual === 'aprovada_simbolica') {
+      msg =
+`✅ *APROVADA SIMBOLICAMENTE*
+
+*${itemAtual.projeto}*
+
+${ementa}
+
+Autor: ${itemAtual.autor}
+Relator: ${itemAtual.relator}`;
 
     } else if (tipoAtual === 'votacao') {
       if (!obj) {
