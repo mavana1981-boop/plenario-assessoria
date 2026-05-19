@@ -788,6 +788,22 @@
   let tipoAtual = null;
   let itemAtual = null;
 
+  function stripHTML(html) {
+    // Remove tags HTML e converte entidades
+    return html
+      .replace(/<strong>(.*?)<\/strong>/gi, '*$1*')
+      .replace(/<b>(.*?)<\/b>/gi, '*$1*')
+      .replace(/<em>(.*?)<\/em>/gi, '_$1_')
+      .replace(/<i>(.*?)<\/i>/gi, '_$1_')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\*\*(.*?)\*\*/g, '*$1*')  // markdown ** → *
+      .trim();
+  }
+
   async function gerarMensagem() {
     if (!itemAtual || !tipoAtual) return;
     const ori = itemAtual.orientacao ? itemAtual.orientacao.toUpperCase() : 'A DEFINIR';
@@ -800,6 +816,7 @@
       ementa = await enriquecerEmenta(
         itemAtual.id_principal, itemAtual.projeto, itemAtual.ementa, itemAtual.autor
       );
+      ementa = stripHTML(ementa);  // garante texto limpo para WhatsApp
     }
 
     if (tipoAtual === 'apresentacao') {
@@ -870,14 +887,13 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
       const campoObj = document.getElementById('campo-objeto');
       const selectContainer = document.getElementById('select-item-container');
 
-      // Tipos que não precisam de item específico
       const semItem = ['iniciada', 'encerrada_ordem', 'encerrada_sessao'];
       if (selectContainer) selectContainer.style.display = semItem.includes(tipoAtual) ? 'none' : 'block';
 
-      campoObj.style.display = tipoAtual === 'votacao' ? 'block' : 'none';
+      if (campoObj) campoObj.style.display = tipoAtual === 'votacao' ? 'block' : 'none';
       if (tipoAtual !== 'votacao') {
-        document.getElementById('input-objeto').value = '';
-        document.getElementById('input-objeto').dataset.descricaoDtq = '';
+        const inputObj = document.getElementById('input-objeto');
+        if (inputObj) { inputObj.value = ''; inputObj.dataset.descricaoDtq = ''; }
       }
       gerarMensagem();
     });
@@ -1208,6 +1224,12 @@ A Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
       modalEl.addEventListener('hidden.bs.modal', () => {
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-robot"></i>';
+        // Remove modal e backdrop do DOM para não interferir com outros modais
+        modalEl.remove();
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('padding-right');
       });
 
     } catch(e) {
