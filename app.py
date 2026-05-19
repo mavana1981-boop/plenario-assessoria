@@ -1461,77 +1461,77 @@ def exportar_orientacoes_pdf():
 def buscar_documentos_disponiveis(id_proposicao):
     """
     Busca todos os documentos da página prop_pareceres_substitutivos_votos.
-    Retorna lista completa para o usuário selecionar.
+    Sempre inclui o Avulso (texto consolidado) no topo.
     """
     from bs4 import BeautifulSoup
     headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
     docs = []
     vistos = set()
+
+    # 1. Busca o Avulso (texto integral consolidado) da ficha de tramitação — sempre no topo
+    try:
+        url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}"
+        r_tram = requests.get(url_tram, headers=headers, timeout=12)
+        if r_tram.ok:
+            soup_tram = BeautifulSoup(r_tram.text, 'html.parser')
+            for a in soup_tram.find_all('a', href=True):
+                href = a['href']
+                if 'codteor' not in href.lower():
+                    continue
+                m_fn = re.search(r'filename=([^&"]+)', href)
+                fn   = (m_fn.group(1) if m_fn else '').upper()
+                if 'AVULSO' in fn:
+                    url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                    docs.append({
+                        'label':    '📄 Avulso (texto integral atualizado)',
+                        'url':      url_doc,
+                        'filename': fn,
+                        'tipo':     'Avulso',
+                        'data':     '',
+                    })
+                    vistos.add(url_doc)
+                    break
+    except Exception as e:
+        logger.warning(f"Erro ao buscar avulso: {e}")
+
+    # 2. Busca todos os documentos da página de pareceres/substitutivos
     try:
         url = f"https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao={id_proposicao}"
         r = requests.get(url, headers=headers, timeout=12)
         logger.info(f"Página pareceres {id_proposicao}: status={r.status_code}, size={len(r.text)}")
-        if not r.ok:
-            return []
-
-        soup = BeautifulSoup(r.text, 'html.parser')
-
-        for row in soup.find_all('tr'):
-            cols = row.find_all('td')
-            if len(cols) < 3:
-                continue
-
-            sigla = cols[0].get_text(strip=True)   # ex: "PRLP 1 => PL 2978/2023"
-            tipo  = cols[1].get_text(strip=True)   # ex: "Parecer Preliminar de Plenário"
-            data  = cols[2].get_text(strip=True)   # ex: "13/05/2026"
-
-            if not sigla:
-                continue
-
-            # Pega TODOS os links com codteor da linha (inteiro teor, PDF, etc.)
-            for a in row.find_all('a', href=True):
-                href = a['href']
-                if 'codteor' not in href.lower():
+        if r.ok:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            for row in soup.find_all('tr'):
+                cols = row.find_all('td')
+                if len(cols) < 3:
                     continue
-                url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-                if url_doc in vistos:
+                sigla = cols[0].get_text(strip=True)
+                tipo  = cols[1].get_text(strip=True)
+                data  = cols[2].get_text(strip=True)
+                if not sigla:
                     continue
-                vistos.add(url_doc)
-
-                label = f"📋 {sigla} — {tipo}"
-                if data:
-                    label += f" ({data})"
-
-                docs.append({
-                    'label':    label,
-                    'url':      url_doc,
-                    'filename': sigla,
-                    'tipo':     tipo,
-                    'data':     data,
-                })
-
-        logger.info(f"Documentos encontrados: {len(docs)} — {[d['label'] for d in docs]}")
-
-        # Fallback: se a página retornou vazia, busca avulso da ficha de tramitação
-        if not docs:
-            url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}"
-            r2 = requests.get(url_tram, headers=headers, timeout=12)
-            if r2.ok:
-                soup2 = BeautifulSoup(r2.text, 'html.parser')
-                for a in soup2.find_all('a', href=True):
+                for a in row.find_all('a', href=True):
                     href = a['href']
                     if 'codteor' not in href.lower():
                         continue
-                    m_fn = re.search(r'filename=([^&"]+)', href)
-                    fn   = (m_fn.group(1) if m_fn else '').upper()
-                    if 'AVULSO' in fn:
-                        url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
-                        docs.append({'label': '📄 Avulso (texto consolidado)', 'url': url_doc, 'filename': fn, 'tipo': 'Avulso', 'data': ''})
-                        break
-
+                    url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                    if url_doc in vistos:
+                        continue
+                    vistos.add(url_doc)
+                    label = f"📋 {sigla} — {tipo}"
+                    if data:
+                        label += f" ({data})"
+                    docs.append({
+                        'label':    label,
+                        'url':      url_doc,
+                        'filename': sigla,
+                        'tipo':     tipo,
+                        'data':     data,
+                    })
     except Exception as e:
-        logger.warning(f"Erro ao buscar documentos: {e}")
+        logger.warning(f"Erro ao buscar pareceres: {e}")
 
+    logger.info(f"Total documentos: {len(docs)} — {[d['label'] for d in docs]}")
     return docs
 
 def extrair_texto_documento(url_doc):
