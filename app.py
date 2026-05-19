@@ -339,6 +339,14 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                     if abs(centro - page_width / 2) > page_width * 0.20:
                         continue
 
+                    # Rejeita número se for muito maior que o esperado
+                    # (ex: número de folha "24" quando só há 19 itens)
+                    # Aceita se for no máximo 2 a mais que o maior já encontrado
+                    maior_atual = max(ordem.values()) if ordem else 0
+                    if num > maior_atual + 3:
+                        logger.info(f"  Número {num} ignorado (salto suspeito, maior atual={maior_atual})")
+                        continue
+
                     # Pega texto das próximas 10 linhas para extrair o código
                     prox_ys = ys[i+1:i+11]
                     bloco = ' '.join(
