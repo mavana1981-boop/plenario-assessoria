@@ -542,70 +542,70 @@
           }
         }
       })();
-      document.querySelectorAll('.btn-buscar-destaques').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const idProp  = btn.dataset.idProposicao;
-          const ordem   = btn.dataset.ordem;
-          const spinner = document.querySelector(`.spinner-busca-${ordem}`);
-          const tabela  = document.getElementById(`tabela-destaques-${ordem}`);
-          const tbody   = document.getElementById(`tbody-destaques-${ordem}`);
-          const semMsg  = document.getElementById(`sem-destaques-${ordem}`);
+      // Buscar destaques — delegação para funcionar com collapse dinâmico
+      document.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.btn-buscar-destaques');
+        if (!btn) return;
+        const idProp  = btn.dataset.idProposicao;
+        const ordem   = btn.dataset.ordem;
+        const spinner = document.querySelector(`.spinner-busca-${ordem}`);
+        const tabela  = document.getElementById(`tabela-destaques-${ordem}`);
+        const tbody   = document.getElementById(`tbody-destaques-${ordem}`);
+        const semMsg  = document.getElementById(`sem-destaques-${ordem}`);
+        if (!tabela || !tbody) return;
 
-          btn.disabled = true;
-          spinner.style.display = 'inline-flex';
-          tabela.style.display  = 'none';
-          tbody.innerHTML = '';
-          semMsg.style.display = 'none';
+        btn.disabled = true;
+        if (spinner) spinner.style.display = 'inline-flex';
+        tabela.style.display = 'none';
+        tbody.innerHTML = '';
+        if (semMsg) semMsg.style.display = 'none';
 
-          try {
-            const r = await fetch(`/destaques/${idProp}`);
-            const j = await r.json();
-            tabela.style.display = 'block';
-            if (j.destaques && j.destaques.length > 0) {
-              j.destaques.forEach(d => {
-                const badge = d.situacao.toLowerCase().includes('tramitação')
-                  ? `<span class="badge bg-warning text-dark">${d.situacao}</span>`
-                  : `<span class="badge bg-secondary">${d.situacao}</span>`;
-                const idProp = btn.dataset.idProposicao;
-                const projeto = btn.dataset.projeto || '';
-                tbody.innerHTML += `<tr>
-                  <td><strong>${d.numero}</strong></td>
-                  <td>${d.autoria}</td>
-                  <td>${d.descricao}</td>
-                  <td>${d.tipo_destaque}</td>
-                  <td>${badge}</td>
-                  <td>
-                    <button class="btn btn-outline-primary btn-sm"
-                      onclick="analisarDestaque(this)"
-                      data-id-principal="${idProp}"
-                      data-descricao="${d.descricao.replace(/"/g,"'")}"
-                      data-numero="${d.numero}"
-                      data-autoria="${d.autoria.replace(/"/g,"'")}"
-                      data-projeto="${projeto}">
-                      <i class="fas fa-robot"></i>
-                    </button>
-                  </td>
-                </tr>
-                <tr>
-                  <td colspan="6">
-                    <div id="analise-destaque-${d.numero.replace(/\s/g,'-')}" class="mt-1" style="display:none;">
-                      <div class="p-2 border rounded bg-light" style="font-size:0.85rem; white-space:pre-wrap;"></div>
-                    </div>
-                  </td>
-                </tr>`;
-              });
-            } else {
-              semMsg.style.display = 'block';
-            }
-          } catch(e) {
-            tabela.style.display = 'block';
-            semMsg.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>Erro: ${e.message}`;
-            semMsg.style.display = 'block';
-          } finally {
-            spinner.style.display = 'none';
-            btn.disabled = false;
+        try {
+          const r = await fetch(`/destaques/${idProp}`);
+          const j = await r.json();
+          tabela.style.display = 'block';
+          if (j.destaques && j.destaques.length > 0) {
+            const projeto = btn.dataset.projeto || '';
+            j.destaques.forEach(d => {
+              const badge = d.situacao.toLowerCase().includes('tramitação')
+                ? `<span class="badge bg-warning text-dark">${d.situacao}</span>`
+                : `<span class="badge bg-secondary">${d.situacao}</span>`;
+              tbody.innerHTML += `<tr>
+                <td><strong>${d.numero}</strong></td>
+                <td>${d.autoria}</td>
+                <td>${d.descricao}</td>
+                <td>${d.tipo_destaque}</td>
+                <td>${badge}</td>
+                <td>
+                  <button class="btn btn-outline-primary btn-sm"
+                    onclick="analisarDestaque(this)"
+                    data-id-principal="${idProp}"
+                    data-descricao="${d.descricao.replace(/"/g,"'")}"
+                    data-numero="${d.numero}"
+                    data-autoria="${d.autoria.replace(/"/g,"'")}"
+                    data-projeto="${projeto}">
+                    <i class="fas fa-robot"></i>
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td colspan="6">
+                  <div id="analise-destaque-${d.numero.replace(/\s/g,'-')}" class="mt-1" style="display:none;">
+                    <div class="p-2 border rounded bg-light" style="font-size:0.85rem;"></div>
+                  </div>
+                </td>
+              </tr>`;
+            });
+          } else {
+            if (semMsg) semMsg.style.display = 'block';
           }
-        });
+        } catch(err) {
+          tabela.style.display = 'block';
+          if (semMsg) { semMsg.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>Erro: ${err.message}`; semMsg.style.display = 'block'; }
+        } finally {
+          if (spinner) spinner.style.display = 'none';
+          btn.disabled = false;
+        }
       });
 
     });
