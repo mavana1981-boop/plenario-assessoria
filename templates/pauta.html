@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
@@ -1357,34 +1357,94 @@
         if (!sel) return;
         const docEscolhido = docs[parseInt(sel.value)];
         const btnDbg = document.getElementById('btn-debug-doc');
-        btnDbg.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Analisando...';
+        btnDbg.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Carregando...';
         btnDbg.disabled = true;
         try {
           const r = await fetch('/debug_destaque', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-              url_documento: docEscolhido.url,
-              descricao: descricao
-            })
+            body: JSON.stringify({ url_documento: docEscolhido.url, descricao: descricao })
           });
           const j = await r.json();
-          const popup = window.open('', '_blank', 'width=900,height=700,scrollbars=yes');
+
+          const popup = window.open('', '_blank', 'width=950,height=750,scrollbars=yes,resizable=yes');
           popup.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
-            <title>Debug Texto</title>
-            <style>body{font-family:monospace;font-size:13px;padding:20px;}
-            h3{color:#1A6B3A;} pre{background:#f5f5f5;padding:12px;white-space:pre-wrap;word-break:break-word;}
-            .ok{color:green;} .err{color:red;}</style></head><body>
-            <h3>Debug — ${docEscolhido.label}</h3>
-            <p><strong>Total de chars extraídos:</strong> ${j.total_chars}</p>
-            <p><strong>Refs de leis detectadas na descrição:</strong> ${JSON.stringify(j.refs_extraidas)}</p>
-            <p><strong>Resultado da busca:</strong><br>
-              ${(j.busca_info||[]).map(l => `<span class="${l.startsWith('✅')?'ok':'err'}">${l}</span>`).join('<br>')}
-            </p>
-            <h3>Primeiros 500 chars do documento:</h3>
-            <pre>${j.primeiros_500?.replace(/</g,'&lt;')}</pre>
-            <h3>Trecho relevante localizado:</h3>
-            <pre>${j.trecho_relevante?.replace(/</g,'&lt;')}</pre>
+            <title>Debug — Selecionar Trecho</title>
+            <style>
+              body { font-family: Arial, sans-serif; font-size: 13px; padding: 20px; background: #fff; }
+              h3 { color: #1A6B3A; }
+              .info { background: #f0f8f0; border-left: 3px solid #1A6B3A; padding: 8px 12px; margin: 8px 0; font-size: 12px; }
+              .ok { color: green; } .err { color: red; }
+              #texto-completo { width: 100%; height: 350px; font-family: monospace; font-size: 12px;
+                background: #f9f9f9; border: 1px solid #ccc; padding: 10px; resize: vertical;
+                line-height: 1.5; white-space: pre-wrap; }
+              .instrucao { background: #fff3cd; border: 1px solid #ffc107; padding: 10px; border-radius: 4px; margin: 10px 0; }
+              #trecho-selecionado { width: 100%; height: 100px; font-family: monospace; font-size: 12px;
+                border: 2px solid #1A6B3A; padding: 8px; resize: vertical; }
+              #btn-analisar-trecho { background: #1A6B3A; color: #fff; border: none; padding: 8px 20px;
+                border-radius: 4px; cursor: pointer; font-size: 13px; margin-top: 8px; }
+              #btn-analisar-trecho:hover { background: #145c2f; }
+              #btn-analisar-trecho:disabled { background: #aaa; }
+              #resultado-analise { margin-top: 15px; padding: 12px; border: 1px solid #ccc;
+                border-radius: 4px; display: none; background: #f9f9f9; }
+            </style>
+          </head><body>
+            <h3>📄 ${docEscolhido.label}</h3>
+            <div class="info">
+              <strong>Chars extraídos:</strong> ${j.total_chars} &nbsp;|&nbsp;
+              <strong>Refs detectadas:</strong> ${JSON.stringify(j.refs_extraidas)} &nbsp;|&nbsp;
+              ${(j.busca_info||[]).map(l => `<span class="${l.startsWith('✅')?'ok':'err'}">${l}</span>`).join(' | ')}
+            </div>
+
+            <div class="instrucao">
+              💡 <strong>Selecione manualmente</strong> o trecho relevante no texto abaixo,
+              cole na caixa "Trecho selecionado" e clique em <strong>Analisar com IA</strong>.
+            </div>
+
+            <label><strong>Texto completo do documento:</strong></label>
+            <textarea id="texto-completo" readonly>${(j.texto_completo||j.primeiros_500||'').replace(/</g,'&lt;')}</textarea>
+
+            <label style="margin-top:10px;display:block;"><strong>Trecho selecionado para análise:</strong>
+              <span style="font-size:11px;color:#666;"> (cole ou edite o trecho que a IA deve analisar)</span>
+            </label>
+            <textarea id="trecho-selecionado" placeholder="Selecione e copie o trecho relevante do texto acima e cole aqui...">${(j.trecho_relevante && !j.trecho_relevante.startsWith('(não') ? j.trecho_relevante : '').replace(/</g,'&lt;')}</textarea>
+
+            <button id="btn-analisar-trecho">🤖 Analisar com IA este trecho</button>
+
+            <div id="resultado-analise"></div>
+
+            <script>
+              document.getElementById('btn-analisar-trecho').addEventListener('click', async () => {
+                const trecho = document.getElementById('trecho-selecionado').value.trim();
+                if (!trecho) { alert('Cole o trecho relevante antes de analisar.'); return; }
+                const btn = document.getElementById('btn-analisar-trecho');
+                btn.disabled = true; btn.textContent = '⏳ Analisando...';
+                try {
+                  const r = await fetch('${window.location.origin}/analisar_destaque', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                      id_principal: '${idPrincipal}',
+                      descricao:    '${descricao.replace(/'/g,"\\'")}',
+                      numero:       '${numero}',
+                      projeto:      '${projeto.replace(/'/g,"\\'")}',
+                      url_documento: '${docEscolhido.url}',
+                      label_documento: '${docEscolhido.label.replace(/'/g,"\\'")}',
+                      trecho_manual: trecho
+                    })
+                  });
+                  const j2 = await r.json();
+                  const res = document.getElementById('resultado-analise');
+                  res.style.display = 'block';
+                  res.innerHTML = j2.resumo || ('<span style="color:red;">Erro: ' + (j2.error||'') + '</span>');
+                } catch(e) {
+                  alert('Erro: ' + e.message);
+                } finally {
+                  btn.disabled = false; btn.textContent = '🤖 Analisar com IA este trecho';
+                }
+              });
+            </script>
           </body></html>`);
           popup.document.close();
         } catch(e) {
@@ -1489,7 +1549,7 @@
   }
 </script>
 
-<!-- MODAL ORIENTAÇÕES -->
+<!-- MODAL ORIENTAÇÕES v2 -->
 <div class="modal fade" id="modalOrientacoes" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
     <div class="modal-content">
