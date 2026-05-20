@@ -1,8 +1,8 @@
 from flask import Flask, jsonify, request, render_template, redirect, url_for, flash, make_response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_bcrypt import Bcrypt
-import sqlite3 
-import requests 
+import sqlite3
+import requests
 import json
 import logging
 from datetime import datetime, timedelta
@@ -1984,13 +1984,70 @@ def limpar_cache(evento_id):
 @app.route('/enriquecer_ementa', methods=['POST'])
 @login_required
 def enriquecer_ementa():
-    """Retorna ementa original + complemento IA entre parênteses SOMENTE se a ementa for vaga."""
-    data    = request.get_json()
-    projeto = data.get('projeto', '')
-    ementa  = data.get('ementa', '').strip()
-    autor   = data.get('autor', '')
+    """Retorna ementa original + complemento IA. Para REQ, busca ementa do PL referenciado."""
+    data     = request.get_json()
+    projeto  = data.get('projeto', '')
+    ementa   = data.get('ementa', '').strip()
+    autor    = data.get('autor', '')
+    groq_key = os.environ.get('GROQ_API_KEY')
 
-    # Detecta se ementa é vaga — só menciona lei/artigo mas não explica o conteúdo
+    # Para REQ/RQS/RQU/REC: busca ementa do PL referenciado
+    siglas_req = ('REQ', 'RQS', 'RQU', 'REC')
+    proj_base = projeto.split(' ao ')[0].strip()
+    if any(proj_base.upper().startswith(s) for s in siglas_req):
+        # Extrai referência ao PL na ementa
+        m_pl = re.search(
+            r'\b(PL|PEC|PLP|MPV|PDL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})',
+            ementa, re.IGNORECASE
+        )
+        if not m_pl:
+            m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL)\s+([\d.]+)[/\-](\d{4})', projeto, re.IGNORECASE)
+        if m_pl:
+            sigla_ref = m_pl.group(1).upper()
+            num_ref   = m_pl.group(2).replace('.', '')
+            ano_ref   = m_pl.group(3)
+            ementa_pl = ''
+            try:
+                r_api = requests.get(
+                    f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
+                    headers={'Accept': 'application/json'}, timeout=8
+                )
+                if r_api.ok:
+                    dados = r_api.json().get('dados', [])
+                    if dados:
+                        ementa_pl = dados[0].get('ementa', '')
+            except Exception:
+                pass
+
+            if ementa_pl and groq_key:
+                prompt = f"""Você é um especialista legislativo. Explique em UMA frase direta (máx 20 palavras) o objeto deste requerimento para os parlamentares.
+
+Requerimento: {projeto}
+Ementa do requerimento: {ementa}
+Ementa do {sigla_ref} {num_ref}/{ano_ref} referenciado: {ementa_pl}
+
+Responda APENAS com a frase, sem introdução, sem aspas, sem ponto final."""
+                try:
+                    r = requests.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                        json={"model": "llama-3.3-70b-versatile",
+                              "messages": [{"role": "user", "content": prompt}],
+                              "max_tokens": 60, "temperature": 0.2},
+                        timeout=10
+                    )
+                    if r.ok:
+                        comp = r.json()['choices'][0]['message']['content'].strip().rstrip('.')
+                        return jsonify({'ementa_enriquecida': f"{ementa} ({comp})", 'complemento': comp})
+                except Exception as e:
+                    logger.warning(f"Erro enriquecer REQ: {e}")
+            elif ementa_pl:
+                comp = ementa_pl[:120].rstrip('.')
+                return jsonify({'ementa_enriquecida': f"{ementa} ({comp})", 'complemento': comp})
+
+        return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
+
+    # Lógica original para não-REQ
     def ementa_e_vaga(txt):
         txt_lower = txt.lower()
         # Padrões de ementa vaga: só referencia lei sem explicar o que faz
