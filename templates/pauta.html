@@ -798,6 +798,7 @@
 </script>
 <script src="/static/mensagens.js"></script>
 
+<script>
   async function verificarUltimoDoc(btn) {
     const idPrincipal = btn.dataset.idPrincipal;
     if (!idPrincipal) { alert('ID da proposição não encontrado.'); return; }
@@ -1163,11 +1164,12 @@
 
           if (j2.resumo) {
             const tr = btn.closest('tr');
-            const nextTr = tr.nextElementSibling;
+            const nextTr = tr ? tr.nextElementSibling : null;
             if (nextTr) {
-              const div = nextTr.querySelector('div');
-              if (div) {
-                div.querySelector('div').innerHTML = j2.resumo +
+              const containerDiv = nextTr.querySelector('[id^="analise-destaque-"]');
+              const innerDiv = containerDiv ? containerDiv.querySelector('div') : null;
+              if (innerDiv) {
+                innerDiv.innerHTML = j2.resumo +
                   `<div class="mt-2">
                     <button class="btn btn-sm btn-dark" onclick="gerarQuadroDTQ(this)"
                       data-projeto="${projeto}"
@@ -1180,7 +1182,7 @@
                       🖼️ Criar Quadro do DTQ
                     </button>
                   </div>`;
-                div.style.display = 'block';
+                if (containerDiv) containerDiv.style.display = 'block';
               }
             }
           } else {
