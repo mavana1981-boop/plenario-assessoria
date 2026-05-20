@@ -1526,28 +1526,53 @@ def extrair_texto_documento(url_doc):
     """Baixa PDF e extrai texto completo."""
     import pdfplumber
     from io import BytesIO
-    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/pdf,*/*',
+        'Referer': 'https://www.camara.leg.br/',
+    }
+
+    # Extrai codteor da URL para tentar URL alternativa
+    m_ct = re.search(r'codteor=(\d+)', url_doc)
+    codteor = m_ct.group(1) if m_ct else None
+
+    # Lista de URLs para tentar em ordem
+    urls_tentar = []
+
+    # URL principal com tipo=PDF
     url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
-    try:
-        logger.info(f"Baixando PDF: {url_pdf[:100]}")
-        rp = requests.get(url_pdf, headers=headers, timeout=60)
-        logger.info(f"PDF: status={rp.status_code}, CT={rp.headers.get('Content-Type','')}, size={len(rp.content)}")
-        if not rp.ok:
-            logger.warning(f"PDF retornou {rp.status_code}")
-            return None
-        if 'pdf' not in rp.headers.get('Content-Type', '').lower():
-            logger.warning(f"Não é PDF: {rp.headers.get('Content-Type','')}")
-            # Tenta mesmo assim
-            if len(rp.content) < 1000:
-                return None
-        with pdfplumber.open(BytesIO(rp.content)) as pdf:
-            n_pags = len(pdf.pages)
-            texto = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
-        logger.info(f"Texto extraído: {len(texto)} chars de {n_pags} páginas")
-        return texto
-    except Exception as e:
-        logger.warning(f"Erro ao extrair texto: {e}")
-        return None
+    urls_tentar.append(url_pdf)
+
+    # URLs alternativas se tiver codteor
+    if codteor:
+        urls_tentar += [
+            f"https://www.camara.leg.br/proposicoesWeb/prop_mostrarintegra?codteor={codteor}&tipo=PDF",
+            f"https://legis.senado.leg.br/sdleg-getter/documento?codteor={codteor}&tipo=PDF",
+        ]
+
+    for url in urls_tentar:
+        try:
+            logger.info(f"Tentando PDF: {url[:100]}")
+            rp = requests.get(url, headers=headers, timeout=60, allow_redirects=True)
+            logger.info(f"  → status={rp.status_code}, CT={rp.headers.get('Content-Type','')[:40]}, size={len(rp.content)}")
+
+            if not rp.ok or len(rp.content) < 1000:
+                continue
+            if 'pdf' not in rp.headers.get('Content-Type', '').lower() and not rp.content[:4] == b'%PDF':
+                continue
+
+            with pdfplumber.open(BytesIO(rp.content)) as pdf:
+                n_pags = len(pdf.pages)
+                texto = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
+            logger.info(f"  ✅ Extraído: {len(texto)} chars de {n_pags} páginas")
+            return texto
+        except Exception as e:
+            logger.warning(f"  ❌ Erro em {url[:60]}: {e}")
+            continue
+
+    logger.warning(f"Nenhuma URL funcionou para extrair PDF")
+    return None
 
 @app.route('/extrair_texto_doc', methods=['POST'])
 @login_required
