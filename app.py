@@ -1690,6 +1690,42 @@ def buscar_votos(evento_id):
     # Se nada funcionar, retorna vazio para o frontend pedir manual
     return jsonify({'votacoes': [], 'total': 0, 'info': 'Votos não encontrados automaticamente — insira manualmente.'})
 
+@app.route('/debug_destaque', methods=['POST'])
+@login_required
+def debug_destaque():
+    """Debug: mostra texto extraído e trecho localizado para análise de destaque."""
+    data         = request.get_json()
+    url_doc_sel  = data.get('url_documento', '')
+    descricao    = data.get('descricao', '')
+
+    texto_doc = extrair_texto_documento(url_doc_sel) if url_doc_sel else ''
+
+    refs_leis = re.findall(r'[Ll]ei\s+(?:n[º°.]?\s*)?([\d.]+)[/\-](\d{4})', descricao)
+    texto_relevante = ''
+    busca_info = []
+
+    if texto_doc and refs_leis:
+        for num_lei, ano_lei in refs_leis:
+            num_limpo = num_lei.replace('.', '')
+            for padrao in [num_limpo, num_lei, f"{num_limpo[:1]}.{num_limpo[1:]}"]:
+                m = re.search(re.escape(padrao), texto_doc)
+                if m:
+                    ini = max(0, m.start() - 200)
+                    fim = min(len(texto_doc), m.end() + 3000)
+                    texto_relevante = texto_doc[ini:fim]
+                    busca_info.append(f"✅ Encontrado '{padrao}' na posição {m.start()}")
+                    break
+                else:
+                    busca_info.append(f"❌ Não encontrado '{padrao}'")
+
+    return jsonify({
+        'total_chars': len(texto_doc),
+        'primeiros_500': texto_doc[:500],
+        'refs_extraidas': refs_leis,
+        'busca_info': busca_info,
+        'trecho_relevante': texto_relevante[:2000] if texto_relevante else '(não localizado)',
+    })
+
 @app.route('/analisar_destaque', methods=['POST'])
 @login_required
 def analisar_destaque():
