@@ -1168,28 +1168,39 @@
           const j2 = await r2.json();
 
           if (j2.resumo) {
-            const tr = btn.closest('tr');
-            const nextTr = tr ? tr.nextElementSibling : null;
-            if (nextTr) {
-              const containerDiv = nextTr.querySelector('[id^="analise-destaque-"]');
-              const innerDiv = containerDiv ? containerDiv.querySelector('div') : null;
-              if (innerDiv) {
-                innerDiv.innerHTML = j2.resumo +
-                  `<div class="mt-2">
-                    <button class="btn btn-sm btn-dark" onclick="gerarQuadroDTQ(this)"
-                      data-projeto="${projeto}"
-                      data-numero="${numero}"
-                      data-autoria="${autoria.replace(/"/g,"'")}"
-                      data-descricao="${descricao.replace(/"/g,"'")}"
-                      data-analise="${j2.resumo.replace(/"/g,"'").replace(/\n/g,' ')}"
-                      data-url-doc="${docEscolhido.url}"
-                      data-label-doc="${docEscolhido.label.replace(/"/g,"'")}">
-                      🖼️ Criar Quadro do DTQ
-                    </button>
-                  </div>`;
-                if (containerDiv) containerDiv.style.display = 'block';
-              }
+            // Encontra o container de resultado — funciona tanto na tabela estática quanto dinâmica
+            let containerDiv = null;
+            const numKey = numero.replace(/\s/g,'-');
+            containerDiv = document.getElementById(`analise-destaque-${numKey}`);
+            if (!containerDiv) {
+              // Fallback: procura no nextElementSibling do tr pai
+              const tr = btn.closest('tr');
+              const nextTr = tr ? tr.nextElementSibling : null;
+              if (nextTr) containerDiv = nextTr.querySelector('[id^="analise-destaque-"]');
             }
+            if (!containerDiv) {
+              // Último fallback: insere após o botão
+              containerDiv = document.createElement('div');
+              containerDiv.className = 'mt-2 p-2 border rounded bg-light';
+              btn.parentElement.appendChild(containerDiv);
+            }
+            const innerDiv = containerDiv.querySelector('div') || containerDiv;
+            // Escapa backticks do resumo para não quebrar template literals
+            const resumoSeguro = j2.resumo.replace(/`/g, '&#96;');
+            innerDiv.innerHTML = resumoSeguro +
+              `<div class="mt-2">
+                <button class="btn btn-sm btn-dark" onclick="gerarQuadroDTQ(this)"
+                  data-projeto="${projeto.replace(/"/g,"'")}"
+                  data-numero="${numero}"
+                  data-autoria="${autoria.replace(/"/g,"'")}"
+                  data-descricao="${descricao.replace(/"/g,"'")}"
+                  data-analise="${j2.resumo.replace(/"/g,"'").replace(/\n/g,' ').replace(/`/g,"'")}"
+                  data-url-doc="${docEscolhido.url}"
+                  data-label-doc="${docEscolhido.label.replace(/"/g,"'")}">
+                  🖼️ Criar Quadro do DTQ
+                </button>
+              </div>`;
+            containerDiv.style.display = 'block';
           } else {
             alert('Erro: ' + (j2.error || 'Resposta vazia'));
           }
