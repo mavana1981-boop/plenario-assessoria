@@ -2,7 +2,7 @@ from flask import Flask, jsonify, request, render_template, redirect, url_for, f
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_bcrypt import Bcrypt
 import sqlite3 
-import requests
+import requests 
 import json
 import logging
 from datetime import datetime, timedelta
