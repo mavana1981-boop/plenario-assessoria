@@ -697,6 +697,30 @@
             <button class="btn btn-outline-success btn-sm btn-tipo-msg" data-tipo="aprovada_simbolica">
               <i class="fas fa-check-circle me-1"></i>Aprovada Simbolicamente
             </button>
+            <div class="dropdown d-inline-block">
+              <button class="btn btn-success btn-sm dropdown-toggle" type="button"
+                id="btnAprovado" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="fas fa-check-double me-1"></i>Aprovado
+              </button>
+              <ul class="dropdown-menu" aria-labelledby="btnAprovado">
+                <li>
+                  <a class="dropdown-item btn-aprovado-tipo" href="#" data-tipo="aprovado_simbolico">
+                    ✅ Aprovado Simbolicamente
+                  </a>
+                </li>
+                <li>
+                  <a class="dropdown-item btn-aprovado-tipo" href="#" data-tipo="aprovado_nominal">
+                    🗳️ Aprovado — buscar votos
+                  </a>
+                </li>
+                <li><hr class="dropdown-divider"></li>
+                <li>
+                  <a class="dropdown-item btn-aprovado-tipo" href="#" data-tipo="rejeitado_nominal">
+                    ❌ Rejeitado — buscar votos
+                  </a>
+                </li>
+              </ul>
+            </div>
             <button class="btn btn-outline-warning btn-sm btn-tipo-msg" data-tipo="encerrada_ordem">
               <i class="fas fa-stop-circle me-1"></i>Encerrada a Ordem do Dia
             </button>
@@ -855,6 +879,15 @@
 
       } else if (tipoAtual === 'encerrada_sessao') {
         msg = `⛔ *ENCERRADA A SESSÃO DELIBERATIVA*\n\nA Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
+
+      } else if (tipoAtual === 'aprovado_simbolico') {
+        msg = `✅ *APROVADO SIMBOLICAMENTE*\n\n*${itemAtual.projeto}*\n\n${ementa}\n\nAutor: ${itemAtual.autor}\nRelator: ${itemAtual.relator}`;
+
+      } else if (tipoAtual === 'aprovado_nominal' || tipoAtual === 'rejeitado_nominal') {
+        const v = window._votosAtuais || {sim:'', nao:'', abs:'', resultado: tipoAtual === 'aprovado_nominal' ? 'APROVADO' : 'REJEITADO'};
+        const linhaAbs = v.abs ? `\nAbstenção: ${v.abs}` : '';
+        const emoji = tipoAtual === 'aprovado_nominal' ? '✅' : '❌';
+        msg = `${emoji} *${v.resultado}*\n\n*${itemAtual.projeto}*\n\n${ementa}\n\nSIM: ${v.sim} votos\nNÃO: ${v.nao} votos${linhaAbs}\n\nAutor: ${itemAtual.autor}\nRelator: ${itemAtual.relator}`;
       }
 
       if (msg) {
@@ -865,6 +898,60 @@
       console.error('Erro gerarMensagem:', e);
     }
   }
+
+  // Listeners dropdown Aprovado
+  document.querySelectorAll('.btn-aprovado-tipo').forEach(link => {
+    link.addEventListener('click', async (e) => {
+      e.preventDefault();
+      if (!itemAtual && link.dataset.tipo !== 'aprovado_simbolico') {
+        alert('Selecione um item primeiro.');
+        return;
+      }
+      const tipo = link.dataset.tipo;
+
+      if (tipo === 'aprovado_simbolico') {
+        tipoAtual = 'aprovado_simbolico';
+        await gerarMensagem();
+        return;
+      }
+
+      const eventoId = {{ evento_id|safe }};
+      const txtOriginal = link.textContent;
+      link.textContent = '⏳ Buscando votos...';
+
+      try {
+        const r = await fetch(`/buscar_votos/${eventoId}`);
+        const j = await r.json();
+        let vot = null;
+        if (j.votacoes && j.votacoes.length > 0) {
+          const projNorm = itemAtual.projeto.replace(/\D/g, '');
+          vot = j.votacoes.find(v => v.proposicao && v.proposicao.replace(/\D/g,'').includes(projNorm))
+             || j.votacoes[0];
+        }
+        if (vot && (vot.sim || vot.nao)) {
+          tipoAtual = tipo;
+          window._votosAtuais = {
+            sim: vot.sim, nao: vot.nao, abs: vot.abstencao,
+            resultado: tipo === 'aprovado_nominal' ? 'APROVADO' : 'REJEITADO'
+          };
+        } else {
+          const sim = prompt('Votos SIM (não encontrado automaticamente):') || '';
+          const nao = prompt('Votos NÃO:') || '';
+          tipoAtual = tipo;
+          window._votosAtuais = {
+            sim, nao, abs: '',
+            resultado: tipo === 'aprovado_nominal' ? 'APROVADO' : 'REJEITADO'
+          };
+        }
+        await gerarMensagem();
+      } catch(err) {
+        alert('Erro ao buscar votos: ' + err.message);
+      } finally {
+        link.textContent = txtOriginal;
+      }
+    });
+  });
+
   document.getElementById('select-item-msg').addEventListener('change', function() {
     const idx = this.value;
     itemAtual = idx !== '' ? itensData[parseInt(idx)] : null;
