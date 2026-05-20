@@ -1628,6 +1628,41 @@ Responda APENAS com o JSON, sem ```json, sem comentários."""
 
     return jsonify({'ok': False, 'error': 'Falha na IA'}), 500
 
+@app.route('/buscar_votos/<int:evento_id>')
+@login_required
+def buscar_votos(evento_id):
+    """Busca resultado das votações do evento via API da Câmara."""
+    headers = {'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}
+    try:
+        # API de votações por evento
+        r = requests.get(
+            f"https://dadosabertos.camara.leg.br/api/v2/votacoes?idEvento={evento_id}&itens=50&ordem=DESC",
+            headers=headers, timeout=12
+        )
+        if r.ok:
+            votacoes = r.json().get('dados', [])
+            resultado = []
+            for v in votacoes:
+                desc = v.get('descricao', '') or ''
+                prop = v.get('proposicaoObjeto', '') or ''
+                sim  = v.get('totalVotosSim', '')
+                nao  = v.get('totalVotosNao', '')
+                abs_ = v.get('totalVotosAbstencao', '') or ''
+                resultado.append({
+                    'id':         v.get('id', ''),
+                    'descricao':  desc,
+                    'proposicao': prop,
+                    'sim':        sim,
+                    'nao':        nao,
+                    'abstencao':  abs_,
+                    'aprovado':   v.get('aprovado', None),
+                    'data':       v.get('dataHoraInicio', ''),
+                })
+            return jsonify({'votacoes': resultado, 'total': len(resultado)})
+        return jsonify({'votacoes': [], 'erro': f'HTTP {r.status_code}'})
+    except Exception as e:
+        return jsonify({'votacoes': [], 'erro': str(e)})
+
 @app.route('/analisar_destaque', methods=['POST'])
 @login_required
 def analisar_destaque():
@@ -1653,6 +1688,14 @@ def analisar_destaque():
             texto_doc = doc.get('texto', '')
             tipo_doc  = f"{doc.get('tipo','')} nº {doc.get('numero','')} de {doc.get('data','')}"
 
+    # Extrai e normaliza referências de leis da descrição do destaque
+    # Ex: "Lei 9.096/1995" → busca também "Lei 9.096, de" no texto
+    refs_leis = re.findall(r'[Ll]ei\s+(?:n[º°.]?\s*)?([\d.]+)[/\-](\d{4})', descricao)
+    nota_refs = ''
+    if refs_leis:
+        leis_str = ', '.join([f"Lei {n.replace('.','')}/{a}" for n, a in refs_leis])
+        nota_refs = f"\n**Leis referenciadas no destaque:** {leis_str} (busque por variações como 'Lei nº {refs_leis[0][0]}, de' no texto)"
+
     # Limita mas preserva mais texto para encontrar artigos no meio do documento
     texto_truncado = texto_doc[:12000] if texto_doc else ''
 
@@ -1660,7 +1703,7 @@ def analisar_destaque():
 
 **Proposição:** {projeto}
 **Destaque:** {numero}
-**Descrição do Destaque:** {descricao}
+**Descrição do Destaque:** {descricao}{nota_refs}
 **Documento analisado:** {tipo_doc}
 
 TEXTO COMPLETO DO DOCUMENTO:
@@ -1669,16 +1712,18 @@ TEXTO COMPLETO DO DOCUMENTO:
 ---
 INSTRUÇÕES PARA LOCALIZAR O TRECHO:
 
-A descrição do destaque menciona um artigo específico. Para localizá-lo no texto acima:
+A descrição do destaque menciona leis, artigos ou dispositivos específicos. Para localizá-los:
 
-1. Se o destaque menciona "art. X da Lei Y", procure no texto por frases como:
-   - "Art. 2º" ou "Art. 3º" etc. que ALTERAM esse artigo da lei Y
-   - Exemplo: "Art. 2º O art. 9º da Lei nº 14.193..." ou "dá nova redação ao art. 9º"
-   - O artigo do destaque está dentro de um artigo do PROJETO, não da lei original
+1. **Matching flexível de leis**: A descrição pode mencionar "Lei 9.096/1995" mas no texto pode aparecer como "Lei nº 9.096, de 19 de setembro de 1995" ou "Lei 9.096/95". São a mesma lei — use apenas o número para localizar.
 
-2. Se o destaque menciona "art. X do substitutivo/texto", procure diretamente "Art. Xº" no texto
+2. **Se o destaque menciona "art. X da Lei Y"**: procure no texto por:
+   - O artigo que ALTERA esse dispositivo: "Art. 2º O art. X da Lei nº Y..."
+   - Ou diretamente o artigo numerado no texto
+   - Extraia o trecho que está sendo destacado para votação em separado
 
-3. Copie o trecho LITERAL encontrado, incluindo caput e incisos relevantes
+3. **Se o destaque menciona "art. X do substitutivo/texto"**: procure diretamente "Art. Xº" no texto
+
+4. **Copie LITERALMENTE** o trecho encontrado, incluindo caput, incisos e parágrafos relevantes
 
 Gere a análise em HTML com EXATAMENTE este formato:
 
@@ -1686,7 +1731,7 @@ Gere a análise em HTML com EXATAMENTE este formato:
 <br>
 <p><strong>Trecho do Texto:</strong></p>
 <blockquote style="border-left:3px solid #1A6B3A; padding-left:10px; color:#333; font-style:italic;">
-[Trecho literal encontrado no documento. Se não localizar, explique qual artigo buscou e por quê não encontrou.]
+[Trecho literal encontrado. Se usou matching flexível, indique: "Lei X mencionada no destaque corresponde a 'Lei nº X, de DD de mês de AAAA' no documento". Se não localizar mesmo com busca flexível, explique qual número buscou.]
 </blockquote>
 <br>
 <p><strong>Análise:</strong><br>
