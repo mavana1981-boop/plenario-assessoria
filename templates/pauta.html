@@ -1338,6 +1338,9 @@
             </div>
             <div class="modal-footer">
               <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+              <button type="button" class="btn btn-outline-warning btn-sm" id="btn-debug-doc">
+                <i class="fas fa-bug me-1"></i>Debug texto
+              </button>
               <button type="button" class="btn btn-primary btn-sm" id="btn-confirmar-doc">
                 <i class="fas fa-robot me-1"></i>Analisar
               </button>
@@ -1348,6 +1351,49 @@
 
       const modal = new bootstrap.Modal(modalEl);
       modal.show();
+
+      document.getElementById('btn-debug-doc').addEventListener('click', async () => {
+        const sel = document.querySelector('input[name="doc_sel"]:checked');
+        if (!sel) return;
+        const docEscolhido = docs[parseInt(sel.value)];
+        const btnDbg = document.getElementById('btn-debug-doc');
+        btnDbg.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Analisando...';
+        btnDbg.disabled = true;
+        try {
+          const r = await fetch('/debug_destaque', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              url_documento: docEscolhido.url,
+              descricao: descricao
+            })
+          });
+          const j = await r.json();
+          const popup = window.open('', '_blank', 'width=900,height=700,scrollbars=yes');
+          popup.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+            <title>Debug Texto</title>
+            <style>body{font-family:monospace;font-size:13px;padding:20px;}
+            h3{color:#1A6B3A;} pre{background:#f5f5f5;padding:12px;white-space:pre-wrap;word-break:break-word;}
+            .ok{color:green;} .err{color:red;}</style></head><body>
+            <h3>Debug — ${docEscolhido.label}</h3>
+            <p><strong>Total de chars extraídos:</strong> ${j.total_chars}</p>
+            <p><strong>Refs de leis detectadas na descrição:</strong> ${JSON.stringify(j.refs_extraidas)}</p>
+            <p><strong>Resultado da busca:</strong><br>
+              ${(j.busca_info||[]).map(l => `<span class="${l.startsWith('✅')?'ok':'err'}">${l}</span>`).join('<br>')}
+            </p>
+            <h3>Primeiros 500 chars do documento:</h3>
+            <pre>${j.primeiros_500?.replace(/</g,'&lt;')}</pre>
+            <h3>Trecho relevante localizado:</h3>
+            <pre>${j.trecho_relevante?.replace(/</g,'&lt;')}</pre>
+          </body></html>`);
+          popup.document.close();
+        } catch(e) {
+          alert('Erro debug: ' + e.message);
+        } finally {
+          btnDbg.innerHTML = '<i class="fas fa-bug me-1"></i>Debug texto';
+          btnDbg.disabled = false;
+        }
+      });
 
       document.getElementById('btn-confirmar-doc').addEventListener('click', async () => {
         const sel = document.querySelector('input[name="doc_sel"]:checked');
