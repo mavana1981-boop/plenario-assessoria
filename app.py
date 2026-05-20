@@ -1461,14 +1461,17 @@ def buscar_documentos_disponiveis(id_proposicao):
             soup_tram = BeautifulSoup(r_tram.text, 'html.parser')
             for a in soup_tram.find_all('a', href=True):
                 href = a['href']
+                txt_link = a.get_text(strip=True).lower()
                 if 'codteor' not in href.lower():
                     continue
                 m_fn = re.search(r'filename=([^&"]+)', href)
                 fn   = (m_fn.group(1) if m_fn else '').upper()
-                if 'AVULSO' in fn:
+                # Pega avulso pelo texto do link OU pelo filename
+                eh_avulso = ('AVULSO' in fn and 'LEGISLACAO' not in fn) or txt_link in ('avulsos', 'avulso')
+                if eh_avulso:
                     url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
                     docs.append({
-                        'label':    '📄 Avulso (texto integral atualizado)',
+                        'label':    '📄 Avulso — Texto Integral da Proposição',
                         'url':      url_doc,
                         'filename': fn,
                         'tipo':     'Avulso',
@@ -1526,12 +1529,21 @@ def extrair_texto_documento(url_doc):
     headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
     url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
     try:
-        rp = requests.get(url_pdf, headers=headers, timeout=25)
-        if not rp.ok or 'pdf' not in rp.headers.get('Content-Type', '').lower():
+        logger.info(f"Baixando PDF: {url_pdf[:100]}")
+        rp = requests.get(url_pdf, headers=headers, timeout=60)
+        logger.info(f"PDF: status={rp.status_code}, CT={rp.headers.get('Content-Type','')}, size={len(rp.content)}")
+        if not rp.ok:
+            logger.warning(f"PDF retornou {rp.status_code}")
             return None
+        if 'pdf' not in rp.headers.get('Content-Type', '').lower():
+            logger.warning(f"Não é PDF: {rp.headers.get('Content-Type','')}")
+            # Tenta mesmo assim
+            if len(rp.content) < 1000:
+                return None
         with pdfplumber.open(BytesIO(rp.content)) as pdf:
+            n_pags = len(pdf.pages)
             texto = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
-        logger.info(f"Texto extraído: {len(texto)} chars de {len(pdf.pages) if hasattr(pdf, 'pages') else '?'} páginas")
+        logger.info(f"Texto extraído: {len(texto)} chars de {n_pags} páginas")
         return texto
     except Exception as e:
         logger.warning(f"Erro ao extrair texto: {e}")
@@ -1745,6 +1757,9 @@ def analisar_destaque():
     tipo_doc  = label_doc or 'documento selecionado'
     if url_doc_sel:
         texto_doc = extrair_texto_documento(url_doc_sel) or ''
+        if not texto_doc:
+            logger.warning(f"Texto não extraído de {url_doc_sel[:80]}")
+            return jsonify({'error': f'Não foi possível extrair o texto do documento selecionado. Tente outro documento ou use o botão 👁 Ver para verificar.'}), 400
     elif id_principal:
         doc = buscar_texto_prlp_ou_sbt(id_principal)
         if doc:
