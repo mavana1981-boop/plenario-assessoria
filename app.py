@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request, render_template, redirect, url_for, flash, make_response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_bcrypt import Bcrypt
-import sqlite3
+import sqlite3 
 import requests
 import json
 import logging
