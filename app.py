@@ -1533,42 +1533,59 @@ def extrair_texto_documento(url_doc):
         'Referer': 'https://www.camara.leg.br/',
     }
 
-    # Extrai codteor da URL para tentar URL alternativa
+    # Garante URL correta
+    if url_doc.startswith('http') and '/proposicoesWeb/' not in url_doc and 'codteor' in url_doc:
+        m_ct = re.search(r'codteor=(\d+)', url_doc)
+        if m_ct:
+            codteor = m_ct.group(1)
+            url_doc = f"https://www.camara.leg.br/proposicoesWeb/prop_mostrarintegra?codteor={codteor}"
+
     m_ct = re.search(r'codteor=(\d+)', url_doc)
     codteor = m_ct.group(1) if m_ct else None
 
-    # Lista de URLs para tentar em ordem
-    urls_tentar = []
-
-    # URL principal com tipo=PDF
     url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
-    urls_tentar.append(url_pdf)
-
-    # URLs alternativas se tiver codteor
+    urls_tentar = [url_pdf]
     if codteor:
-        urls_tentar += [
-            f"https://www.camara.leg.br/proposicoesWeb/prop_mostrarintegra?codteor={codteor}&tipo=PDF",
-            f"https://legis.senado.leg.br/sdleg-getter/documento?codteor={codteor}&tipo=PDF",
-        ]
+        urls_tentar.append(
+            f"https://www.camara.leg.br/proposicoesWeb/prop_mostrarintegra?codteor={codteor}&tipo=PDF"
+        )
 
     for url in urls_tentar:
         try:
-            logger.info(f"Tentando PDF: {url[:100]}")
+            logger.info(f"Tentando PDF: {url[:120]}")
             rp = requests.get(url, headers=headers, timeout=60, allow_redirects=True)
             logger.info(f"  → status={rp.status_code}, CT={rp.headers.get('Content-Type','')[:40]}, size={len(rp.content)}")
 
             if not rp.ok or len(rp.content) < 1000:
                 continue
-            if 'pdf' not in rp.headers.get('Content-Type', '').lower() and not rp.content[:4] == b'%PDF':
+            ct = rp.headers.get('Content-Type', '').lower()
+            if 'pdf' not in ct and not rp.content[:4] == b'%PDF':
                 continue
 
             with pdfplumber.open(BytesIO(rp.content)) as pdf:
                 n_pags = len(pdf.pages)
-                texto = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
+                partes = []
+                for page in pdf.pages:
+                    txt = page.extract_text()
+                    if txt:
+                        partes.append(txt)
+                    else:
+                        # Tenta extract_text com layout para PDFs complexos
+                        txt2 = page.extract_text(layout=True)
+                        if txt2:
+                            partes.append(txt2)
+                texto = '\n'.join(partes).strip()
+
             logger.info(f"  ✅ Extraído: {len(texto)} chars de {n_pags} páginas")
+
+            if len(texto) < 100 and n_pags > 0:
+                logger.warning(f"  ⚠️ PDF com poucas chars — pode ser PDF de imagem (escaneado)")
+                # Retorna aviso no texto para a IA
+                return f"[PDF escaneado — texto não extraível automaticamente. O documento tem {n_pags} páginas.]\n\nURL: {url}"
+
             return texto
         except Exception as e:
-            logger.warning(f"  ❌ Erro em {url[:60]}: {e}")
+            logger.warning(f"  ❌ Erro em {url[:80]}: {e}")
             continue
 
     logger.warning(f"Nenhuma URL funcionou para extrair PDF")
@@ -1782,9 +1799,15 @@ def analisar_destaque():
     tipo_doc  = label_doc or 'documento selecionado'
     if url_doc_sel:
         texto_doc = extrair_texto_documento(url_doc_sel) or ''
-        if not texto_doc:
-            logger.warning(f"Texto não extraído de {url_doc_sel[:80]}")
-            return jsonify({'error': f'Não foi possível extrair o texto do documento selecionado. Tente outro documento ou use o botão 👁 Ver para verificar.'}), 400
+        # Se PDF escaneado, tenta buscar texto do PRLP como fallback
+        if texto_doc.startswith('[PDF escaneado') and id_principal:
+            logger.info("PDF escaneado — tentando PRLP como fallback")
+            doc_fb = buscar_texto_prlp_ou_sbt(id_principal)
+            if doc_fb and doc_fb.get('texto'):
+                texto_doc = doc_fb['texto']
+                tipo_doc = f"{doc_fb.get('tipo','')} nº {doc_fb.get('numero','')} (fallback — documento selecionado era escaneado)"
+        if not texto_doc or texto_doc.startswith('[PDF escaneado'):
+            return jsonify({'error': f'O PDF selecionado ({label_doc}) não possui texto extraível (pode ser escaneado). Tente selecionar o PRLP ou PPP que geralmente têm texto digital.'}), 400
     elif id_principal:
         doc = buscar_texto_prlp_ou_sbt(id_principal)
         if doc:
