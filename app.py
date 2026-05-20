@@ -549,38 +549,6 @@ def fetch_pauta(evento_id, force_reload=False):
             pass
 
     try:
-        itens_raw = obter_itens_pauta(evento_id)
-        if not itens_raw:
-            raise ValueError("Scraper sem itens")
-
-        itens = []
-        vistos = set()
-        for ordem, item in enumerate(itens_raw, start=1):
-            id_p = item.get('id_principal')
-            if not id_p or id_p in vistos:
-                continue
-            vistos.add(id_p)
-            key = f"PROP_{id_p}"
-            itens.append({
-                'ordem':            str(ordem),
-                'id_principal':     id_p,
-                'projeto':          extrair_ref_pl(item['codigo'], item['ementa']),
-                'projeto_original': item['codigo'],
-                'ementa':           item['ementa'],
-                'autor':            item.get('autores', 'N/D'),
-                'relator':          item.get('relator', 'Não atribuído'),
-                'situacao':         item.get('situacao', 'N/D'),
-                'secao':            item.get('secao', 'N/D'),
-                'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
-                'orientacao':       notas.get(key, {}).get('orientacao', ''),
-                'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
-                'saved_by':         notas.get(key, {}).get('saved_by', ''),
-                'saved_at':         notas.get(key, {}).get('saved_at', ''),
-                'destaques_emendas': []
-            })
-
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
         # Busca data do evento
         data_ev = ''
         try:
@@ -590,13 +558,157 @@ def fetch_pauta(evento_id, force_reload=False):
         except Exception:
             pass
 
-        # Reordena pelo PDF
+        # PASSO 1: PDF define a ordem e quantidade — fonte de verdade
         ordem_oficial = buscar_ordem_oficial(evento_id, data_ev)
+        logger.info(f"PDF: {len(ordem_oficial)} itens extraídos")
+
+        # PASSO 2: API fornece os dados completos
+        itens_raw = obter_itens_pauta(evento_id)
+        if not itens_raw and not ordem_oficial:
+            raise ValueError("Sem dados do scraper e sem PDF")
+
+        # Monta índice da API por código normalizado
+        api_por_codigo = {}
+        for item in (itens_raw or []):
+            cod = _normalizar_codigo(item['codigo'])
+            api_por_codigo[cod] = item
+        logger.info(f"API: {len(api_por_codigo)} itens")
+
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        itens = []
+        vistos_ids = set()
+
         if ordem_oficial:
-            itens = reordenar_por_ordem_oficial(itens, ordem_oficial)
-            logger.info(f"✅ Itens reordenados pelo PDF.")
+            # PASSO 3a: PDF como base — cria item para cada código do PDF em ordem
+            codigos_pdf = sorted(ordem_oficial.keys(), key=lambda k: ordem_oficial[k])
+
+            for cod_pdf in codigos_pdf:
+                item_api = api_por_codigo.get(cod_pdf)
+
+                if item_api:
+                    id_p = item_api.get('id_principal')
+                    if id_p and id_p in vistos_ids:
+                        continue
+                    if id_p:
+                        vistos_ids.add(id_p)
+                    key = f"PROP_{id_p}" if id_p else ''
+                    itens.append({
+                        'ordem':            str(len(itens) + 1),
+                        'id_principal':     id_p or '',
+                        'projeto':          extrair_ref_pl(item_api['codigo'], item_api['ementa']),
+                        'projeto_original': item_api['codigo'],
+                        'ementa':           item_api['ementa'],
+                        'autor':            item_api.get('autores', 'N/D'),
+                        'relator':          item_api.get('relator', 'Não atribuído'),
+                        'situacao':         item_api.get('situacao', 'N/D'),
+                        'secao':            item_api.get('secao', 'N/D'),
+                        'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
+                        'orientacao':       notas.get(key, {}).get('orientacao', ''),
+                        'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
+                        'saved_by':         notas.get(key, {}).get('saved_by', ''),
+                        'saved_at':         notas.get(key, {}).get('saved_at', ''),
+                        'destaques_emendas': []
+                    })
+                else:
+                    # Item do PDF não encontrado na API — adiciona com dados mínimos
+                    logger.warning(f"PDF item '{cod_pdf}' não na API — adicionando com dados mínimos")
+                    # Tenta buscar dados via API diretamente pelo código
+                    ementa_min = ''
+                    autor_min  = 'N/D'
+                    relator_min = 'Não atribuído'
+                    id_p_min = ''
+                    try:
+                        partes = re.match(r'([A-Z]+)(\d+)/(\d{4})', cod_pdf)
+                        if partes:
+                            sigla, num, ano = partes.groups()
+                            r_min = requests.get(
+                                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla}&numero={num}&ano={ano}&itens=1",
+                                headers={'Accept': 'application/json'}, timeout=8
+                            )
+                            if r_min.ok:
+                                dados_min = r_min.json().get('dados', [])
+                                if dados_min:
+                                    ementa_min = dados_min[0].get('ementa', '')
+                                    id_p_min   = str(dados_min[0].get('id', ''))
+                    except Exception:
+                        pass
+
+                    codigo_display = cod_pdf.replace('/', ' ').replace('MPV', 'MPV ').replace('PL', 'PL ')
+                    itens.append({
+                        'ordem':            str(len(itens) + 1),
+                        'id_principal':     id_p_min,
+                        'projeto':          codigo_display.strip(),
+                        'projeto_original': codigo_display.strip(),
+                        'ementa':           ementa_min or f'Item {cod_pdf} — dados não disponíveis no momento',
+                        'autor':            autor_min,
+                        'relator':          relator_min,
+                        'situacao':         'Em votação',
+                        'secao':            'N/D',
+                        'resumo_materia':   '',
+                        'orientacao':       '',
+                        'resumo_parecer':   '',
+                        'saved_by':         '',
+                        'saved_at':         '',
+                        'destaques_emendas': []
+                    })
+
+            # Adiciona itens da API não encontrados no PDF ao final
+            for item in (itens_raw or []):
+                id_p = item.get('id_principal')
+                if not id_p or id_p in vistos_ids:
+                    continue
+                cod = _normalizar_codigo(item['codigo'])
+                if cod in ordem_oficial:
+                    continue  # já foi processado
+                vistos_ids.add(id_p)
+                key = f"PROP_{id_p}"
+                itens.append({
+                    'ordem':            str(len(itens) + 1),
+                    'id_principal':     id_p,
+                    'projeto':          extrair_ref_pl(item['codigo'], item['ementa']),
+                    'projeto_original': item['codigo'],
+                    'ementa':           item['ementa'],
+                    'autor':            item.get('autores', 'N/D'),
+                    'relator':          item.get('relator', 'Não atribuído'),
+                    'situacao':         item.get('situacao', 'N/D'),
+                    'secao':            item.get('secao', 'N/D'),
+                    'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
+                    'orientacao':       notas.get(key, {}).get('orientacao', ''),
+                    'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
+                    'saved_by':         notas.get(key, {}).get('saved_by', ''),
+                    'saved_at':         notas.get(key, {}).get('saved_at', ''),
+                    'destaques_emendas': []
+                })
+                logger.info(f"Item da API não no PDF adicionado ao final: {item['codigo']}")
+
         else:
-            logger.info("⚠️ PDF não disponível — mantendo ordem da API.")
+            # PASSO 3b: sem PDF, usa ordem da API
+            logger.info("⚠️ PDF não disponível — usando ordem da API.")
+            for item in (itens_raw or []):
+                id_p = item.get('id_principal')
+                if not id_p or id_p in vistos_ids:
+                    continue
+                vistos_ids.add(id_p)
+                key = f"PROP_{id_p}"
+                itens.append({
+                    'ordem':            str(len(itens) + 1),
+                    'id_principal':     id_p,
+                    'projeto':          extrair_ref_pl(item['codigo'], item['ementa']),
+                    'projeto_original': item['codigo'],
+                    'ementa':           item['ementa'],
+                    'autor':            item.get('autores', 'N/D'),
+                    'relator':          item.get('relator', 'Não atribuído'),
+                    'situacao':         item.get('situacao', 'N/D'),
+                    'secao':            item.get('secao', 'N/D'),
+                    'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
+                    'orientacao':       notas.get(key, {}).get('orientacao', ''),
+                    'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
+                    'saved_by':         notas.get(key, {}).get('saved_by', ''),
+                    'saved_at':         notas.get(key, {}).get('saved_at', ''),
+                    'destaques_emendas': []
+                })
+
+        logger.info(f"✅ Total final: {len(itens)} itens | PDF={len(ordem_oficial)} | API={len(api_por_codigo)}")
 
         c.execute('INSERT OR REPLACE INTO pauta_cache_db (evento_id, json_pauta, last_updated) VALUES (?, ?, ?)',
                   (evento_id, json.dumps(itens), now_str))
