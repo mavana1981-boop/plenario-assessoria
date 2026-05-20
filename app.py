@@ -1,9 +1,8 @@
-
 from flask import Flask, jsonify, request, render_template, redirect, url_for, flash, make_response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_bcrypt import Bcrypt
 import sqlite3
-import requests 
+import requests
 import json
 import logging
 from datetime import datetime, timedelta
@@ -1774,11 +1773,12 @@ def debug_destaque():
                     busca_info.append(f"❌ Não encontrado '{padrao}'")
 
     return jsonify({
-        'total_chars': len(texto_doc),
-        'primeiros_500': texto_doc[:500],
-        'refs_extraidas': refs_leis,
-        'busca_info': busca_info,
-        'trecho_relevante': texto_relevante[:2000] if texto_relevante else '(não localizado)',
+        'total_chars':      len(texto_doc),
+        'primeiros_500':    texto_doc[:500],
+        'texto_completo':   texto_doc[:50000],  # até 50k chars para o popup
+        'refs_extraidas':   refs_leis,
+        'busca_info':       busca_info,
+        'trecho_relevante': texto_relevante[:3000] if texto_relevante else '(não localizado)',
     })
 
 @app.route('/analisar_destaque', methods=['POST'])
@@ -1789,74 +1789,71 @@ def analisar_destaque():
     descricao    = data.get('descricao', '')
     numero       = data.get('numero', '')
     projeto      = data.get('projeto', '')
-    url_doc_sel  = data.get('url_documento', '')  # documento selecionado pelo usuário
+    url_doc_sel  = data.get('url_documento', '')
     label_doc    = data.get('label_documento', '')
+    trecho_manual = data.get('trecho_manual', '')  # trecho selecionado manualmente pelo usuário
 
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     groq_key   = os.environ.get('GROQ_API_KEY', '')
 
-    # Extrai texto do documento selecionado
-    texto_doc = ''
-    tipo_doc  = label_doc or 'documento selecionado'
-    if url_doc_sel:
-        texto_doc = extrair_texto_documento(url_doc_sel) or ''
-        # Se PDF escaneado, tenta buscar texto do PRLP como fallback
-        if texto_doc.startswith('[PDF escaneado') and id_principal:
-            logger.info("PDF escaneado — tentando PRLP como fallback")
-            doc_fb = buscar_texto_prlp_ou_sbt(id_principal)
-            if doc_fb and doc_fb.get('texto'):
-                texto_doc = doc_fb['texto']
-                tipo_doc = f"{doc_fb.get('tipo','')} nº {doc_fb.get('numero','')} (fallback — documento selecionado era escaneado)"
-        if not texto_doc or texto_doc.startswith('[PDF escaneado'):
-            return jsonify({'error': f'O PDF selecionado ({label_doc}) não possui texto extraível (pode ser escaneado). Tente selecionar o PRLP ou PPP que geralmente têm texto digital.'}), 400
-    elif id_principal:
-        doc = buscar_texto_prlp_ou_sbt(id_principal)
-        if doc:
-            texto_doc = doc.get('texto', '')
-            tipo_doc  = f"{doc.get('tipo','')} nº {doc.get('numero','')} de {doc.get('data','')}"
-
-    # Extrai referências de leis da descrição do destaque
-    refs_leis = re.findall(r'[Ll]ei\s+(?:n[º°.]?\s*)?([\d.]+)[/\-](\d{4})', descricao)
-    nota_refs = ''
-    if refs_leis:
-        leis_str = ', '.join([f"Lei {n.replace('.','')}/{a}" for n, a in refs_leis])
-        nota_refs = f"\n**Leis referenciadas no destaque:** {leis_str} (busque variações como 'Lei nº {refs_leis[0][0]}, de' no texto)"
-
-    # Pré-localiza trecho relevante com busca flexível
-    texto_relevante = ''
-    if texto_doc and refs_leis:
-        for num_lei, ano_lei in refs_leis:
-            num_limpo = num_lei.replace('.', '')
-            # Gera variações: 9096, 9.096, 9 096
-            variacoes = list(set([
-                num_limpo,
-                num_lei,
-                '.'.join([num_limpo[:-3], num_limpo[-3:]]) if len(num_limpo) >= 4 else num_limpo,
-            ]))
-            logger.info(f"Buscando Lei variações {variacoes} em {len(texto_doc)} chars")
-
-            melhor_pos = None
-            for variacao in variacoes:
-                padrao_flex = variacao.replace('.', r'[.\s]?')
-                for m in re.finditer(padrao_flex, texto_doc):
-                    pos = m.start()
-                    ctx = texto_doc[max(0,pos-20):pos+30]
-                    logger.info(f"  '{variacao}' pos={pos}: '{ctx}'")
-                    if melhor_pos is None or pos > melhor_pos:
-                        melhor_pos = pos  # última ocorrência
-
-            if melhor_pos is not None:
-                ini = max(0, melhor_pos - 500)
-                fim = min(len(texto_doc), melhor_pos + 4000)
-                texto_relevante = texto_doc[ini:fim]
-                logger.info(f"Trecho: {ini}-{fim} ({len(texto_relevante)} chars)")
-                break
-
-    if texto_relevante:
-        texto_truncado = texto_relevante
+    # Se trecho manual fornecido, usa diretamente sem extrair PDF
+    if trecho_manual:
+        texto_doc = trecho_manual
+        tipo_doc  = f"{label_doc} (trecho selecionado manualmente)"
+        texto_truncado = trecho_manual
+        refs_leis = re.findall(r'[Ll]ei\s+(?:n[º°.]?\s*)?([\d.]+)[/\-](\d{4})', descricao)
+        nota_refs = ''
+        if refs_leis:
+            nota_refs = f"\n**Leis referenciadas:** {', '.join([f'Lei {n}/{a}' for n,a in refs_leis])}"
     else:
-        logger.info("Lei não localizada — usando primeiros 12000 chars")
-        texto_truncado = texto_doc[:12000] if texto_doc else ''
+        # Extrai texto do documento selecionado
+        texto_doc = ''
+        tipo_doc  = label_doc or 'documento selecionado'
+        if url_doc_sel:
+            texto_doc = extrair_texto_documento(url_doc_sel) or ''
+            if texto_doc.startswith('[PDF escaneado') and id_principal:
+                logger.info("PDF escaneado — tentando PRLP como fallback")
+                doc_fb = buscar_texto_prlp_ou_sbt(id_principal)
+                if doc_fb and doc_fb.get('texto'):
+                    texto_doc = doc_fb['texto']
+                    tipo_doc = f"{doc_fb.get('tipo','')} nº {doc_fb.get('numero','')} (fallback)"
+            if not texto_doc or texto_doc.startswith('[PDF escaneado'):
+                return jsonify({'error': f'O PDF selecionado não possui texto extraível. Use o botão Debug para selecionar o trecho manualmente.'}), 400
+        elif id_principal:
+            doc = buscar_texto_prlp_ou_sbt(id_principal)
+            if doc:
+                texto_doc = doc.get('texto', '')
+                tipo_doc  = f"{doc.get('tipo','')} nº {doc.get('numero','')} de {doc.get('data','')}"
+
+        # Extrai refs de leis e localiza trecho relevante
+        refs_leis = re.findall(r'[Ll]ei\s+(?:n[º°.]?\s*)?([\d.]+)[/\-](\d{4})', descricao)
+        nota_refs = ''
+        if refs_leis:
+            leis_str = ', '.join([f"Lei {n.replace('.','')}/{a}" for n, a in refs_leis])
+            nota_refs = f"\n**Leis referenciadas no destaque:** {leis_str} (busque variações como 'Lei nº {refs_leis[0][0]}, de' no texto)"
+
+        texto_relevante = ''
+        if texto_doc and refs_leis:
+            for num_lei, ano_lei in refs_leis:
+                num_limpo = num_lei.replace('.', '')
+                variacoes = list(set([num_limpo, num_lei,
+                    '.'.join([num_limpo[:-3], num_limpo[-3:]]) if len(num_limpo) >= 4 else num_limpo]))
+                logger.info(f"Buscando Lei variações {variacoes} em {len(texto_doc)} chars")
+                melhor_pos = None
+                for variacao in variacoes:
+                    padrao_flex = variacao.replace('.', r'[.\s]?')
+                    for m in re.finditer(padrao_flex, texto_doc):
+                        pos = m.start()
+                        if melhor_pos is None or pos > melhor_pos:
+                            melhor_pos = pos
+                if melhor_pos is not None:
+                    ini = max(0, melhor_pos - 500)
+                    fim = min(len(texto_doc), melhor_pos + 4000)
+                    texto_relevante = texto_doc[ini:fim]
+                    logger.info(f"Trecho: {ini}-{fim} ({len(texto_relevante)} chars)")
+                    break
+
+        texto_truncado = texto_relevante if texto_relevante else texto_doc[:12000]
 
     prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
 
