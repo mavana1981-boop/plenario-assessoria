@@ -975,12 +975,17 @@
     const projeto     = btn.dataset.projeto;
     const autoria     = btn.dataset.autoria || '';
 
-    // Busca documentos disponíveis
+    if (!idPrincipal) {
+      alert('Erro: ID da proposição não encontrado no botão.');
+      return;
+    }
+
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
     try {
       const r = await fetch(`/listar_documentos/${idPrincipal}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status} ao listar documentos`);
       const j = await r.json();
       const docs = j.documentos || [];
 
