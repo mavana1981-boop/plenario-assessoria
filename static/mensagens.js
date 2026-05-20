@@ -66,7 +66,7 @@ async function gerarMensagem() {
       msg = `*${itemAtual.projeto}*\n\n${ementa}\n\nAutor: ${itemAtual.autor}\nRelator: ${itemAtual.relator}\n\n*OPOSIÇÃO ORIENTA: ${ori}*`;
 
     } else if (tipoAtual === 'aprovada_simbolica' || tipoAtual === 'aprovado_simbolico') {
-      msg = `✅ *APROVADO SIMBOLICAMENTE*\n\n*${itemAtual.projeto}*\n\n${ementa}\n\nAutor: ${itemAtual.autor}\nRelator: ${itemAtual.relator}`;
+      msg = `O *${itemAtual.projeto}* foi *APROVADO SIMBOLICAMENTE*`;
 
     } else if (tipoAtual === 'votacao') {
       if (!obj) { document.getElementById('preview-msg-container').style.display = 'none'; return; }
@@ -75,7 +75,7 @@ async function gerarMensagem() {
       msg = `‼ *ATENÇÃO* ‼\n\n*VOTAÇÃO NOMINAL EM PLENÁRIO AGORA*\n\n_${obj}_ - ${itemAtual.projeto}${linhaDesc}\n\n${ementa}\n\n*OPOSIÇÃO ORIENTA: ${ori}*`;
 
     } else if (tipoAtual === 'iniciada') {
-      msg = `🟢 *INICIADA A ORDEM DO DIA*\n\nA sessão deliberativa foi iniciada no Plenário da Câmara dos Deputados.\n\nAcompanhe a pauta em tempo real.`;
+      msg = `🟢 *INICIADA A ORDEM DO DIA*\n\nA Ordem do Dia foi iniciada no Plenário da Câmara dos Deputados.`;
 
     } else if (tipoAtual === 'encerrada_ordem') {
       msg = `🔴 *ENCERRADA A ORDEM DO DIA*\n\nA Ordem do Dia foi encerrada no Plenário da Câmara dos Deputados.`;
@@ -85,9 +85,9 @@ async function gerarMensagem() {
 
     } else if (tipoAtual === 'aprovado_nominal' || tipoAtual === 'rejeitado_nominal') {
       const v = window._votosAtuais || {sim:'', nao:'', abs:'', resultado: tipoAtual === 'aprovado_nominal' ? 'APROVADO' : 'REJEITADO'};
-      const linhaAbs = v.abs ? `\nAbstenção: ${v.abs}` : '';
+      const linhaAbs = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
       const emoji = tipoAtual === 'aprovado_nominal' ? '✅' : '❌';
-      msg = `${emoji} *${v.resultado}*\n\n*${itemAtual.projeto}*\n\n${ementa}\n\nSIM: ${v.sim} votos\nNÃO: ${v.nao} votos${linhaAbs}\n\nAutor: ${itemAtual.autor}\nRelator: ${itemAtual.relator}`;
+      msg = `${emoji} O *${itemAtual.projeto}* foi *${v.resultado}*\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
     }
 
     if (msg) {
