@@ -1631,37 +1631,64 @@ Responda APENAS com o JSON, sem ```json, sem comentários."""
 @app.route('/buscar_votos/<int:evento_id>')
 @login_required
 def buscar_votos(evento_id):
-    """Busca resultado das votações do evento via API da Câmara."""
-    headers = {'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}
+    """Busca resultado das votações do evento via scraping."""
+    from bs4 import BeautifulSoup
+    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
+    votacoes = []
     try:
-        # API de votações por evento
+        # Tenta API aberta primeiro
         r = requests.get(
             f"https://dadosabertos.camara.leg.br/api/v2/votacoes?idEvento={evento_id}&itens=50&ordem=DESC",
-            headers=headers, timeout=12
+            headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'},
+            timeout=10
         )
         if r.ok:
-            votacoes = r.json().get('dados', [])
-            resultado = []
-            for v in votacoes:
-                desc = v.get('descricao', '') or ''
-                prop = v.get('proposicaoObjeto', '') or ''
-                sim  = v.get('totalVotosSim', '')
-                nao  = v.get('totalVotosNao', '')
-                abs_ = v.get('totalVotosAbstencao', '') or ''
-                resultado.append({
+            for v in r.json().get('dados', []):
+                votacoes.append({
                     'id':         v.get('id', ''),
-                    'descricao':  desc,
-                    'proposicao': prop,
-                    'sim':        sim,
-                    'nao':        nao,
-                    'abstencao':  abs_,
+                    'descricao':  v.get('descricao', '') or '',
+                    'proposicao': v.get('proposicaoObjeto', '') or '',
+                    'sim':        v.get('totalVotosSim', ''),
+                    'nao':        v.get('totalVotosNao', ''),
+                    'abstencao':  v.get('totalVotosAbstencao', '') or 0,
                     'aprovado':   v.get('aprovado', None),
-                    'data':       v.get('dataHoraInicio', ''),
                 })
-            return jsonify({'votacoes': resultado, 'total': len(resultado)})
-        return jsonify({'votacoes': [], 'erro': f'HTTP {r.status_code}'})
+            if votacoes:
+                return jsonify({'votacoes': votacoes, 'total': len(votacoes)})
     except Exception as e:
-        return jsonify({'votacoes': [], 'erro': str(e)})
+        logger.warning(f"API votações falhou: {e}")
+
+    # Fallback: scraping da página de votações
+    try:
+        url = f"https://www.camara.leg.br/presenca-comissoes/votacao-portal?reuniao={evento_id}"
+        r2 = requests.get(url, headers=headers, timeout=12)
+        if r2.ok:
+            soup = BeautifulSoup(r2.text, 'html.parser')
+            # Procura dados de votação na página
+            for row in soup.find_all('tr'):
+                cols = row.find_all('td')
+                if len(cols) < 3:
+                    continue
+                texto = ' '.join(c.get_text(strip=True) for c in cols)
+                # Procura padrões SIM/NAO
+                m_sim = re.search(r'(\d+)\s*sim', texto, re.IGNORECASE)
+                m_nao = re.search(r'(\d+)\s*n[ãa]o', texto, re.IGNORECASE)
+                if m_sim or m_nao:
+                    votacoes.append({
+                        'descricao':  cols[0].get_text(strip=True) if cols else '',
+                        'proposicao': texto[:80],
+                        'sim':        m_sim.group(1) if m_sim else '',
+                        'nao':        m_nao.group(1) if m_nao else '',
+                        'abstencao':  '',
+                    })
+    except Exception as e:
+        logger.warning(f"Scraping votações falhou: {e}")
+
+    if votacoes:
+        return jsonify({'votacoes': votacoes, 'total': len(votacoes)})
+
+    # Se nada funcionar, retorna vazio para o frontend pedir manual
+    return jsonify({'votacoes': [], 'total': 0, 'info': 'Votos não encontrados automaticamente — insira manualmente.'})
 
 @app.route('/analisar_destaque', methods=['POST'])
 @login_required
@@ -1688,16 +1715,36 @@ def analisar_destaque():
             texto_doc = doc.get('texto', '')
             tipo_doc  = f"{doc.get('tipo','')} nº {doc.get('numero','')} de {doc.get('data','')}"
 
-    # Extrai e normaliza referências de leis da descrição do destaque
-    # Ex: "Lei 9.096/1995" → busca também "Lei 9.096, de" no texto
+    # Extrai referências de leis da descrição do destaque
     refs_leis = re.findall(r'[Ll]ei\s+(?:n[º°.]?\s*)?([\d.]+)[/\-](\d{4})', descricao)
     nota_refs = ''
     if refs_leis:
         leis_str = ', '.join([f"Lei {n.replace('.','')}/{a}" for n, a in refs_leis])
-        nota_refs = f"\n**Leis referenciadas no destaque:** {leis_str} (busque por variações como 'Lei nº {refs_leis[0][0]}, de' no texto)"
+        nota_refs = f"\n**Leis referenciadas no destaque:** {leis_str} (busque variações como 'Lei nº {refs_leis[0][0]}, de' no texto)"
 
-    # Limita mas preserva mais texto para encontrar artigos no meio do documento
-    texto_truncado = texto_doc[:12000] if texto_doc else ''
+    # Pré-localiza trecho relevante no texto completo
+    # Se a lei for mencionada, extrai os 3000 chars ao redor
+    texto_relevante = ''
+    if texto_doc and refs_leis:
+        for num_lei, ano_lei in refs_leis:
+            num_limpo = num_lei.replace('.', '')
+            # Busca variações do número da lei no texto
+            for padrao in [num_limpo, num_lei, f"{num_limpo[:1]}.{num_limpo[1:]}"]:
+                m = re.search(re.escape(padrao), texto_doc)
+                if m:
+                    ini = max(0, m.start() - 200)
+                    fim = min(len(texto_doc), m.end() + 3000)
+                    texto_relevante = texto_doc[ini:fim]
+                    logger.info(f"Trecho relevante localizado para Lei {padrao}: {len(texto_relevante)} chars")
+                    break
+            if texto_relevante:
+                break
+
+    # Usa trecho relevante se encontrado, senão usa início do documento
+    if texto_relevante:
+        texto_truncado = texto_relevante
+    else:
+        texto_truncado = texto_doc[:12000] if texto_doc else ''
 
     prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
 
