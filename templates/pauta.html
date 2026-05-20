@@ -762,10 +762,10 @@
     {
       ordem:        "{{ item.ordem }}",
       id_principal: "{{ item.id_principal }}",
-      projeto:      "{{ item.projeto }}",
-      ementa:       "{{ item.ementa | replace('"','') | replace('\n',' ')  }}",
-      autor:        "{{ item.autor | replace('"','') }}",
-      relator:      "{{ item.relator | replace('"','') }}",
+      projeto:      "{{ item.projeto | replace('"','') | replace("'", '') }}",
+      ementa:       {{ item.ementa | replace('"','') | replace("'", '') | replace('\n',' ') | replace('\r','') | tojson }},
+      autor:        "{{ item.autor | replace('"','') | replace("'", '') }}",
+      relator:      "{{ item.relator | replace('"','') | replace("'", '') }}",
       orientacao:   "{{ item.orientacao or '' }}"
     }{% if not loop.last %},{% endif %}
     {% endfor %}
@@ -1457,7 +1457,7 @@ const ITENS_ORI = [
   {
     ordem:        "{{ item.ordem }}",
     id_principal: "{{ item.id_principal }}",
-    projeto:      "{{ item.projeto }}",
+    projeto:      "{{ item.projeto | replace('"','') | replace("'",'') }}",
     ementa:       {{ item.ementa | tojson }}
   }{% if not loop.last %},{% endif %}
   {% endfor %}
