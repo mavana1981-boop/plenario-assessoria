@@ -358,7 +358,10 @@
                       </tr>
                       <tr>
                         <td colspan="6">
-                          <label class="form-label small"><strong>Resumo/Nota Técnica — {{ d.numero }}:</strong></label>
+                          <div id="analise-destaque-{{ d.numero | replace(' ','-') }}" class="mt-1" style="display:none;">
+                            <div class="p-2 border rounded bg-light" style="font-size:0.85rem;"></div>
+                          </div>
+                          <label class="form-label small mt-2"><strong>Resumo/Nota Técnica — {{ d.numero }}:</strong></label>
                           <textarea id="editor-resumo-destaque-{{ item.ordem }}-{{ loop.index }}" class="editable-field" data-numero="{{ d.numero }}">{% if d.resumo_nota %}{{ d.resumo_nota | safe }}{% endif %}</textarea>
                         </td>
                       </tr>
@@ -1198,38 +1201,43 @@
           const j2 = await r2.json();
 
           if (j2.resumo) {
-            // Encontra o container de resultado — funciona tanto na tabela estática quanto dinâmica
-            let containerDiv = null;
             const numKey = numero.replace(/\s/g,'-');
-            containerDiv = document.getElementById(`analise-destaque-${numKey}`);
+            let containerDiv = document.getElementById('analise-destaque-' + numKey);
             if (!containerDiv) {
-              // Fallback: procura no nextElementSibling do tr pai
               const tr = btn.closest('tr');
               const nextTr = tr ? tr.nextElementSibling : null;
               if (nextTr) containerDiv = nextTr.querySelector('[id^="analise-destaque-"]');
             }
             if (!containerDiv) {
-              // Último fallback: insere após o botão
               containerDiv = document.createElement('div');
-              containerDiv.className = 'mt-2 p-2 border rounded bg-light';
-              btn.parentElement.appendChild(containerDiv);
+              containerDiv.className = 'mt-2';
+              btn.closest('td').appendChild(containerDiv);
             }
+
             const innerDiv = containerDiv.querySelector('div') || containerDiv;
-            // Escapa backticks do resumo para não quebrar template literals
-            const resumoSeguro = j2.resumo.replace(/`/g, '&#96;');
-            innerDiv.innerHTML = resumoSeguro +
-              `<div class="mt-2">
-                <button class="btn btn-sm btn-dark" onclick="gerarQuadroDTQ(this)"
-                  data-projeto="${projeto.replace(/"/g,"'")}"
-                  data-numero="${numero}"
-                  data-autoria="${autoria.replace(/"/g,"'")}"
-                  data-descricao="${descricao.replace(/"/g,"'")}"
-                  data-analise="${j2.resumo.replace(/"/g,"'").replace(/\n/g,' ').replace(/`/g,"'")}"
-                  data-url-doc="${docEscolhido.url}"
-                  data-label-doc="${docEscolhido.label.replace(/"/g,"'")}">
-                  🖼️ Criar Quadro do DTQ
-                </button>
-              </div>`;
+
+            // Insere resultado via DOM — sem template literal
+            innerDiv.innerHTML = '';
+            const divResumo = document.createElement('div');
+            divResumo.innerHTML = j2.resumo;
+            innerDiv.appendChild(divResumo);
+
+            const divBotao = document.createElement('div');
+            divBotao.className = 'mt-2';
+            const btnQuadro = document.createElement('button');
+            btnQuadro.className = 'btn btn-sm btn-dark';
+            btnQuadro.textContent = '🖼️ Criar Quadro do DTQ';
+            btnQuadro.onclick = function() { gerarQuadroDTQ(this); };
+            btnQuadro.dataset.projeto   = projeto;
+            btnQuadro.dataset.numero    = numero;
+            btnQuadro.dataset.autoria   = autoria;
+            btnQuadro.dataset.descricao = descricao;
+            btnQuadro.dataset.analise   = j2.resumo.replace(/\n/g,' ');
+            btnQuadro.dataset.urlDoc    = docEscolhido.url;
+            btnQuadro.dataset.labelDoc  = docEscolhido.label;
+            divBotao.appendChild(btnQuadro);
+            innerDiv.appendChild(divBotao);
+
             containerDiv.style.display = 'block';
           } else {
             alert('Erro: ' + (j2.error || 'Resposta vazia'));
