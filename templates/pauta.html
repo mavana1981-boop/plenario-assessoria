@@ -130,7 +130,7 @@
         </span><br>
         <strong><i class="fas fa-align-left me-1"></i>Descrição:</strong> {{ evento.descricao | default('Sem descrição') }}<br>
         <strong><i class="fas fa-map-marker-alt me-1"></i>Local:</strong> {{ evento.local | default('N/D') }}<br>
-        <strong><i class="fas fa-save me-1"></i>Último salvamento:</strong>
+        <strong><i class="fas fa-save me-1"></i>Última atualização:</strong>
         <span id="ultimo-salvamento">
           {% if last_updated %}{{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}{% else %}Nenhum registro{% endif %}
         </span>
@@ -384,6 +384,35 @@
                 </small>
               </div>
 
+              <!-- ASSESSOR RESPONSÁVEL -->
+              <div class="mt-2 d-flex align-items-center gap-2" id="resp-container-{{ item.ordem }}">
+                {% set resp = assessores | selectattr('username', 'equalto', item.responsavel_username) | list %}
+                {% if resp %}
+                  {% set r = resp[0] %}
+                  {% if r.foto %}
+                    <img src="{{ r.foto }}" alt="{{ r.nome }}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
+                  {% else %}
+                    <span class="badge bg-secondary" style="font-size:0.8rem;"><i class="fas fa-user me-1"></i></span>
+                  {% endif %}
+                  <small class="text-muted">Responsável: <strong>{{ r.nome }}</strong></small>
+                {% endif %}
+                {% if eh_responsavel_pauta %}
+                  <select class="form-select form-select-sm w-auto select-responsavel"
+                          data-item-key="PROP_{{ item.id_principal }}"
+                          data-evento-id="{{ evento_id }}"
+                          style="font-size:0.8rem; max-width:180px;">
+                    <option value="">— Atribuir assessor —</option>
+                    {% for a in assessores %}
+                      {% if a.username not in ['admin','PL','NOVO'] %}
+                        <option value="{{ a.username }}" {% if a.username == item.responsavel_username %}selected{% endif %}>
+                          {{ a.nome }}
+                        </option>
+                      {% endif %}
+                    {% endfor %}
+                  </select>
+                {% endif %}
+              </div>
+
               <!-- DESTAQUES -->
               <div class="mt-4">
                 <div class="d-flex align-items-center gap-2 mb-2">
@@ -545,7 +574,49 @@
           }
         }
       })();
-      // Buscar destaques — delegação para funcionar com collapse dinâmico
+      // Atribuição de assessor responsável
+      document.addEventListener('change', async (e) => {
+        const sel = e.target.closest('.select-responsavel');
+        if (!sel) return;
+        const itemKey  = sel.dataset.itemKey;
+        const eventoId = sel.dataset.eventoId;
+        const username = sel.value;
+        try {
+          const r = await fetch('/atribuir_responsavel', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({item_key: itemKey, evento_id: eventoId, responsavel_username: username})
+          });
+          const j = await r.json();
+          if (j.error) { alert(j.error); return; }
+          // Atualiza foto e nome ao lado do select
+          const container = sel.closest('[id^="resp-container-"]');
+          if (container && username) {
+            const r2 = await fetch('/listar_assessores');
+            const j2 = await r2.json();
+            const assessor = j2.assessores.find(a => a.username === username);
+            if (assessor) {
+              let fotoEl = container.querySelector('img, .badge-user');
+              if (!fotoEl) {
+                fotoEl = document.createElement('img');
+                fotoEl.style.cssText = 'width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid #ccc;';
+                container.insertBefore(fotoEl, container.firstChild);
+              }
+              if (assessor.foto && fotoEl.tagName === 'IMG') {
+                fotoEl.src = assessor.foto;
+                fotoEl.alt = assessor.nome;
+              }
+              let nomeEl = container.querySelector('small');
+              if (!nomeEl) {
+                nomeEl = document.createElement('small');
+                nomeEl.className = 'text-muted';
+                container.insertBefore(nomeEl, sel);
+              }
+              nomeEl.innerHTML = 'Responsável: <strong>' + assessor.nome + '</strong>';
+            }
+          }
+        } catch(err) { alert('Erro: ' + err.message); }
+      });
       document.addEventListener('click', async (e) => {
         const btn = e.target.closest('.btn-buscar-destaques');
         if (!btn) return;
