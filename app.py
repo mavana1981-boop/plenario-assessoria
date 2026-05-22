@@ -1056,27 +1056,27 @@ def view_pauta(evento_id):
     # Monta set de projetos na pauta atual (códigos normalizados)
     projetos_pauta = set()
     for item in itens:
-        proj = item.get('projeto_original') or item.get('projeto', '')
+        proj = item.get('projeto_original') or item.get('projeto') or ''
         projetos_pauta.add(_normalizar_codigo(proj.split(' ao ')[0].strip()))
 
     # Detecta remanescentes e REQs com PL na mesma pauta
     for item in itens:
-        saved_at = item.get('saved_at', '') or ''
-        tem_analise = bool(item.get('resumo_materia', '').strip())
+        saved_at    = item.get('saved_at') or ''
+        resumo      = item.get('resumo_materia') or ''
+        tem_analise = bool(resumo.strip())
         item['eh_remanescente'] = False
         item['req_pl_mesmo_dia'] = False
 
         if tem_analise and saved_at and data_evento:
-            data_salvo = str(saved_at)[:10]  # '2026-05-19'
+            data_salvo = str(saved_at)[:10]
             if data_salvo and data_salvo != data_evento:
                 item['eh_remanescente'] = True
 
         # REQ com PL referenciado na mesma pauta
-        proj = item.get('projeto', '') or ''
+        proj = item.get('projeto') or ''
         if ' ao ' in proj and tem_analise:
-            # Ex: "REQ 123/2026 ao PL 456/2023"
             ref_parte = proj.split(' ao ')[1].strip()
-            ref_norm = _normalizar_codigo(ref_parte)
+            ref_norm  = _normalizar_codigo(ref_parte)
             if ref_norm in projetos_pauta:
                 item['req_pl_mesmo_dia'] = True
 
