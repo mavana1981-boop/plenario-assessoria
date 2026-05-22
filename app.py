@@ -210,23 +210,23 @@ with app.app_context():
         c.execute('''CREATE TABLE IF NOT EXISTS orientacoes_grupo (
             id SERIAL PRIMARY KEY,
             evento_id INTEGER,
+            id_principal TEXT,
             grupo TEXT,
-            item_key TEXT,
             orientacao TEXT,
             comentario TEXT,
             saved_by TEXT,
             saved_at TEXT,
-            UNIQUE(evento_id, grupo, item_key))''' if USE_POSTGRES else
+            UNIQUE(evento_id, id_principal, grupo))''' if USE_POSTGRES else
             '''CREATE TABLE IF NOT EXISTS orientacoes_grupo (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             evento_id INTEGER,
+            id_principal TEXT,
             grupo TEXT,
-            item_key TEXT,
             orientacao TEXT,
             comentario TEXT,
             saved_by TEXT,
             saved_at TEXT,
-            UNIQUE(evento_id, grupo, item_key))''')
+            UNIQUE(evento_id, id_principal, grupo))''')
 
         # Migrações seguras
         migrações = [
@@ -1159,19 +1159,17 @@ def save_item():
 
         # Exporta orientação automaticamente para o quadro de orientações da bancada do usuário
         if orientacao:
-            grupo        = current_user.categoria  # 'minoria', 'oposicao', 'geral', etc.
-            item_key_ori = f"{id_principal}|{grupo}"
-            c.execute('SELECT item_key FROM orientacoes_grupo WHERE evento_id=? AND grupo=? AND item_key=?',
-                      (evento_id, grupo, item_key_ori))
-            existe = c.fetchone()
-            if existe:
-                c.execute('UPDATE orientacoes_grupo SET orientacao=?, saved_by=?, saved_at=? WHERE evento_id=? AND grupo=? AND item_key=?',
-                          (orientacao, saved_by, now_str, evento_id, grupo, item_key_ori))
-            else:
-                c.execute('INSERT INTO orientacoes_grupo (evento_id, grupo, item_key, orientacao, comentario, saved_by, saved_at) VALUES (?,?,?,?,?,?,?)',
-                          (evento_id, grupo, item_key_ori, orientacao, '', saved_by, now_str))
-            conn.commit()
-            logger.info(f"Orientação exportada: {grupo} / {id_principal} → {orientacao}")
+            grupo = current_user.categoria  # 'minoria', 'oposicao', etc.
+            # Usa a mesma rota/lógica do quadro de orientações para consistência
+            try:
+                c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
+                             (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
+                             VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                          (evento_id, str(id_principal), grupo, orientacao, '', saved_by, now_str))
+                conn.commit()
+                logger.info(f"Orientação exportada: {grupo} / {id_principal} → {orientacao}")
+            except Exception as e:
+                logger.warning(f"Erro ao exportar orientação: {e}")
 
         # Atualiza o cache persistente
         c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
@@ -2945,23 +2943,11 @@ def get_orientacoes(evento_id):
     conn = get_conn()
     c    = conn.cursor()
     try:
-        c.execute('''SELECT item_key, grupo, orientacao, comentario, saved_by, saved_at
+        c.execute('''SELECT id_principal, grupo, orientacao, comentario, saved_by, saved_at
                      FROM orientacoes_grupo WHERE evento_id=?''', (evento_id,))
         rows = c.fetchall()
-        result = []
-        for r in rows:
-            item_key = r[0] or ''
-            # item_key pode ser "id_principal|grupo" ou só "id_principal"
-            id_principal = item_key.split('|')[0] if '|' in item_key else item_key
-            result.append({
-                'id_principal': id_principal,
-                'item_key':     item_key,
-                'grupo':        r[1],
-                'orientacao':   r[2],
-                'comentario':   r[3],
-                'saved_by':     r[4],
-                'saved_at':     r[5]
-            })
+        result = [{'id_principal': r[0], 'grupo': r[1], 'orientacao': r[2],
+                   'comentario': r[3], 'saved_by': r[4], 'saved_at': r[5]} for r in rows]
     except Exception as e:
         logger.warning(f"Erro get_orientacoes: {e}")
         result = []
