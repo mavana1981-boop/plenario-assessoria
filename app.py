@@ -1698,29 +1698,41 @@ def set_responsavel_pauta(user_id):
 @app.route('/atribuir_responsavel', methods=['POST'])
 @login_required
 def atribuir_responsavel():
-    """Atribui um assessor responsável a uma proposição. Só o responsável pela pauta pode fazer isso."""
+    """Atribui assessor a uma proposição. Admin e responsáveis pela pauta podem fazer isso."""
     conn = get_conn()
     c = conn.cursor()
-    # Verifica se o usuário atual é responsável pela pauta
-    c.execute('SELECT responsavel_pauta FROM users WHERE id=?', (current_user.id,))
-    row = c.fetchone()
-    if not row or not row[0]:
+    try:
+        # Admin sempre pode; outros só se forem responsável pela pauta
+        if current_user.role.lower() != 'admin':
+            c.execute('SELECT responsavel_pauta FROM users WHERE id=?', (current_user.id,))
+            row = c.fetchone()
+            if not row or not row[0]:
+                return jsonify({'error': 'Apenas o responsável pela pauta pode atribuir proposições'}), 403
+
+        data = request.get_json()
+        item_key             = data.get('item_key', '')
+        evento_id            = data.get('evento_id', '')
+        responsavel_username = data.get('responsavel_username', '')
+
+        if not item_key:
+            return jsonify({'error': 'item_key obrigatório'}), 400
+
+        # Verifica se nota já existe
+        c.execute('SELECT item_key FROM notas WHERE item_key=?', (item_key,))
+        existe = c.fetchone()
+        if existe:
+            c.execute('UPDATE notas SET responsavel_username=? WHERE item_key=?',
+                      (responsavel_username, item_key))
+        else:
+            c.execute('INSERT INTO notas (item_key, evento_id, responsavel_username) VALUES (?,?,?)',
+                      (item_key, evento_id, responsavel_username))
+        conn.commit()
+        return jsonify({'message': 'Responsável atribuído!'})
+    except Exception as e:
+        logger.error(f"Erro atribuir_responsavel: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
         conn.close()
-        return jsonify({'error': 'Apenas o responsável pela pauta pode atribuir proposições'}), 403
-    data = request.get_json()
-    item_key  = data.get('item_key', '')
-    evento_id = data.get('evento_id', '')
-    responsavel_username = data.get('responsavel_username', '')
-    if not item_key:
-        conn.close()
-        return jsonify({'error': 'item_key obrigatório'}), 400
-    c.execute('''INSERT INTO notas (item_key, evento_id, responsavel_username)
-                 VALUES (?, ?, ?)
-                 ON CONFLICT(item_key) DO UPDATE SET responsavel_username=excluded.responsavel_username''',
-              (item_key, evento_id, responsavel_username))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Responsável atribuído!'})
 
 @app.route('/listar_assessores')
 @login_required
