@@ -243,15 +243,22 @@ with app.app_context():
             ('marcelo.oliveira',  'Assessor Plenário','minoria',  'Marcelo Oliveira'),
         ]
         for _un, _cat, _role_cat, _nome in _usuarios:
+            _role_val = 'Admin' if _un == 'admin' else 'Assessor'
             try:
                 if USE_POSTGRES:
                     c.execute('INSERT INTO users (username, password, role, categoria, nome_display) VALUES (%s,%s,%s,%s,%s) ON CONFLICT (username) DO NOTHING',
-                              (_un, _pw123, _un if _un == 'admin' else 'Assessor', _cat, _nome))
+                              (_un, _pw123, _role_val, _cat, _nome))
                 else:
                     c.execute('INSERT OR IGNORE INTO users (username, password, role, categoria, nome_display) VALUES (?,?,?,?,?)',
-                              (_un, _pw123, _un if _un == 'admin' else 'Assessor', _cat, _nome))
+                              (_un, _pw123, _role_val, _cat, _nome))
             except Exception:
                 pass
+
+        # Garante que o admin tenha role='Admin' caso já exista com role errado
+        try:
+            c.execute("UPDATE users SET role='Admin' WHERE username='admin' AND role != 'Admin'")
+        except Exception:
+            pass
 
         _cats = {
             'vinicius.scheffel': 'oposicao', 'lianna.barros': 'oposicao',
@@ -1002,7 +1009,7 @@ def view_pauta(evento_id):
         logger.warning(f"Erro ao carregar assessores: {e}")
         assessores = []
     # Verifica se usuário atual é responsável pela pauta
-    eh_responsavel_pauta = any(a['username'] == current_user.username and a['responsavel_pauta'] for a in assessores) or current_user.role == 'Admin'
+    eh_responsavel_pauta = any(a['username'] == current_user.username and a['responsavel_pauta'] for a in assessores) or current_user.role.lower() == 'admin'
     # Adiciona responsavel_username em cada item
     notas_db = load_notas()
     for item in itens:
@@ -1600,7 +1607,7 @@ def trocar_senha():
 @app.route('/admin/usuarios')
 @login_required
 def admin_usuarios():
-    if current_user.role != 'Admin':
+    if current_user.role.lower() != 'admin':
         flash('Acesso restrito.', 'error')
         return redirect(url_for('selecionar_data'))
     conn = get_conn()
@@ -1613,7 +1620,7 @@ def admin_usuarios():
 @app.route('/admin/usuarios/add', methods=['POST'])
 @login_required
 def add_usuario():
-    if current_user.role != 'Admin':
+    if current_user.role.lower() != 'admin':
         return jsonify({'error': 'Acesso negado'}), 403
     data      = request.get_json()
     username  = data.get('username', '').strip()
@@ -1639,7 +1646,7 @@ def add_usuario():
 @app.route('/admin/usuarios/foto/<int:user_id>', methods=['POST'])
 @login_required
 def upload_foto_usuario(user_id):
-    if current_user.role != 'Admin':
+    if current_user.role.lower() != 'admin':
         return jsonify({'error': 'Acesso negado'}), 403
     if 'foto' not in request.files:
         return jsonify({'error': 'Nenhum arquivo enviado'}), 400
@@ -1662,7 +1669,7 @@ def upload_foto_usuario(user_id):
 @app.route('/admin/usuarios/nome_display/<int:user_id>', methods=['POST'])
 @login_required
 def update_nome_display(user_id):
-    if current_user.role != 'Admin':
+    if current_user.role.lower() != 'admin':
         return jsonify({'error': 'Acesso negado'}), 403
     data = request.get_json()
     nome = data.get('nome_display', '').strip()
@@ -1676,7 +1683,7 @@ def update_nome_display(user_id):
 @app.route('/admin/usuarios/responsavel_pauta/<int:user_id>', methods=['POST'])
 @login_required
 def set_responsavel_pauta(user_id):
-    if current_user.role != 'Admin':
+    if current_user.role.lower() != 'admin':
         return jsonify({'error': 'Acesso negado'}), 403
     data = request.get_json()
     ativo = 1 if data.get('ativo') else 0
@@ -2542,7 +2549,7 @@ def debug_ordem(evento_id):
 @app.route('/admin/limpar_todo_cache', methods=['POST'])
 @login_required
 def limpar_todo_cache():
-    if current_user.role != 'Admin':
+    if current_user.role.lower() != 'admin':
         return jsonify({'error': 'Acesso negado'}), 403
     conn = get_conn()
     c = conn.cursor()
@@ -2796,7 +2803,7 @@ def get_orientacoes(evento_id):
 @app.route('/admin/reset_todas_senhas', methods=['POST'])
 @login_required
 def reset_todas_senhas():
-    if current_user.role != 'Admin':
+    if current_user.role.lower() != 'admin':
         return jsonify({'error': 'Acesso negado'}), 403
     nova_hash = bcrypt.generate_password_hash('123').decode('utf-8')
     conn = get_conn()
@@ -2810,7 +2817,7 @@ def reset_todas_senhas():
 @app.route('/admin/usuarios/reset_senha', methods=['POST'])
 @login_required
 def reset_senha():
-    if current_user.role != 'Admin':
+    if current_user.role.lower() != 'admin':
         return jsonify({'error': 'Acesso negado'}), 403
     data       = request.get_json()
     user_id    = data.get('user_id')
@@ -2828,7 +2835,7 @@ def reset_senha():
 @app.route('/admin/usuarios/update_categoria', methods=['POST'])
 @login_required
 def update_categoria():
-    if current_user.role != 'Admin':
+    if current_user.role.lower() != 'admin':
         return jsonify({'error': 'Acesso negado'}), 403
     data      = request.get_json()
     user_id   = data.get('user_id')
@@ -2843,7 +2850,7 @@ def update_categoria():
 @app.route('/admin/usuarios/delete/<int:user_id>', methods=['POST'])
 @login_required
 def delete_usuario(user_id):
-    if current_user.role != 'Admin':
+    if current_user.role.lower() != 'admin':
         return jsonify({'error': 'Acesso negado'}), 403
     if user_id == current_user.id:
         return jsonify({'error': 'Não pode excluir sua própria conta'}), 400
