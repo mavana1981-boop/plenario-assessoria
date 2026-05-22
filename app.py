@@ -1159,17 +1159,35 @@ def save_item():
                   (prop_key, evento_id, ordem, data.get('resumo_materia', ''), orientacao, data.get('resumo_parecer', ''), saved_by, now_str))
         conn.commit()
 
-        # Exporta orientação automaticamente para o quadro de orientações da bancada do usuário
+        # Exporta orientação para o quadro da bancada do assessor responsável pelo item
         if orientacao:
-            grupo = current_user.categoria  # 'minoria', 'oposicao', etc.
-            # Usa a mesma rota/lógica do quadro de orientações para consistência
             try:
-                c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
-                             (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
-                             VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                          (evento_id, str(id_principal), grupo, orientacao, '', saved_by, now_str))
-                conn.commit()
-                logger.info(f"Orientação exportada: {grupo} / {id_principal} → {orientacao}")
+                # Busca o assessor responsável pelo item
+                c.execute('SELECT responsavel_username FROM notas WHERE item_key=?', (prop_key,))
+                row_resp = c.fetchone()
+                responsavel = (row_resp[0] if row_resp else '') or ''
+
+                # Se não tem responsável atribuído, usa a categoria do usuário logado
+                if not responsavel:
+                    grupo = current_user.categoria
+                else:
+                    # Busca a categoria do assessor responsável
+                    c.execute('SELECT categoria FROM users WHERE username=?', (responsavel,))
+                    row_cat = c.fetchone()
+                    grupo = (row_cat[0] if row_cat else '') or current_user.categoria
+
+                # Só exporta para grupos válidos do quadro
+                grupos_validos = {'minoria', 'oposicao', 'PL', 'NOVO'}
+                if grupo not in grupos_validos:
+                    grupo = current_user.categoria  # fallback para categoria do usuário logado
+
+                if grupo in grupos_validos:
+                    c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
+                                 (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                              (evento_id, str(id_principal), grupo, orientacao, '', saved_by, now_str))
+                    conn.commit()
+                    logger.info(f"Orientação exportada: grupo={grupo} / {id_principal} → {orientacao} (responsavel={responsavel or 'usuário logado'})")
             except Exception as e:
                 logger.warning(f"Erro ao exportar orientação: {e}")
 
