@@ -1765,10 +1765,10 @@ def listar_assessores():
     try:
         conn = get_conn()
         c = conn.cursor()
-        c.execute('SELECT username, nome_display, foto FROM users WHERE categoria != ? ORDER BY nome_display, username', ('restrito',))
+        c.execute('SELECT username, nome_display, foto, categoria FROM users WHERE categoria != ? ORDER BY nome_display, username', ('restrito',))
         rows = c.fetchall()
         conn.close()
-        assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or ''} for r in rows]
+        assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or '', 'categoria': r[3] or 'geral'} for r in rows]
         return jsonify({'assessores': assessores})
     except Exception as e:
         logger.error(f"Erro listar_assessores: {e}")
