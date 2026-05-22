@@ -260,17 +260,12 @@
       });
       const j = await r.json();
       if (j.error) return showMsg(j.error, 'danger');
-      // Desmarca outros se ativou
-      if (ativo) {
-        document.querySelectorAll('[id^="resp-"]').forEach(el => {
-          if (el.id !== 'resp-' + id) el.checked = false;
-        });
-        document.querySelectorAll('tr.is-responsavel').forEach(tr => tr.classList.remove('is-responsavel'));
-        document.getElementById('row-' + id)?.classList.add('is-responsavel');
-      } else {
-        document.getElementById('row-' + id)?.classList.remove('is-responsavel');
+      const row = document.getElementById('row-' + id);
+      if (row) {
+        if (ativo) row.classList.add('is-responsavel');
+        else row.classList.remove('is-responsavel');
       }
-      showMsg(ativo ? 'Responsável pela pauta definido!' : 'Responsabilidade removida.');
+      showMsg(ativo ? 'Responsável pela pauta adicionado!' : 'Responsabilidade removida.');
     }
 
     async function limparTodoCache() {
