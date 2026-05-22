@@ -3062,11 +3062,35 @@ def handle_exception(e):
 @login_required
 def diagnostico():
     """Diagnóstico do banco de dados."""
-    return jsonify({
+    conn = get_conn()
+    c = conn.cursor()
+    resultado = {
         'use_postgres': USE_POSTGRES,
         'database_url_set': bool(os.environ.get('DATABASE_URL')),
         'pg_params_host': PG_PARAMS.get('host', 'N/A') if USE_POSTGRES else 'SQLite'
-    })
+    }
+    try:
+        # Colunas da tabela orientacoes_grupo
+        if USE_POSTGRES:
+            c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='orientacoes_grupo' ORDER BY ordinal_position")
+        else:
+            c.execute("PRAGMA table_info(orientacoes_grupo)")
+        cols = c.fetchall()
+        resultado['orientacoes_colunas'] = [r[0] for r in cols]
+
+        # Últimas orientações salvas
+        c.execute("SELECT * FROM orientacoes_grupo ORDER BY id DESC LIMIT 5")
+        rows = c.fetchall()
+        resultado['orientacoes_ultimas'] = [list(r) for r in rows]
+
+        # Contagem
+        c.execute("SELECT COUNT(*) FROM orientacoes_grupo")
+        resultado['orientacoes_total'] = c.fetchone()[0]
+    except Exception as e:
+        resultado['erro_diagnostico'] = str(e)
+    finally:
+        conn.close()
+    return jsonify(resultado)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
