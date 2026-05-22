@@ -9,11 +9,15 @@
   <style>
     body { background: #f8f9fa; font-family: 'Segoe UI', sans-serif; }
     .header { background: #fff; border-bottom: 3px solid #1A6B3A; padding: 0.6rem 0; }
-    .badge-oposicao  { background: #0D2B5E; color: #fff; }
-    .badge-minoria   { background: #1A6B3A; color: #fff; }
-    .badge-restrito  { background: #7B5C00; color: #fff; }
-    .badge-admin     { background: #555; color: #fff; }
-    .badge-geral     { background: #aaa; color: #fff; }
+    .badge-oposicao { background: #0D2B5E; color: #fff; }
+    .badge-minoria  { background: #1A6B3A; color: #fff; }
+    .badge-restrito { background: #7B5C00; color: #fff; }
+    .badge-admin    { background: #555; color: #fff; }
+    .badge-geral    { background: #aaa; color: #fff; }
+    .foto-usuario { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 2px solid #dee2e6; cursor: pointer; }
+    .foto-placeholder { width: 40px; height: 40px; border-radius: 50%; background: #dee2e6; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 1.1rem; color: #888; border: 2px dashed #ccc; }
+    .resp-badge { background: #1A6B3A; color: #fff; font-size: 0.7rem; padding: 2px 6px; border-radius: 10px; }
+    tr.is-responsavel { background: #f0f8f0 !important; }
   </style>
 </head>
 <body>
@@ -38,24 +42,29 @@
     </div>
   </div>
 
-  <div class="container my-4" style="max-width:800px;">
+  <div class="container my-4" style="max-width:1000px;">
     <div id="msg-container"></div>
 
+    <!-- Adicionar usuário -->
     <div class="card mb-4">
       <div class="card-header bg-success text-white">
         <i class="fas fa-user-plus me-2"></i>Adicionar Usuário
       </div>
       <div class="card-body">
         <div class="row g-2 align-items-end">
-          <div class="col-md-3">
+          <div class="col-md-2">
             <label class="form-label small mb-1">Usuário</label>
             <input type="text" id="new-username" class="form-control form-control-sm" placeholder="ex: joao.silva">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small mb-1">Nome exibição</label>
+            <input type="text" id="new-nome" class="form-control form-control-sm" placeholder="ex: João Silva">
           </div>
           <div class="col-md-2">
             <label class="form-label small mb-1">Senha</label>
             <input type="text" id="new-password" class="form-control form-control-sm" placeholder="Senha inicial">
           </div>
-          <div class="col-md-3">
+          <div class="col-md-2">
             <label class="form-label small mb-1">Perfil</label>
             <select id="new-role" class="form-select form-select-sm">
               <option value="Assessor Plenário">Assessor Plenário</option>
@@ -64,18 +73,18 @@
               <option value="Admin">Admin</option>
             </select>
           </div>
-          <div class="col-md-3">
+          <div class="col-md-2">
             <label class="form-label small mb-1">Categoria</label>
             <select id="new-categoria" class="form-select form-select-sm">
               <option value="geral">Geral</option>
               <option value="minoria">Minoria</option>
               <option value="oposicao">Oposição</option>
-              <option value="restrito">Restrito (só orientação)</option>
+              <option value="restrito">Restrito</option>
               <option value="admin">Admin</option>
             </select>
           </div>
           <div class="col-md-1">
-            <button class="btn btn-success btn-sm w-100" onclick="addUsuario()" title="Adicionar usuário">
+            <button class="btn btn-success btn-sm w-100" onclick="addUsuario()" title="Adicionar">
               <i class="fas fa-plus"></i>
             </button>
           </div>
@@ -83,6 +92,7 @@
       </div>
     </div>
 
+    <!-- Tabela de usuários -->
     <div class="card">
       <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <span><i class="fas fa-users me-2"></i>Usuários cadastrados</span>
@@ -92,43 +102,78 @@
         <table class="table table-sm table-hover mb-0 align-middle">
           <thead class="table-light">
             <tr>
-              <th>#</th>
-              <th>Usuário</th>
+              <th style="width:50px">Foto</th>
+              <th>Usuário / Nome</th>
               <th>Perfil</th>
               <th>Categoria</th>
-              <th>Nova Senha</th>
-              <th></th>
+              <th style="width:110px">Resp. Pauta</th>
+              <th style="width:160px">Nova Senha</th>
+              <th style="width:40px"></th>
             </tr>
           </thead>
           <tbody id="tabela-usuarios">
             {% for u in usuarios %}
-            <tr id="row-{{ u[0] }}">
-              <td class="text-muted">{{ u[0] }}</td>
-              <td><strong>{{ u[1] }}</strong></td>
-              <td><span class="badge bg-secondary">{{ u[2] }}</span></td>
+            {# u = (id, username, role, categoria, nome_display, foto, responsavel_pauta) #}
+            <tr id="row-{{ u[0] }}" class="{{ 'is-responsavel' if u[6] else '' }}">
+              <!-- Foto -->
               <td>
-                <select class="form-select form-select-sm" style="width:120px;"
+                <div onclick="triggerFotoUpload({{ u[0] }})" title="Clique para alterar a foto">
+                  {% if u[5] %}
+                    <img src="{{ u[5] }}" class="foto-usuario" id="foto-{{ u[0] }}" alt="{{ u[1] }}">
+                  {% else %}
+                    <div class="foto-placeholder" id="foto-{{ u[0] }}"><i class="fas fa-user"></i></div>
+                  {% endif %}
+                </div>
+                <input type="file" id="file-{{ u[0] }}" accept="image/*" style="display:none"
+                       onchange="uploadFoto({{ u[0] }}, this)">
+              </td>
+              <!-- Usuário / Nome -->
+              <td>
+                <div><strong>{{ u[1] }}</strong></div>
+                <div class="d-flex align-items-center gap-1 mt-1">
+                  <input type="text" class="form-control form-control-sm" style="max-width:140px;font-size:0.78rem;"
+                         id="nome-{{ u[0] }}" value="{{ u[4] or u[1] }}" placeholder="Nome exibição">
+                  <button class="btn btn-outline-secondary btn-sm py-0 px-1" onclick="saveNome({{ u[0] }})" title="Salvar nome">
+                    <i class="fas fa-check" style="font-size:0.7rem;"></i>
+                  </button>
+                </div>
+              </td>
+              <!-- Perfil -->
+              <td><span class="badge bg-secondary">{{ u[2] }}</span></td>
+              <!-- Categoria -->
+              <td>
+                <select class="form-select form-select-sm" style="width:110px;"
                         onchange="updateCategoria({{ u[0] }}, this.value)">
                   {% for cat in ['geral','minoria','oposicao','restrito','admin'] %}
                   <option value="{{ cat }}" {% if u[3] == cat %}selected{% endif %}>{{ cat }}</option>
                   {% endfor %}
                 </select>
               </td>
+              <!-- Responsável pela pauta -->
+              <td class="text-center">
+                <div class="form-check form-switch d-flex justify-content-center">
+                  <input class="form-check-input" type="checkbox" role="switch"
+                         id="resp-{{ u[0] }}"
+                         {% if u[6] %}checked{% endif %}
+                         onchange="setResponsavelPauta({{ u[0] }}, this.checked)"
+                         title="Marcar como responsável pela pauta">
+                </div>
+                {% if u[6] %}
+                  <small class="resp-badge mt-1 d-block text-center">Responsável</small>
+                {% endif %}
+              </td>
+              <!-- Nova senha -->
               <td>
-                <div class="input-group input-group-sm" style="width:180px;">
-                  <input type="text" id="pwd-{{ u[0] }}" class="form-control form-control-sm"
-                         placeholder="Nova senha">
-                  <button class="btn btn-outline-warning btn-sm"
-                          onclick="redefinirSenha({{ u[0] }}, '{{ u[1] }}')"
-                          title="Redefinir senha">
+                <div class="input-group input-group-sm">
+                  <input type="text" id="pwd-{{ u[0] }}" class="form-control form-control-sm" placeholder="Nova senha">
+                  <button class="btn btn-outline-warning btn-sm" onclick="redefinirSenha({{ u[0] }}, '{{ u[1] }}')" title="Redefinir senha">
                     <i class="fas fa-key"></i>
                   </button>
                 </div>
               </td>
+              <!-- Excluir -->
               <td>
-                <button class="btn btn-danger btn-sm py-0 px-2"
-                        onclick="deleteUsuario({{ u[0] }}, '{{ u[1] }}')"
-                        title="Excluir usuário">
+                <button class="btn btn-danger btn-sm py-0 px-2" onclick="deleteUsuario({{ u[0] }}, '{{ u[1] }}')" title="Excluir">
                   <i class="fas fa-trash-alt"></i>
                 </button>
               </td>
@@ -139,15 +184,17 @@
       </div>
     </div>
 
+    <!-- Legenda -->
     <div class="mt-3 p-3 bg-light rounded small text-muted">
       <strong>Categorias:</strong>
-      <span class="badge badge-minoria ms-1">minoria</span> acesso completo, log "usuário - minoria" &nbsp;|&nbsp;
-      <span class="badge badge-oposicao ms-1">oposicao</span> acesso completo, log "usuário - oposicao" &nbsp;|&nbsp;
-      <span class="badge badge-restrito ms-1">restrito</span> só botão Orientações &nbsp;|&nbsp;
-      <span class="badge badge-geral ms-1">geral</span> acesso padrão sem categoria no log
+      <span class="badge badge-minoria ms-1">minoria</span> acesso completo &nbsp;|&nbsp;
+      <span class="badge badge-oposicao ms-1">oposicao</span> acesso completo &nbsp;|&nbsp;
+      <span class="badge badge-restrito ms-1">restrito</span> só orientações &nbsp;|&nbsp;
+      <span class="badge badge-geral ms-1">geral</span> acesso padrão<br>
+      <strong class="mt-1 d-block">Responsável pela pauta:</strong> usuário que pode atribuir proposições a assessores. Foto aparece na pauta ao lado do nome.
     </div>
 
-    <div class="mt-3 d-flex gap-2">
+    <div class="mt-3 d-flex gap-2 flex-wrap">
       <button class="btn btn-warning btn-sm" onclick="resetTodasSenhas()">
         <i class="fas fa-key me-2"></i>Redefinir TODAS as senhas para 123
       </button>
@@ -160,13 +207,74 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     function showMsg(msg, type='success') {
-      document.getElementById('msg-container').innerHTML =
-        `<div class="alert alert-${type} alert-dismissible fade show py-2">${msg}
-         <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+      const el = document.getElementById('msg-container');
+      el.innerHTML = '<div class="alert alert-' + type + ' alert-dismissible fade show py-2">' + msg +
+        '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
+      el.scrollIntoView({behavior:'smooth'});
+    }
+
+    function triggerFotoUpload(id) {
+      document.getElementById('file-' + id).click();
+    }
+
+    async function uploadFoto(id, input) {
+      if (!input.files[0]) return;
+      const formData = new FormData();
+      formData.append('foto', input.files[0]);
+      const r = await fetch('/admin/usuarios/foto/' + id, {method: 'POST', body: formData});
+      const j = await r.json();
+      if (j.error) return showMsg(j.error, 'danger');
+      // Atualiza preview
+      const reader = new FileReader();
+      reader.onload = e => {
+        const el = document.getElementById('foto-' + id);
+        if (el.tagName === 'IMG') {
+          el.src = e.target.result;
+        } else {
+          const img = document.createElement('img');
+          img.src = e.target.result;
+          img.className = 'foto-usuario';
+          img.id = 'foto-' + id;
+          img.alt = '';
+          el.replaceWith(img);
+        }
+      };
+      reader.readAsDataURL(input.files[0]);
+      showMsg('Foto atualizada!');
+    }
+
+    async function saveNome(id) {
+      const nome = document.getElementById('nome-' + id).value.trim();
+      const r = await fetch('/admin/usuarios/nome_display/' + id, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({nome_display: nome})
+      });
+      const j = await r.json();
+      showMsg(j.message || j.error, j.error ? 'danger' : 'success');
+    }
+
+    async function setResponsavelPauta(id, ativo) {
+      const r = await fetch('/admin/usuarios/responsavel_pauta/' + id, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ativo})
+      });
+      const j = await r.json();
+      if (j.error) return showMsg(j.error, 'danger');
+      // Desmarca outros se ativou
+      if (ativo) {
+        document.querySelectorAll('[id^="resp-"]').forEach(el => {
+          if (el.id !== 'resp-' + id) el.checked = false;
+        });
+        document.querySelectorAll('tr.is-responsavel').forEach(tr => tr.classList.remove('is-responsavel'));
+        document.getElementById('row-' + id)?.classList.add('is-responsavel');
+      } else {
+        document.getElementById('row-' + id)?.classList.remove('is-responsavel');
+      }
+      showMsg(ativo ? 'Responsável pela pauta definido!' : 'Responsabilidade removida.');
     }
 
     async function limparTodoCache() {
-      if (!confirm('Limpar cache de TODAS as pautas? As próximas aberturas reprocessarão tudo.')) return;
+      if (!confirm('Limpar cache de TODAS as pautas?')) return;
       const r = await fetch('/admin/limpar_todo_cache', {method: 'POST'});
       const j = await r.json();
       showMsg(j.message || j.error, j.error ? 'danger' : 'success');
@@ -180,30 +288,29 @@
     }
 
     async function redefinirSenha(id, nome) {
-      const pwd = document.getElementById(`pwd-${id}`).value.trim();
+      const pwd = document.getElementById('pwd-' + id).value.trim();
       if (!pwd) return showMsg('Digite a nova senha antes de confirmar.', 'warning');
-      if (!confirm(`Redefinir senha de "${nome}" para "${pwd}"?`)) return;
+      if (!confirm('Redefinir senha de "' + nome + '" para "' + pwd + '"?')) return;
       const r = await fetch('/admin/usuarios/reset_senha', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({user_id: id, nova_senha: pwd})
       });
       const j = await r.json();
       if (j.error) return showMsg(j.error, 'danger');
-      document.getElementById(`pwd-${id}`).value = '';
-      showMsg(`Senha de ${nome} redefinida com sucesso!`);
+      document.getElementById('pwd-' + id).value = '';
+      showMsg('Senha de ' + nome + ' redefinida!');
     }
 
     async function addUsuario() {
       const username  = document.getElementById('new-username').value.trim();
+      const nome      = document.getElementById('new-nome').value.trim();
       const password  = document.getElementById('new-password').value.trim();
       const role      = document.getElementById('new-role').value;
       const categoria = document.getElementById('new-categoria').value;
       if (!username || !password) return showMsg('Preencha usuário e senha.', 'warning');
       const r = await fetch('/admin/usuarios/add', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({username, password, role, categoria})
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username, password, role, categoria, nome_display: nome || username})
       });
       const j = await r.json();
       if (j.error) return showMsg(j.error, 'danger');
@@ -213,8 +320,7 @@
 
     async function updateCategoria(id, categoria) {
       const r = await fetch('/admin/usuarios/update_categoria', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({user_id: id, categoria})
       });
       const j = await r.json();
@@ -222,11 +328,11 @@
     }
 
     async function deleteUsuario(id, nome) {
-      if (!confirm(`Remover usuário "${nome}"?`)) return;
-      const r = await fetch(`/admin/usuarios/delete/${id}`, {method: 'POST'});
+      if (!confirm('Remover usuário "' + nome + '"?')) return;
+      const r = await fetch('/admin/usuarios/delete/' + id, {method: 'POST'});
       const j = await r.json();
       if (j.error) return showMsg(j.error, 'danger');
-      document.getElementById(`row-${id}`)?.remove();
+      document.getElementById('row-' + id)?.remove();
       showMsg(j.message);
     }
   </script>
