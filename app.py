@@ -1059,13 +1059,44 @@ def view_pauta(evento_id):
         proj = item.get('projeto_original') or item.get('projeto') or ''
         projetos_pauta.add(_normalizar_codigo(proj.split(' ao ')[0].strip()))
 
+    # Monta índice de itens por código normalizado para herança de análise
+    itens_por_codigo = {}
+    for item in itens:
+        proj = item.get('projeto_original') or item.get('projeto') or ''
+        cod = _normalizar_codigo(proj.split(' ao ')[0].strip())
+        itens_por_codigo[cod] = item
+
+    # Herança de análise: REQ ao PL X → PL X herda análise do REQ
+    for item in itens:
+        proj = item.get('projeto') or ''
+        if ' ao ' not in proj:
+            continue
+        resumo_req = (item.get('resumo_materia') or '').strip()
+        if not resumo_req:
+            continue
+        # Extrai código do PL referenciado
+        ref_parte = proj.split(' ao ')[1].strip()
+        ref_norm  = _normalizar_codigo(ref_parte)
+        pl_item   = itens_por_codigo.get(ref_norm)
+        if pl_item and not (pl_item.get('resumo_materia') or '').strip():
+            # PL está na pauta e não tem análise própria — herda do REQ
+            pl_item['resumo_materia']  = resumo_req
+            pl_item['orientacao']      = item.get('orientacao') or pl_item.get('orientacao') or ''
+            pl_item['resumo_parecer']  = item.get('resumo_parecer') or pl_item.get('resumo_parecer') or ''
+            pl_item['saved_by']        = item.get('saved_by') or ''
+            pl_item['saved_at']        = item.get('saved_at') or ''
+            pl_item['req_pl_mesmo_dia'] = True  # marca para exibir aviso
+            logger.info(f"Herança de análise: {proj} → {ref_parte}")
+
     # Detecta remanescentes e REQs com PL na mesma pauta
     for item in itens:
         saved_at    = item.get('saved_at') or ''
         resumo      = item.get('resumo_materia') or ''
         tem_analise = bool(resumo.strip())
-        item['eh_remanescente'] = False
-        item['req_pl_mesmo_dia'] = False
+        if 'eh_remanescente' not in item:
+            item['eh_remanescente'] = False
+        if 'req_pl_mesmo_dia' not in item:
+            item['req_pl_mesmo_dia'] = False
 
         if tem_analise and saved_at and data_evento:
             data_salvo = str(saved_at)[:10]
@@ -1074,7 +1105,7 @@ def view_pauta(evento_id):
 
         # REQ com PL referenciado na mesma pauta
         proj = item.get('projeto') or ''
-        if ' ao ' in proj and tem_analise:
+        if ' ao ' in proj and tem_analise and not item['req_pl_mesmo_dia']:
             ref_parte = proj.split(' ao ')[1].strip()
             ref_norm  = _normalizar_codigo(ref_parte)
             if ref_norm in projetos_pauta:
