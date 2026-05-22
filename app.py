@@ -46,6 +46,20 @@ with app.app_context():
             _conn.commit()
         except Exception:
             pass
+        # Migração: foto e nome_display
+        for _col, _def in [('foto TEXT', 'NULL'), ('nome_display TEXT', 'NULL'), ('responsavel_pauta INTEGER DEFAULT 0', '0')]:
+            try:
+                _c.execute(f'ALTER TABLE users ADD COLUMN {_col}')
+                _conn.commit()
+            except Exception:
+                pass
+        # Migração: responsavel nas notas
+        try:
+            _c.execute('ALTER TABLE notas ADD COLUMN responsavel_username TEXT')
+            _conn.commit()
+        except Exception:
+            pass
+        # Migração: last_updated na pauta_cache_db já existe
         _c.execute('''CREATE TABLE IF NOT EXISTS notas (
             item_key TEXT PRIMARY KEY,
             evento_id INTEGER,
@@ -108,16 +122,17 @@ def load_notas():
     conn = sqlite3.connect(DB)
     c = conn.cursor()
     try:
-        c.execute('SELECT item_key, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at FROM notas')
+        c.execute('SELECT item_key, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at, responsavel_username FROM notas')
         notas = {row[0]: {'resumo_materia': row[1], 'orientacao': row[2], 'resumo_parecer': row[3],
-                          'saved_by': row[4] or '', 'saved_at': row[5] or ''}
+                          'saved_by': row[4] or '', 'saved_at': row[5] or '',
+                          'responsavel_username': row[6] or ''}
                  for row in c.fetchall()}
     except Exception:
-        # Coluna pode não existir ainda — tenta sem saved_by/saved_at
         try:
-            c.execute('SELECT item_key, resumo_materia, orientacao, resumo_parecer FROM notas')
+            c.execute('SELECT item_key, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at FROM notas')
             notas = {row[0]: {'resumo_materia': row[1], 'orientacao': row[2], 'resumo_parecer': row[3],
-                              'saved_by': '', 'saved_at': ''}
+                              'saved_by': row[4] or '', 'saved_at': row[5] or '',
+                              'responsavel_username': ''}
                      for row in c.fetchall()}
         except Exception:
             notas = {}
@@ -824,10 +839,27 @@ def view_pauta(evento_id):
     except Exception:
         evento = {'id': evento_id, 'dataHoraInicio': 'N/D', 'situacao': 'N/D', 'descricao': 'Sessão Deliberativa', 'local': 'Plenário'}
 
+    # Carrega assessores com foto e responsavel_pauta
+    conn2 = sqlite3.connect(DB)
+    c2 = conn2.cursor()
+    c2.execute('SELECT username, nome_display, foto, responsavel_pauta FROM users WHERE role != "restrito" ORDER BY nome_display, username')
+    rows_ass = c2.fetchall()
+    conn2.close()
+    assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or '', 'responsavel_pauta': bool(r[3])} for r in rows_ass]
+    # Verifica se usuário atual é responsável pela pauta
+    eh_responsavel_pauta = any(a['username'] == current_user.username and a['responsavel_pauta'] for a in assessores) or current_user.role == 'Admin'
+    # Adiciona responsavel_username em cada item
+    notas_db = carregar_notas()
+    for item in itens:
+        key = f"PROP_{item.get('id_principal','')}"
+        item['responsavel_username'] = notas_db.get(key, {}).get('responsavel_username', '')
+
     return render_template('pauta.html', evento_id=evento_id, evento=evento, itens=itens,
                            from_cache=from_cache, user_role=current_user.role,
                            user_categoria=current_user.categoria,
-                           last_updated=last_updated, last_saved_user=last_saved_user)
+                           last_updated=last_updated, last_saved_user=last_saved_user,
+                           assessores=assessores,
+                           eh_responsavel_pauta=eh_responsavel_pauta)
 
 @app.route('/save_item', methods=['POST'])
 @login_required
@@ -1418,7 +1450,7 @@ def admin_usuarios():
         return redirect(url_for('selecionar_data'))
     conn = sqlite3.connect(DB)
     c = conn.cursor()
-    c.execute('SELECT id, username, role, categoria FROM users ORDER BY id DESC')
+    c.execute('SELECT id, username, role, categoria, nome_display, foto, responsavel_pauta FROM users ORDER BY id DESC')
     usuarios = c.fetchall()
     conn.close()
     return render_template('admin_usuarios.html', usuarios=usuarios)
@@ -1433,20 +1465,113 @@ def add_usuario():
     password  = data.get('password', '').strip()
     role      = data.get('role', 'Assessor').strip()
     categoria = data.get('categoria', 'geral').strip()
+    nome_display = data.get('nome_display', '').strip()
     if not username or not password:
         return jsonify({'error': 'Usuário e senha obrigatórios'}), 400
     hashed = bcrypt.generate_password_hash(password).decode('utf-8')
     conn = sqlite3.connect(DB)
     c = conn.cursor()
     try:
-        c.execute('INSERT INTO users (username, password, role, categoria) VALUES (?, ?, ?, ?)',
-                  (username, hashed, role, categoria))
+        c.execute('INSERT INTO users (username, password, role, categoria, nome_display) VALUES (?, ?, ?, ?, ?)',
+                  (username, hashed, role, categoria, nome_display or username))
         conn.commit()
         return jsonify({'message': 'Usuário criado!'})
     except sqlite3.IntegrityError:
         return jsonify({'error': 'Usuário já existe'}), 409
     finally:
         conn.close()
+
+@app.route('/admin/usuarios/foto/<int:user_id>', methods=['POST'])
+@login_required
+def upload_foto_usuario(user_id):
+    if current_user.role != 'Admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    if 'foto' not in request.files:
+        return jsonify({'error': 'Nenhum arquivo enviado'}), 400
+    f = request.files['foto']
+    if not f.filename:
+        return jsonify({'error': 'Arquivo inválido'}), 400
+    ext = f.filename.rsplit('.', 1)[-1].lower()
+    if ext not in ('jpg', 'jpeg', 'png', 'gif', 'webp'):
+        return jsonify({'error': 'Formato inválido'}), 400
+    import base64
+    data = base64.b64encode(f.read()).decode('utf-8')
+    foto_data = f'data:image/{ext};base64,{data}'
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    c.execute('UPDATE users SET foto=? WHERE id=?', (foto_data, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Foto atualizada!'})
+
+@app.route('/admin/usuarios/nome_display/<int:user_id>', methods=['POST'])
+@login_required
+def update_nome_display(user_id):
+    if current_user.role != 'Admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    data = request.get_json()
+    nome = data.get('nome_display', '').strip()
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    c.execute('UPDATE users SET nome_display=? WHERE id=?', (nome, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Nome atualizado!'})
+
+@app.route('/admin/usuarios/responsavel_pauta/<int:user_id>', methods=['POST'])
+@login_required
+def set_responsavel_pauta(user_id):
+    if current_user.role != 'Admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    data = request.get_json()
+    ativo = 1 if data.get('ativo') else 0
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    if ativo:
+        c.execute('UPDATE users SET responsavel_pauta=0')  # só um responsável por vez
+    c.execute('UPDATE users SET responsavel_pauta=? WHERE id=?', (ativo, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Responsável atualizado!'})
+
+@app.route('/atribuir_responsavel', methods=['POST'])
+@login_required
+def atribuir_responsavel():
+    """Atribui um assessor responsável a uma proposição. Só o responsável pela pauta pode fazer isso."""
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    # Verifica se o usuário atual é responsável pela pauta
+    c.execute('SELECT responsavel_pauta FROM users WHERE id=?', (current_user.id,))
+    row = c.fetchone()
+    if not row or not row[0]:
+        conn.close()
+        return jsonify({'error': 'Apenas o responsável pela pauta pode atribuir proposições'}), 403
+    data = request.get_json()
+    item_key  = data.get('item_key', '')
+    evento_id = data.get('evento_id', '')
+    responsavel_username = data.get('responsavel_username', '')
+    if not item_key:
+        conn.close()
+        return jsonify({'error': 'item_key obrigatório'}), 400
+    c.execute('''INSERT INTO notas (item_key, evento_id, responsavel_username)
+                 VALUES (?, ?, ?)
+                 ON CONFLICT(item_key) DO UPDATE SET responsavel_username=excluded.responsavel_username''',
+              (item_key, evento_id, responsavel_username))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Responsável atribuído!'})
+
+@app.route('/listar_assessores')
+@login_required
+def listar_assessores():
+    """Lista usuários disponíveis para atribuição de proposição."""
+    conn = sqlite3.connect(DB)
+    c = conn.cursor()
+    c.execute('SELECT username, nome_display, foto FROM users WHERE role != "restrito" ORDER BY nome_display, username')
+    rows = c.fetchall()
+    conn.close()
+    assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or ''} for r in rows]
+    return jsonify({'assessores': assessores})
 
 @app.route('/exportar_orientacoes_pdf', methods=['POST'])
 @login_required
