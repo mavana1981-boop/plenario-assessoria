@@ -1690,8 +1690,7 @@ def set_responsavel_pauta(user_id):
     conn = get_conn()
     c = conn.cursor()
     if ativo:
-        c.execute('UPDATE users SET responsavel_pauta=0')  # só um responsável por vez
-    c.execute('UPDATE users SET responsavel_pauta=? WHERE id=?', (ativo, user_id))
+        c.execute('UPDATE users SET responsavel_pauta=? WHERE id=?', (ativo, user_id))
     conn.commit()
     conn.close()
     return jsonify({'message': 'Responsável atualizado!'})
