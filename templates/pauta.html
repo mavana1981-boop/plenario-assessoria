@@ -240,7 +240,7 @@
                       data-item-key="PROP_{{ item.id_principal }}"
                       data-evento-id="{{ evento_id }}"
                       style="font-size:0.78rem; max-width:180px;">
-                <option value="">— Atribuir assessor —</option>
+                <option value="">— Sem responsável —</option>
                 {% for a in assessores %}
                   {% if a.username not in ['admin','PL','NOVO'] %}
                     <option value="{{ a.username }}" {% if a.username == item.responsavel_username %}selected{% endif %}>
@@ -601,28 +601,30 @@
           if (j.error) { alert(j.error); return; }
           // Atualiza foto e nome ao lado do select
           const container = sel.closest('[id^="resp-container-"]');
-          if (container && username) {
-            const r2 = await fetch('/listar_assessores');
-            const j2 = await r2.json();
-            const assessor = j2.assessores.find(a => a.username === username);
-            if (assessor) {
-              let fotoEl = container.querySelector('img, .badge-user');
-              if (!fotoEl) {
-                fotoEl = document.createElement('img');
-                fotoEl.style.cssText = 'width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid #ccc;';
-                container.insertBefore(fotoEl, container.firstChild);
+          if (container) {
+            const fotoEl = container.querySelector('img');
+            const nomeEl = container.querySelector('small');
+            if (!username) {
+              // Limpa responsável
+              if (fotoEl) fotoEl.remove();
+              if (nomeEl) nomeEl.textContent = 'Sem responsável atribuído';
+            } else {
+              const r2 = await fetch('/listar_assessores');
+              const j2 = await r2.json();
+              const assessor = j2.assessores.find(a => a.username === username);
+              if (assessor) {
+                if (assessor.foto) {
+                  let img = container.querySelector('img');
+                  if (!img) {
+                    img = document.createElement('img');
+                    img.style.cssText = 'width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid #ccc;';
+                    container.insertBefore(img, container.firstChild);
+                  }
+                  img.src = assessor.foto;
+                  img.alt = assessor.nome;
+                }
+                if (nomeEl) nomeEl.innerHTML = 'Responsável: <strong>' + assessor.nome + '</strong>';
               }
-              if (assessor.foto && fotoEl.tagName === 'IMG') {
-                fotoEl.src = assessor.foto;
-                fotoEl.alt = assessor.nome;
-              }
-              let nomeEl = container.querySelector('small');
-              if (!nomeEl) {
-                nomeEl = document.createElement('small');
-                nomeEl.className = 'text-muted';
-                container.insertBefore(nomeEl, sel);
-              }
-              nomeEl.innerHTML = 'Responsável: <strong>' + assessor.nome + '</strong>';
             }
           }
         } catch(err) { alert('Erro: ' + err.message); }
