@@ -36,10 +36,12 @@ if USE_POSTGRES:
             'password': _parsed.password,
             'ssl_context': True,
         }
-        logger.info('✅ PostgreSQL configurado via pg8000')
+        logger.info(f'✅ PostgreSQL configurado: host={_parsed.hostname} db={_parsed.path.lstrip("/")}')
     except ImportError:
         USE_POSTGRES = False
-        logger.warning('pg8000 não disponível — usando SQLite')
+        logger.warning('⚠️ pg8000 não disponível — usando SQLite')
+else:
+    logger.warning('⚠️ DATABASE_URL não definida — usando SQLite (dados NÃO persistem entre deploys!)')
 
 def get_conn():
     """Retorna conexão ao banco. No PostgreSQL usa pg8000 (pure Python)."""
@@ -2865,12 +2867,40 @@ def delete_usuario(user_id):
         return jsonify({'error': 'Acesso negado'}), 403
     if user_id == current_user.id:
         return jsonify({'error': 'Não pode excluir sua própria conta'}), 400
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('DELETE FROM users WHERE id = ?', (user_id,))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Usuário removido.'})
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute('DELETE FROM users WHERE id = ?', (user_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({'message': 'Usuário removido.'})
+    except Exception as e:
+        logger.error(f"Erro delete_usuario: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.errorhandler(500)
+def handle_500(e):
+    logger.error(f"500 error: {e}")
+    if request.is_json or request.path.startswith('/admin') or request.path.startswith('/atribuir'):
+        return jsonify({'error': str(e)}), 500
+    return str(e), 500
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    logger.error(f"Unhandled exception: {e}", exc_info=True)
+    if request.is_json:
+        return jsonify({'error': str(e)}), 500
+    return str(e), 500
+
+@app.route('/diagnostico')
+@login_required
+def diagnostico():
+    """Diagnóstico do banco de dados."""
+    return jsonify({
+        'use_postgres': USE_POSTGRES,
+        'database_url_set': bool(os.environ.get('DATABASE_URL')),
+        'pg_params_host': PG_PARAMS.get('host', 'N/A') if USE_POSTGRES else 'SQLite'
+    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
