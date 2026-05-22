@@ -1067,29 +1067,42 @@ def view_pauta(evento_id):
         itens_por_codigo[cod] = item
 
     # Herança de análise: REQ ao PL X → PL X herda análise do REQ
-    logger.info(f"Índice itens_por_codigo ({len(itens_por_codigo)}): {list(itens_por_codigo.keys())}")
-    for item in itens:
-        proj = item.get('projeto') or ''
-        resumo_req = (item.get('resumo_materia') or '').strip()
-        logger.info(f"Item: '{proj}' | tem_analise={bool(resumo_req)} | saved_by={item.get('saved_by','')}")
+    # Índice secundário por número/ano (sem sigla) — cobre casos onde REQ diz "PL 139" mas é "PLP 139"
+    itens_por_numano = {}
+    for cod, it in itens_por_codigo.items():
+        m = re.search(r'(\d+)/(\d{4})$', cod)
+        if m:
+            numano = f"{m.group(1)}/{m.group(2)}"
+            itens_por_numano.setdefault(numano, it)
+
     for item in itens:
         proj = item.get('projeto') or ''
         if ' ao ' not in proj:
             continue
         resumo_req = (item.get('resumo_materia') or '').strip()
         if not resumo_req:
-            logger.info(f"REQ sem análise: {proj}")
             continue
         ref_parte = proj.split(' ao ')[1].strip()
         ref_norm  = _normalizar_codigo(ref_parte)
-        logger.info(f"Tentando herança: '{proj}' → ref='{ref_parte}' norm='{ref_norm}' existe={ref_norm in itens_por_codigo}")
-        pl_item   = itens_por_codigo.get(ref_norm)
+
+        # Busca direta por código normalizado
+        pl_item = itens_por_codigo.get(ref_norm)
+
+        # Fallback: busca só por número/ano ignorando sigla (PL vs PLP vs PEC)
+        if not pl_item:
+            m_num = re.search(r'(\d+)/(\d{4})$', ref_norm)
+            if m_num:
+                numano = f"{m_num.group(1)}/{m_num.group(2)}"
+                pl_item = itens_por_numano.get(numano)
+                if pl_item:
+                    logger.info(f"Herança via número/ano: '{ref_norm}' → '{numano}'")
+
         if pl_item and not (pl_item.get('resumo_materia') or '').strip():
-            pl_item['resumo_materia']  = resumo_req
-            pl_item['orientacao']      = item.get('orientacao') or pl_item.get('orientacao') or ''
-            pl_item['resumo_parecer']  = item.get('resumo_parecer') or pl_item.get('resumo_parecer') or ''
-            pl_item['saved_by']        = item.get('saved_by') or ''
-            pl_item['saved_at']        = item.get('saved_at') or ''
+            pl_item['resumo_materia']   = resumo_req
+            pl_item['orientacao']       = item.get('orientacao') or pl_item.get('orientacao') or ''
+            pl_item['resumo_parecer']   = item.get('resumo_parecer') or pl_item.get('resumo_parecer') or ''
+            pl_item['saved_by']         = item.get('saved_by') or ''
+            pl_item['saved_at']         = item.get('saved_at') or ''
             pl_item['req_pl_mesmo_dia'] = True
             logger.info(f"✅ Herança OK: {proj} → {ref_parte}")
         elif pl_item:
