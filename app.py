@@ -5,7 +5,14 @@ import sqlite3
 import requests
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+# Fuso horário de Brasília (UTC-3)
+TZ_BRASILIA = timezone(timedelta(hours=-3))
+
+def now_brasilia():
+    """Retorna datetime atual no fuso de Brasília."""
+    return datetime.now(TZ_BRASILIA)
 import os
 import re
 import html as ihtml
@@ -700,7 +707,7 @@ def reordenar_por_ordem_oficial(itens, ordem_oficial):
     return itens_ord
 
 def fetch_pauta(evento_id, force_reload=False):
-    now = datetime.now()
+    now = now_brasilia()
     cache_key = str(evento_id)
     notas = load_notas()
 
@@ -764,7 +771,7 @@ def fetch_pauta(evento_id, force_reload=False):
             api_por_codigo[cod] = item
         logger.info(f"API: {len(api_por_codigo)} itens")
 
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now_str = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
         itens = []
         vistos_ids = set()
 
@@ -927,7 +934,11 @@ def fetch_pauta(evento_id, force_reload=False):
 @app.template_filter('datetimeformat')
 def datetimeformat(value, format='%d/%m/%Y %H:%M'):
     try:
-        return datetime.fromisoformat(value).strftime(format)
+        dt = datetime.fromisoformat(str(value))
+        # Se não tem timezone, assume que já está em Brasília
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=TZ_BRASILIA)
+        return dt.astimezone(TZ_BRASILIA).strftime(format)
     except Exception:
         return value
 
@@ -977,7 +988,7 @@ def logout():
 @app.route('/selecionar-data', methods=['GET', 'POST'])
 @login_required
 def selecionar_data():
-    data = request.form.get('data', datetime.now().strftime('%Y-%m-%d'))
+    data = request.form.get('data', now_brasilia().strftime('%Y-%m-%d'))
     eventos = fetch_eventos_por_data(data)
     return render_template('selecionar_data.html', data_selecionada=data, eventos=eventos, user_role=current_user.role)
 
@@ -1051,7 +1062,7 @@ def save_item():
     c = conn.cursor()
     try:
         prop_key = f"PROP_{id_principal}"
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now_str = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
         saved_by = current_user.display_name()
         c.execute('INSERT OR REPLACE INTO notas (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                   (prop_key, evento_id, ordem, data.get('resumo_materia', ''), data.get('orientacao', ''), data.get('resumo_parecer', ''), saved_by, now_str))
@@ -1823,7 +1834,7 @@ def exportar_orientacoes_pdf():
 
     story = []
     story.append(Paragraph("Quadro de Orientações — Plenário da Câmara dos Deputados", T))
-    story.append(Paragraph(f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ParagraphStyle("sm", parent=SS["Normal"], fontSize=7.5, textColor=COR_CINZA, alignment=TA_CENTER)))
+    story.append(Paragraph(f"Gerado em: {now_brasilia().strftime('%d/%m/%Y %H:%M')}", ParagraphStyle("sm", parent=SS["Normal"], fontSize=7.5, textColor=COR_CINZA, alignment=TA_CENTER)))
     story.append(Spacer(1, 8))
     story.append(HRFlowable(width="100%", thickness=1, color=COR_VERDE))
     story.append(Spacer(1, 6))
@@ -2809,7 +2820,7 @@ def salvar_orientacoes():
         saved_at TEXT,
         UNIQUE(evento_id, id_principal, grupo))''')
 
-    now_str  = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now_str  = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
     saved_by = current_user.display_name()
 
     for ori in orientacoes:
