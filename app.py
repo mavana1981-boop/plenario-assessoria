@@ -849,7 +849,7 @@ def view_pauta(evento_id):
     # Verifica se usuário atual é responsável pela pauta
     eh_responsavel_pauta = any(a['username'] == current_user.username and a['responsavel_pauta'] for a in assessores) or current_user.role == 'Admin'
     # Adiciona responsavel_username em cada item
-    notas_db = carregar_notas()
+    notas_db = load_notas()
     for item in itens:
         key = f"PROP_{item.get('id_principal','')}"
         item['responsavel_username'] = notas_db.get(key, {}).get('responsavel_username', '')
