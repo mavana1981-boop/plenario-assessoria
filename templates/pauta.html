@@ -227,18 +227,18 @@
               {% set resp = assessores | selectattr('username', 'equalto', item.responsavel_username) | list %}
               {% if resp %}
                 {% set r = resp[0] %}
-                {% if r.foto %}
-                  <img src="{{ r.foto }}" alt="{{ r.nome }}" style="width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
-                {% elif r.categoria == 'minoria' %}
+                {# Logo da bancada SEMPRE primeiro #}
+                {% if r.categoria == 'minoria' %}
                   <img src="/static/logo_minoria.png" style="height:22px;object-fit:contain;" alt="Minoria">
                 {% elif r.categoria == 'oposicao' %}
                   <img src="/static/logo_oposicao.png" style="height:22px;object-fit:contain;" alt="Oposição">
-                {% else %}
-                  <i class="fas fa-user-tie text-muted" style="font-size:0.85rem;"></i>
+                {% endif %}
+                {# Depois a foto do usuário se houver #}
+                {% if r.foto %}
+                  <img src="{{ r.foto }}" alt="{{ r.nome }}" style="width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
                 {% endif %}
                 <small class="text-muted">Responsável: <strong>{{ r.nome }}</strong></small>
               {% else %}
-                <i class="fas fa-user-tie text-muted" style="font-size:0.85rem;"></i>
                 <small class="text-muted fst-italic">Sem responsável atribuído</small>
               {% endif %}
               {% if eh_responsavel_pauta %}
