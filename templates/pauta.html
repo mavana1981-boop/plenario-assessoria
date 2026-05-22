@@ -260,6 +260,25 @@
 
             {% if user_role == 'Assessor' %}
               <!-- 🟡 MODO LEITURA -->
+
+              {# Aviso de item remanescente #}
+              {% if item.eh_remanescente and item.resumo_materia %}
+              <div class="alert alert-warning py-1 px-2 mb-2" style="font-size:0.82rem;">
+                <i class="fas fa-clock me-1"></i>
+                <strong>Item remanescente.</strong>
+                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
+                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
+              </div>
+              {% endif %}
+
+              {# Aviso de REQ com PL na mesma pauta #}
+              {% if item.req_pl_mesmo_dia and item.resumo_materia %}
+              <div class="alert alert-info py-1 px-2 mb-2" style="font-size:0.82rem;">
+                <i class="fas fa-link me-1"></i>
+                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
+                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
+              </div>
+              {% endif %}
               <div class="mt-2">
                 <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
                 <div class="p-2 border rounded bg-light" style="min-height:150px; white-space:pre-wrap;">
@@ -301,6 +320,25 @@
 
             {% else %}
               <!-- 🔵 EDIÇÃO PARA ADMIN E ASSESSOR PLENÁRIO -->
+
+              {# Aviso de item remanescente #}
+              {% if item.eh_remanescente and item.resumo_materia %}
+              <div class="alert alert-warning py-1 px-2 mb-2" style="font-size:0.82rem;">
+                <i class="fas fa-clock me-1"></i>
+                <strong>Item remanescente.</strong>
+                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
+                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
+              </div>
+              {% endif %}
+
+              {# Aviso de REQ com PL na mesma pauta #}
+              {% if item.req_pl_mesmo_dia and item.resumo_materia %}
+              <div class="alert alert-info py-1 px-2 mb-2" style="font-size:0.82rem;">
+                <i class="fas fa-link me-1"></i>
+                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
+                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
+              </div>
+              {% endif %}
               <div class="mt-2">
                 <label class="form-label small"><strong>Gerar sugestão de análise (Projeto principal):</strong></label>
 
