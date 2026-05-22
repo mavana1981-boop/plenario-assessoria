@@ -1143,20 +1143,37 @@ def view_pauta(evento_id):
 @login_required
 def save_item():
     data = request.get_json()
-    evento_id   = data.get('evento_id')
+    evento_id    = data.get('evento_id')
     id_principal = data.get('id_principal')
-    ordem       = data.get('ordem')
+    ordem        = data.get('ordem')
+    orientacao   = data.get('orientacao', '') or ''
     conn = get_conn()
     c = conn.cursor()
     try:
         prop_key = f"PROP_{id_principal}"
-        now_str = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
+        now_str  = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
         saved_by = current_user.display_name()
         c.execute('INSERT OR REPLACE INTO notas (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                  (prop_key, evento_id, ordem, data.get('resumo_materia', ''), data.get('orientacao', ''), data.get('resumo_parecer', ''), saved_by, now_str))
+                  (prop_key, evento_id, ordem, data.get('resumo_materia', ''), orientacao, data.get('resumo_parecer', ''), saved_by, now_str))
         conn.commit()
 
-        # Atualiza o cache persistente com as notas salvas e usuário
+        # Exporta orientação automaticamente para o quadro de orientações da bancada do usuário
+        if orientacao:
+            grupo        = current_user.categoria  # 'minoria', 'oposicao', 'geral', etc.
+            item_key_ori = f"{id_principal}|{grupo}"
+            c.execute('SELECT item_key FROM orientacoes_grupo WHERE evento_id=? AND grupo=? AND item_key=?',
+                      (evento_id, grupo, item_key_ori))
+            existe = c.fetchone()
+            if existe:
+                c.execute('UPDATE orientacoes_grupo SET orientacao=?, saved_by=?, saved_at=? WHERE evento_id=? AND grupo=? AND item_key=?',
+                          (orientacao, saved_by, now_str, evento_id, grupo, item_key_ori))
+            else:
+                c.execute('INSERT INTO orientacoes_grupo (evento_id, grupo, item_key, orientacao, comentario, saved_by, saved_at) VALUES (?,?,?,?,?,?,?)',
+                          (evento_id, grupo, item_key_ori, orientacao, '', saved_by, now_str))
+            conn.commit()
+            logger.info(f"Orientação exportada: {grupo} / {id_principal} → {orientacao}")
+
+        # Atualiza o cache persistente
         c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
         row = c.fetchone()
         if row:
@@ -1165,7 +1182,7 @@ def save_item():
                 for item in itens:
                     if str(item.get('id_principal')) == str(id_principal):
                         item['resumo_materia'] = data.get('resumo_materia', '')
-                        item['orientacao']     = data.get('orientacao', '')
+                        item['orientacao']     = orientacao
                         item['resumo_parecer'] = data.get('resumo_parecer', '')
                 c.execute('UPDATE pauta_cache_db SET json_pauta = ?, last_updated = ?, last_saved_by = ? WHERE evento_id = ?',
                           (json.dumps(itens), now_str, saved_by, evento_id))
@@ -2928,12 +2945,25 @@ def get_orientacoes(evento_id):
     conn = get_conn()
     c    = conn.cursor()
     try:
-        c.execute('''SELECT id_principal, grupo, orientacao, comentario, saved_by, saved_at
+        c.execute('''SELECT item_key, grupo, orientacao, comentario, saved_by, saved_at
                      FROM orientacoes_grupo WHERE evento_id=?''', (evento_id,))
         rows = c.fetchall()
-        result = [{'id_principal': r[0], 'grupo': r[1], 'orientacao': r[2],
-                   'comentario': r[3], 'saved_by': r[4], 'saved_at': r[5]} for r in rows]
-    except Exception:
+        result = []
+        for r in rows:
+            item_key = r[0] or ''
+            # item_key pode ser "id_principal|grupo" ou só "id_principal"
+            id_principal = item_key.split('|')[0] if '|' in item_key else item_key
+            result.append({
+                'id_principal': id_principal,
+                'item_key':     item_key,
+                'grupo':        r[1],
+                'orientacao':   r[2],
+                'comentario':   r[3],
+                'saved_by':     r[4],
+                'saved_at':     r[5]
+            })
+    except Exception as e:
+        logger.warning(f"Erro get_orientacoes: {e}")
         result = []
     conn.close()
     return jsonify(result)
