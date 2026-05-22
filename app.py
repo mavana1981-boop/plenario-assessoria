@@ -16,16 +16,30 @@ DATABASE_URL = os.environ.get('DATABASE_URL', '')
 USE_POSTGRES = bool(DATABASE_URL)
 
 if USE_POSTGRES:
-    import psycopg2
-    import psycopg2.extras
-    # Railway usa postgres://, psycopg2 precisa de postgresql://
-    if DATABASE_URL.startswith('postgres://'):
-        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    try:
+        import pg8000
+        import pg8000.native
+        if DATABASE_URL.startswith('postgres://'):
+            DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+        # Parse DATABASE_URL para pg8000
+        from urllib.parse import urlparse
+        _parsed = urlparse(DATABASE_URL)
+        PG_PARAMS = {
+            'host':     _parsed.hostname,
+            'port':     _parsed.port or 5432,
+            'database': _parsed.path.lstrip('/'),
+            'user':     _parsed.username,
+            'password': _parsed.password,
+            'ssl_context': True,
+        }
+    except ImportError:
+        USE_POSTGRES = False
+        logger.warning('pg8000 não disponível — usando SQLite')
 
 def get_conn():
-    """Retorna conexão ao banco. No PostgreSQL, cursor converte ? em %s automaticamente."""
+    """Retorna conexão ao banco. No PostgreSQL usa pg8000 (pure Python)."""
     if USE_POSTGRES:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = pg8000.connect(**PG_PARAMS)
         _orig_cursor = conn.cursor
         def _patched_cursor(*a, **kw):
             cur = _orig_cursor(*a, **kw)
@@ -34,7 +48,6 @@ def get_conn():
             def _exec(sql, params=None):
                 sql_orig = sql
                 sql = sql.replace('?', '%s')
-                # Converte upserts SQLite para PostgreSQL ON CONFLICT
                 if re.search(r'INSERT OR REPLACE INTO notas\b', sql_orig, re.I):
                     sql = re.sub(r'INSERT OR REPLACE INTO notas\b', 'INSERT INTO notas', sql, flags=re.I)
                     sql += (' ON CONFLICT (item_key) DO UPDATE SET '
