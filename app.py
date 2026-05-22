@@ -1067,26 +1067,29 @@ def view_pauta(evento_id):
         itens_por_codigo[cod] = item
 
     # Herança de análise: REQ ao PL X → PL X herda análise do REQ
+    logger.info(f"Índice itens_por_codigo: {list(itens_por_codigo.keys())[:10]}")
     for item in itens:
         proj = item.get('projeto') or ''
         if ' ao ' not in proj:
             continue
         resumo_req = (item.get('resumo_materia') or '').strip()
         if not resumo_req:
+            logger.info(f"REQ sem análise: {proj}")
             continue
-        # Extrai código do PL referenciado
         ref_parte = proj.split(' ao ')[1].strip()
         ref_norm  = _normalizar_codigo(ref_parte)
+        logger.info(f"Tentando herança: '{proj}' → ref='{ref_parte}' norm='{ref_norm}' existe={ref_norm in itens_por_codigo}")
         pl_item   = itens_por_codigo.get(ref_norm)
         if pl_item and not (pl_item.get('resumo_materia') or '').strip():
-            # PL está na pauta e não tem análise própria — herda do REQ
             pl_item['resumo_materia']  = resumo_req
             pl_item['orientacao']      = item.get('orientacao') or pl_item.get('orientacao') or ''
             pl_item['resumo_parecer']  = item.get('resumo_parecer') or pl_item.get('resumo_parecer') or ''
             pl_item['saved_by']        = item.get('saved_by') or ''
             pl_item['saved_at']        = item.get('saved_at') or ''
-            pl_item['req_pl_mesmo_dia'] = True  # marca para exibir aviso
-            logger.info(f"Herança de análise: {proj} → {ref_parte}")
+            pl_item['req_pl_mesmo_dia'] = True
+            logger.info(f"✅ Herança OK: {proj} → {ref_parte}")
+        elif pl_item:
+            logger.info(f"PL já tem análise própria: {ref_parte}")
 
     # Detecta remanescentes e REQs com PL na mesma pauta
     for item in itens:
