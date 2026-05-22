@@ -11,6 +11,124 @@ import re
 import html as ihtml
 from scraper_camara import obter_itens_pauta
 
+# ── DB ABSTRACTION ────────────────────────────────────────────────────────────
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
+USE_POSTGRES = bool(DATABASE_URL)
+
+if USE_POSTGRES:
+    import psycopg2
+    import psycopg2.extras
+    # Railway usa postgres://, psycopg2 precisa de postgresql://
+    if DATABASE_URL.startswith('postgres://'):
+        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+
+def get_conn():
+    """Retorna conexão ao banco. No PostgreSQL, cursor converte ? em %s automaticamente."""
+    if USE_POSTGRES:
+        conn = psycopg2.connect(DATABASE_URL)
+        _orig_cursor = conn.cursor
+        def _patched_cursor(*a, **kw):
+            cur = _orig_cursor(*a, **kw)
+            _orig_exec = cur.execute
+            _orig_execmany = cur.executemany
+            def _exec(sql, params=None):
+                sql_orig = sql
+                sql = sql.replace('?', '%s')
+                # Converte upserts SQLite para PostgreSQL ON CONFLICT
+                if re.search(r'INSERT OR REPLACE INTO notas\b', sql_orig, re.I):
+                    sql = re.sub(r'INSERT OR REPLACE INTO notas\b', 'INSERT INTO notas', sql, flags=re.I)
+                    sql += (' ON CONFLICT (item_key) DO UPDATE SET '
+                            'evento_id=EXCLUDED.evento_id, ordem=EXCLUDED.ordem, '
+                            'resumo_materia=EXCLUDED.resumo_materia, orientacao=EXCLUDED.orientacao, '
+                            'resumo_parecer=EXCLUDED.resumo_parecer, saved_by=EXCLUDED.saved_by, '
+                            'saved_at=EXCLUDED.saved_at')
+                elif re.search(r'INSERT OR REPLACE INTO pauta_cache_db\b', sql_orig, re.I):
+                    sql = re.sub(r'INSERT OR REPLACE INTO pauta_cache_db\b', 'INSERT INTO pauta_cache_db', sql, flags=re.I)
+                    sql += (' ON CONFLICT (evento_id) DO UPDATE SET '
+                            'json_pauta=EXCLUDED.json_pauta, last_updated=EXCLUDED.last_updated')
+                elif re.search(r'INSERT OR REPLACE INTO orientacoes_grupo\b', sql_orig, re.I):
+                    sql = re.sub(r'INSERT OR REPLACE INTO orientacoes_grupo\b', 'INSERT INTO orientacoes_grupo', sql, flags=re.I)
+                    sql += (' ON CONFLICT (evento_id, grupo, item_key) DO UPDATE SET '
+                            'orientacao=EXCLUDED.orientacao, comentario=EXCLUDED.comentario, '
+                            'saved_by=EXCLUDED.saved_by, saved_at=EXCLUDED.saved_at')
+                elif re.search(r'INSERT OR IGNORE INTO users\b', sql_orig, re.I):
+                    sql = re.sub(r'INSERT OR IGNORE INTO users\b', 'INSERT INTO users', sql, flags=re.I)
+                    sql += ' ON CONFLICT (username) DO NOTHING'
+                elif re.search(r'INSERT OR REPLACE INTO\b', sql_orig, re.I):
+                    sql = re.sub(r'INSERT OR REPLACE INTO\b', 'INSERT INTO', sql, flags=re.I)
+                elif re.search(r'INSERT OR IGNORE INTO\b', sql_orig, re.I):
+                    sql = re.sub(r'INSERT OR IGNORE INTO\b', 'INSERT INTO', sql, flags=re.I)
+                    sql += ' ON CONFLICT DO NOTHING'
+                sql = re.sub(r'\bAUTOINCREMENT\b', '', sql, flags=re.I)
+                if params is not None:
+                    return _orig_exec(sql, params)
+                return _orig_exec(sql)
+            def _execmany(sql, params):
+                sql = sql.replace('?', '%s')
+                return _orig_execmany(sql, params)
+            cur.execute = _exec
+            cur.executemany = _execmany
+            return cur
+        conn.cursor = _patched_cursor
+        return conn
+    return sqlite3.connect(DB)
+
+def ph(n=1):
+    """Placeholder: %s para postgres, ? para sqlite."""
+    if USE_POSTGRES:
+        return '%s'
+    return '?'
+
+def phs(n):
+    """N placeholders separados por vírgula."""
+    p = '%s' if USE_POSTGRES else '?'
+    return ', '.join([p] * n)
+
+def upsert_notas(c, item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at):
+    if USE_POSTGRES:
+        c.execute('''INSERT INTO notas (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at)
+                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                     ON CONFLICT (item_key) DO UPDATE SET
+                       evento_id=EXCLUDED.evento_id, ordem=EXCLUDED.ordem,
+                       resumo_materia=EXCLUDED.resumo_materia, orientacao=EXCLUDED.orientacao,
+                       resumo_parecer=EXCLUDED.resumo_parecer, saved_by=EXCLUDED.saved_by,
+                       saved_at=EXCLUDED.saved_at''',
+                  (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at))
+    else:
+        c.execute('INSERT OR REPLACE INTO notas (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at) VALUES (?,?,?,?,?,?,?,?)',
+                  (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at))
+
+def upsert_pauta_cache(c, evento_id, json_pauta, last_updated):
+    if USE_POSTGRES:
+        c.execute('''INSERT INTO pauta_cache_db (evento_id, json_pauta, last_updated)
+                     VALUES (%s,%s,%s)
+                     ON CONFLICT (evento_id) DO UPDATE SET
+                       json_pauta=EXCLUDED.json_pauta, last_updated=EXCLUDED.last_updated''',
+                  (evento_id, json_pauta, last_updated))
+    else:
+        c.execute('INSERT OR REPLACE INTO pauta_cache_db (evento_id, json_pauta, last_updated) VALUES (?,?,?)',
+                  (evento_id, json_pauta, last_updated))
+
+def upsert_orientacoes(c, evento_id, grupo, item_key, orientacao, comentario, saved_by, saved_at):
+    if USE_POSTGRES:
+        c.execute('''INSERT INTO orientacoes_grupo (evento_id, grupo, item_key, orientacao, comentario, saved_by, saved_at)
+                     VALUES (%s,%s,%s,%s,%s,%s,%s)
+                     ON CONFLICT (evento_id, grupo, item_key) DO UPDATE SET
+                       orientacao=EXCLUDED.orientacao, comentario=EXCLUDED.comentario,
+                       saved_by=EXCLUDED.saved_by, saved_at=EXCLUDED.saved_at''',
+                  (evento_id, grupo, item_key, orientacao, comentario, saved_by, saved_at))
+    else:
+        c.execute('''INSERT OR REPLACE INTO orientacoes_grupo (evento_id, grupo, item_key, orientacao, comentario, saved_by, saved_at)
+                     VALUES (?,?,?,?,?,?,?)''',
+                  (evento_id, grupo, item_key, orientacao, comentario, saved_by, saved_at))
+
+def integrity_error():
+    if USE_POSTGRES:
+        return psycopg2.errors.UniqueViolation
+    return sqlite3.IntegrityError
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
@@ -30,37 +148,23 @@ DB = 'plenario.db'
 # --------------------------------------------------------------------------
 with app.app_context():
     try:
-        import sqlite3 as _sq
-        from flask_bcrypt import Bcrypt as _Bc
-        _conn = _sq.connect(DB)
-        _c = _conn.cursor()
-        _c.execute('''CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conn = get_conn()
+        c = conn.cursor()
+        _p = '%s' if USE_POSTGRES else '?'
+        _AI = 'SERIAL' if USE_POSTGRES else 'INTEGER'
+        _TXT = 'TEXT' if USE_POSTGRES else 'TEXT'
+
+        c.execute(f'''CREATE TABLE IF NOT EXISTS users (
+            id {_AI} PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             role TEXT NOT NULL,
-            categoria TEXT NOT NULL DEFAULT 'geral')''')
-        # Migração: adiciona coluna categoria se não existir
-        try:
-            _c.execute('ALTER TABLE users ADD COLUMN categoria TEXT NOT NULL DEFAULT "geral"')
-            _conn.commit()
-        except Exception:
-            pass
-        # Migração: foto e nome_display
-        for _col, _def in [('foto TEXT', 'NULL'), ('nome_display TEXT', 'NULL'), ('responsavel_pauta INTEGER DEFAULT 0', '0')]:
-            try:
-                _c.execute(f'ALTER TABLE users ADD COLUMN {_col}')
-                _conn.commit()
-            except Exception:
-                pass
-        # Migração: responsavel nas notas
-        try:
-            _c.execute('ALTER TABLE notas ADD COLUMN responsavel_username TEXT')
-            _conn.commit()
-        except Exception:
-            pass
-        # Migração: last_updated na pauta_cache_db já existe
-        _c.execute('''CREATE TABLE IF NOT EXISTS notas (
+            categoria TEXT NOT NULL DEFAULT 'geral',
+            foto TEXT,
+            nome_display TEXT,
+            responsavel_pauta INTEGER DEFAULT 0)''')
+
+        c.execute('''CREATE TABLE IF NOT EXISTS notas (
             item_key TEXT PRIMARY KEY,
             evento_id INTEGER,
             ordem TEXT,
@@ -68,50 +172,87 @@ with app.app_context():
             orientacao TEXT,
             resumo_parecer TEXT,
             saved_by TEXT,
-            saved_at TEXT)''')
-        _c.execute('''CREATE TABLE IF NOT EXISTS pauta_cache_db (
+            saved_at TEXT,
+            responsavel_username TEXT)''')
+
+        c.execute('''CREATE TABLE IF NOT EXISTS pauta_cache_db (
             evento_id INTEGER PRIMARY KEY,
             json_pauta TEXT,
             last_updated TEXT,
             last_saved_by TEXT)''')
-        _conn.commit()
+
+        c.execute('''CREATE TABLE IF NOT EXISTS orientacoes_grupo (
+            id SERIAL PRIMARY KEY,
+            evento_id INTEGER,
+            grupo TEXT,
+            item_key TEXT,
+            orientacao TEXT,
+            comentario TEXT,
+            saved_by TEXT,
+            saved_at TEXT,
+            UNIQUE(evento_id, grupo, item_key))''' if USE_POSTGRES else
+            '''CREATE TABLE IF NOT EXISTS orientacoes_grupo (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            evento_id INTEGER,
+            grupo TEXT,
+            item_key TEXT,
+            orientacao TEXT,
+            comentario TEXT,
+            saved_by TEXT,
+            saved_at TEXT,
+            UNIQUE(evento_id, grupo, item_key))''')
+
+        # Migrações seguras
+        migrações = [
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS foto TEXT' if USE_POSTGRES else 'ALTER TABLE users ADD COLUMN foto TEXT',
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS nome_display TEXT' if USE_POSTGRES else 'ALTER TABLE users ADD COLUMN nome_display TEXT',
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS responsavel_pauta INTEGER DEFAULT 0' if USE_POSTGRES else 'ALTER TABLE users ADD COLUMN responsavel_pauta INTEGER DEFAULT 0',
+            'ALTER TABLE notas ADD COLUMN IF NOT EXISTS responsavel_username TEXT' if USE_POSTGRES else 'ALTER TABLE notas ADD COLUMN responsavel_username TEXT',
+        ]
+        for sql in migrações:
+            try: c.execute(sql)
+            except Exception: pass
+
+        from flask_bcrypt import Bcrypt as _Bc
         _bcrypt = _Bc()
         _pw123 = _bcrypt.generate_password_hash('123').decode('utf-8')
 
-        # usuarios padrão + novos — INSERT OR IGNORE (não sobrescreve existentes)
         _usuarios = [
-            ('admin',             'Admin',            'admin'),
-            ('assessor_plenario', 'Assessor Plenário','minoria'),
-            ('assessor',          'Assessor',         'geral'),
-            ('PL',                'Orientação',       'restrito'),
-            ('NOVO',              'Orientação',       'restrito'),
-            ('marcelo.oliveira',  'Assessor Plenário','minoria'),
+            ('admin',             'Admin',            'admin',    'Admin'),
+            ('assessor_plenario', 'Assessor Plenário','minoria',  'Assessor Plenário'),
+            ('assessor',          'Assessor',         'geral',    'Assessor'),
+            ('PL',                'Orientação',       'restrito', 'Orientação'),
+            ('NOVO',              'Orientação',       'restrito', 'Orientação'),
+            ('marcelo.oliveira',  'Assessor Plenário','minoria',  'Marcelo Oliveira'),
         ]
-        for _un, _role, _cat in _usuarios:
+        for _un, _cat, _role_cat, _nome in _usuarios:
             try:
-                _c.execute('INSERT INTO users (username, password, role, categoria) VALUES (?, ?, ?, ?)',
-                           (_un, _pw123, _role, _cat))
-            except _sq.IntegrityError:
+                if USE_POSTGRES:
+                    c.execute('INSERT INTO users (username, password, role, categoria, nome_display) VALUES (%s,%s,%s,%s,%s) ON CONFLICT (username) DO NOTHING',
+                              (_un, _pw123, _un if _un == 'admin' else 'Assessor', _cat, _nome))
+                else:
+                    c.execute('INSERT OR IGNORE INTO users (username, password, role, categoria, nome_display) VALUES (?,?,?,?,?)',
+                              (_un, _pw123, _un if _un == 'admin' else 'Assessor', _cat, _nome))
+            except Exception:
                 pass
 
-        # Redefine senha 123 para TODOS os usuários existentes
-        _c.execute('UPDATE users SET password=?', (_pw123,))
-
-        # Atualiza categorias dos usuários existentes
         _cats = {
             'vinicius.scheffel': 'oposicao', 'lianna.barros': 'oposicao',
             'marcelo.uvara': 'oposicao', 'elyesley.silva': 'oposicao',
             'pedro.chaves': 'oposicao',
             'ulisses.branco': 'minoria', 'eduardo.borba': 'minoria',
             'luisa.marreco': 'minoria', 'luiz.garibaldi': 'minoria',
-            'luiz.garibaldi': 'minoria', 'assessor_plenario': 'minoria',
-            'marcelo.oliveira': 'minoria',
+            'assessor_plenario': 'minoria', 'marcelo.oliveira': 'minoria',
         }
         for _un, _cat in _cats.items():
-            _c.execute('UPDATE users SET categoria=? WHERE username=?', (_cat, _un))
-        _conn.commit()
-        _conn.close()
-        logger.info('✅ Banco inicializado.')
+            try:
+                c.execute(f'UPDATE users SET categoria={_p} WHERE username={_p}', (_cat, _un))
+            except Exception:
+                pass
+
+        conn.commit()
+        conn.close()
+        logger.info(f'✅ Banco inicializado ({"PostgreSQL" if USE_POSTGRES else "SQLite"}).')
     except Exception as _e:
         logger.error(f'❌ Erro banco: {_e}')
 
@@ -119,7 +260,7 @@ with app.app_context():
 # HELPERS DB
 # --------------------------------------------------------------------------
 def load_notas():
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     try:
         c.execute('SELECT item_key, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at, responsavel_username FROM notas')
@@ -128,14 +269,7 @@ def load_notas():
                           'responsavel_username': row[6] or ''}
                  for row in c.fetchall()}
     except Exception:
-        try:
-            c.execute('SELECT item_key, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at FROM notas')
-            notas = {row[0]: {'resumo_materia': row[1], 'orientacao': row[2], 'resumo_parecer': row[3],
-                              'saved_by': row[4] or '', 'saved_at': row[5] or '',
-                              'responsavel_username': ''}
-                     for row in c.fetchall()}
-        except Exception:
-            notas = {}
+        notas = {}
     finally:
         conn.close()
     return notas
@@ -155,7 +289,7 @@ class User(UserMixin):
 
 @login_manager.user_loader
 def load_user(user_id):
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     c.execute('SELECT id, username, role, categoria FROM users WHERE id = ?', (user_id,))
     u = c.fetchone()
@@ -534,7 +668,7 @@ def fetch_pauta(evento_id, force_reload=False):
         if now - cached['timestamp'] < CACHE_DURATION:
             return cached['itens'], False
 
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
 
     if not force_reload:
@@ -771,7 +905,7 @@ def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-        conn = sqlite3.connect(DB)
+        conn = get_conn()
         c = conn.cursor()
         c.execute('SELECT id, username, password, role, categoria FROM users WHERE username = ?', (username,))
         u = c.fetchone()
@@ -782,7 +916,7 @@ def login():
         flash('Usuário ou senha inválidos.', 'error')
 
     # Busca lista de usuários para o dropdown
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     try:
         c.execute('SELECT username, categoria FROM users ORDER BY username')
@@ -811,7 +945,7 @@ def selecionar_data():
 def view_pauta(evento_id):
     force_reload = request.args.get('force_reload', 'false').lower() == 'true'
     itens, from_cache = fetch_pauta(evento_id, force_reload)
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     last_updated = None
     last_saved_user = None
@@ -840,7 +974,7 @@ def view_pauta(evento_id):
         evento = {'id': evento_id, 'dataHoraInicio': 'N/D', 'situacao': 'N/D', 'descricao': 'Sessão Deliberativa', 'local': 'Plenário'}
 
     # Carrega assessores com foto e responsavel_pauta
-    conn2 = sqlite3.connect(DB)
+    conn2 = get_conn()
     c2 = conn2.cursor()
     c2.execute('SELECT username, nome_display, foto, responsavel_pauta FROM users WHERE role != "restrito" ORDER BY nome_display, username')
     rows_ass = c2.fetchall()
@@ -868,7 +1002,7 @@ def save_item():
     evento_id   = data.get('evento_id')
     id_principal = data.get('id_principal')
     ordem       = data.get('ordem')
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     try:
         prop_key = f"PROP_{id_principal}"
@@ -1428,7 +1562,7 @@ def trocar_senha():
             return jsonify({'error': 'Nova senha deve ter ao menos 4 caracteres.'}), 400
         if nova_senha != confirma:
             return jsonify({'error': 'Nova senha e confirmação não coincidem.'}), 400
-        conn = sqlite3.connect(DB)
+        conn = get_conn()
         c    = conn.cursor()
         c.execute('SELECT password FROM users WHERE id=?', (current_user.id,))
         row = c.fetchone()
@@ -1448,7 +1582,7 @@ def admin_usuarios():
     if current_user.role != 'Admin':
         flash('Acesso restrito.', 'error')
         return redirect(url_for('selecionar_data'))
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     c.execute('SELECT id, username, role, categoria, nome_display, foto, responsavel_pauta FROM users ORDER BY id DESC')
     usuarios = c.fetchall()
@@ -1469,14 +1603,14 @@ def add_usuario():
     if not username or not password:
         return jsonify({'error': 'Usuário e senha obrigatórios'}), 400
     hashed = bcrypt.generate_password_hash(password).decode('utf-8')
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     try:
         c.execute('INSERT INTO users (username, password, role, categoria, nome_display) VALUES (?, ?, ?, ?, ?)',
                   (username, hashed, role, categoria, nome_display or username))
         conn.commit()
         return jsonify({'message': 'Usuário criado!'})
-    except sqlite3.IntegrityError:
+    except (sqlite3.IntegrityError, Exception):
         return jsonify({'error': 'Usuário já existe'}), 409
     finally:
         conn.close()
@@ -1497,7 +1631,7 @@ def upload_foto_usuario(user_id):
     import base64
     data = base64.b64encode(f.read()).decode('utf-8')
     foto_data = f'data:image/{ext};base64,{data}'
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     c.execute('UPDATE users SET foto=? WHERE id=?', (foto_data, user_id))
     conn.commit()
@@ -1511,7 +1645,7 @@ def update_nome_display(user_id):
         return jsonify({'error': 'Acesso negado'}), 403
     data = request.get_json()
     nome = data.get('nome_display', '').strip()
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     c.execute('UPDATE users SET nome_display=? WHERE id=?', (nome, user_id))
     conn.commit()
@@ -1525,7 +1659,7 @@ def set_responsavel_pauta(user_id):
         return jsonify({'error': 'Acesso negado'}), 403
     data = request.get_json()
     ativo = 1 if data.get('ativo') else 0
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     if ativo:
         c.execute('UPDATE users SET responsavel_pauta=0')  # só um responsável por vez
@@ -1538,7 +1672,7 @@ def set_responsavel_pauta(user_id):
 @login_required
 def atribuir_responsavel():
     """Atribui um assessor responsável a uma proposição. Só o responsável pela pauta pode fazer isso."""
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     # Verifica se o usuário atual é responsável pela pauta
     c.execute('SELECT responsavel_pauta FROM users WHERE id=?', (current_user.id,))
@@ -1565,7 +1699,7 @@ def atribuir_responsavel():
 @login_required
 def listar_assessores():
     """Lista usuários disponíveis para atribuição de proposição."""
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     c.execute('SELECT username, nome_display, foto FROM users WHERE role != "restrito" ORDER BY nome_display, username')
     rows = c.fetchall()
@@ -2389,7 +2523,7 @@ def debug_ordem(evento_id):
 def limpar_todo_cache():
     if current_user.role != 'Admin':
         return jsonify({'error': 'Acesso negado'}), 403
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     c.execute('DELETE FROM pauta_cache_db')
     n = c.rowcount
@@ -2402,7 +2536,7 @@ def limpar_todo_cache():
 @login_required
 def limpar_cache(evento_id):
     """Remove cache de um evento específico para forçar reprocessamento."""
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     try:
         c.execute('DELETE FROM pauta_cache_db WHERE evento_id = ?', (evento_id,))
@@ -2593,7 +2727,7 @@ def salvar_orientacoes():
     evento_id = data.get('evento_id')
     orientacoes = data.get('orientacoes', [])  # [{id_principal, grupo, orientacao, comentario}]
 
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c    = conn.cursor()
 
     # Cria tabela se não existir
@@ -2625,7 +2759,7 @@ def salvar_orientacoes():
 @login_required
 def get_orientacoes(evento_id):
     """Retorna orientações salvas para um evento."""
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c    = conn.cursor()
     try:
         c.execute('''SELECT id_principal, grupo, orientacao, comentario, saved_by, saved_at
@@ -2644,7 +2778,7 @@ def reset_todas_senhas():
     if current_user.role != 'Admin':
         return jsonify({'error': 'Acesso negado'}), 403
     nova_hash = bcrypt.generate_password_hash('123').decode('utf-8')
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c    = conn.cursor()
     c.execute('UPDATE users SET password=?', (nova_hash,))
     affected = c.rowcount
@@ -2663,7 +2797,7 @@ def reset_senha():
     if not nova_senha or len(nova_senha) < 3:
         return jsonify({'error': 'Senha deve ter ao menos 3 caracteres.'}), 400
     nova_hash = bcrypt.generate_password_hash(nova_senha).decode('utf-8')
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c    = conn.cursor()
     c.execute('UPDATE users SET password=? WHERE id=?', (nova_hash, user_id))
     conn.commit()
@@ -2678,7 +2812,7 @@ def update_categoria():
     data      = request.get_json()
     user_id   = data.get('user_id')
     categoria = data.get('categoria', 'geral')
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     c.execute('UPDATE users SET categoria=? WHERE id=?', (categoria, user_id))
     conn.commit()
@@ -2692,7 +2826,7 @@ def delete_usuario(user_id):
         return jsonify({'error': 'Acesso negado'}), 403
     if user_id == current_user.id:
         return jsonify({'error': 'Não pode excluir sua própria conta'}), 400
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     c = conn.cursor()
     c.execute('DELETE FROM users WHERE id = ?', (user_id,))
     conn.commit()
