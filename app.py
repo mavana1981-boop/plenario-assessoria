@@ -1159,37 +1159,31 @@ def save_item():
                   (prop_key, evento_id, ordem, data.get('resumo_materia', ''), orientacao, data.get('resumo_parecer', ''), saved_by, now_str))
         conn.commit()
 
-        # Exporta orientação para o quadro da bancada do assessor responsável pelo item
+        # Exporta orientação para o quadro da bancada
         if orientacao:
             try:
-                # Busca o assessor responsável pelo item
+                # Determina o grupo: assessor responsável se existir, senão usuário logado
+                grupo = current_user.categoria or 'geral'
+
+                # Tenta pegar categoria do assessor responsável pelo item
                 c.execute('SELECT responsavel_username FROM notas WHERE item_key=?', (prop_key,))
                 row_resp = c.fetchone()
                 responsavel = (row_resp[0] if row_resp else '') or ''
-
-                # Se não tem responsável atribuído, usa a categoria do usuário logado
-                if not responsavel:
-                    grupo = current_user.categoria
-                else:
-                    # Busca a categoria do assessor responsável
+                if responsavel:
                     c.execute('SELECT categoria FROM users WHERE username=?', (responsavel,))
                     row_cat = c.fetchone()
-                    grupo = (row_cat[0] if row_cat else '') or current_user.categoria
+                    if row_cat and row_cat[0]:
+                        grupo = row_cat[0]
 
-                # Só exporta para grupos válidos do quadro
-                grupos_validos = {'minoria', 'oposicao', 'PL', 'NOVO'}
-                if grupo not in grupos_validos:
-                    grupo = current_user.categoria  # fallback para categoria do usuário logado
-
-                if grupo in grupos_validos:
-                    c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
-                                 (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                              (evento_id, str(id_principal), grupo, orientacao, '', saved_by, now_str))
-                    conn.commit()
-                    logger.info(f"Orientação exportada: grupo={grupo} / {id_principal} → {orientacao} (responsavel={responsavel or 'usuário logado'})")
+                logger.info(f"Exportando orientação: grupo={grupo} id={id_principal} ori={orientacao} resp={responsavel}")
+                c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
+                             (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
+                             VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                          (evento_id, str(id_principal), grupo, orientacao, '', saved_by, now_str))
+                conn.commit()
+                logger.info(f"✅ Orientação exportada para quadro: {grupo} / {id_principal} → {orientacao}")
             except Exception as e:
-                logger.warning(f"Erro ao exportar orientação: {e}")
+                logger.error(f"Erro ao exportar orientação: {e}")
 
         # Atualiza o cache persistente
         c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
