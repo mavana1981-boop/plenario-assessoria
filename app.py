@@ -236,6 +236,16 @@ with app.app_context():
         _bcrypt = _Bc()
         _pw123 = _bcrypt.generate_password_hash('123').decode('utf-8')
 
+        c.execute('''CREATE TABLE IF NOT EXISTS usuarios_deletados (
+            username TEXT PRIMARY KEY)''')
+
+        # Carrega lista de usuários já deletados para não recriar
+        try:
+            c.execute('SELECT username FROM usuarios_deletados')
+            _deletados = {r[0] for r in c.fetchall()}
+        except Exception:
+            _deletados = set()
+
         _usuarios = [
             ('admin',             'Admin',            'admin',    'Admin'),
             ('assessor_plenario', 'Assessor Plenário','minoria',  'Assessor Plenário'),
@@ -245,6 +255,8 @@ with app.app_context():
             ('marcelo.oliveira',  'Assessor Plenário','minoria',  'Marcelo Oliveira'),
         ]
         for _un, _cat, _role_cat, _nome in _usuarios:
+            if _un in _deletados:
+                continue  # não recria usuários que foram deletados
             _role_val = 'Admin' if _un == 'admin' else 'Assessor'
             try:
                 if USE_POSTGRES:
@@ -2870,10 +2882,21 @@ def delete_usuario(user_id):
     try:
         conn = get_conn()
         c = conn.cursor()
+        # Busca username antes de deletar
+        c.execute('SELECT username FROM users WHERE id=?', (user_id,))
+        row = c.fetchone()
+        if not row:
+            return jsonify({'error': 'Usuário não encontrado'}), 404
+        username = row[0]
         c.execute('DELETE FROM users WHERE id = ?', (user_id,))
+        # Registra na tabela de deletados para não recriar no próximo startup
+        if USE_POSTGRES:
+            c.execute('INSERT INTO usuarios_deletados (username) VALUES (%s) ON CONFLICT DO NOTHING', (username,))
+        else:
+            c.execute('INSERT OR IGNORE INTO usuarios_deletados (username) VALUES (?)', (username,))
         conn.commit()
         conn.close()
-        return jsonify({'message': 'Usuário removido.'})
+        return jsonify({'message': f'Usuário {username} removido.'})
     except Exception as e:
         logger.error(f"Erro delete_usuario: {e}")
         return jsonify({'error': str(e)}), 500
