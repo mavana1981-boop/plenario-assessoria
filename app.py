@@ -9,11 +9,17 @@ from datetime import datetime, timedelta
 import os
 import re
 import html as ihtml
+from urllib.parse import urlparse
 from scraper_camara import obter_itens_pauta
+
+# Logger — definido antes de tudo
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # ── DB ABSTRACTION ────────────────────────────────────────────────────────────
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
 USE_POSTGRES = bool(DATABASE_URL)
+PG_PARAMS = {}
 
 if USE_POSTGRES:
     try:
@@ -21,8 +27,6 @@ if USE_POSTGRES:
         import pg8000.native
         if DATABASE_URL.startswith('postgres://'):
             DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
-        # Parse DATABASE_URL para pg8000
-        from urllib.parse import urlparse
         _parsed = urlparse(DATABASE_URL)
         PG_PARAMS = {
             'host':     _parsed.hostname,
@@ -32,6 +36,7 @@ if USE_POSTGRES:
             'password': _parsed.password,
             'ssl_context': True,
         }
+        logger.info('✅ PostgreSQL configurado via pg8000')
     except ImportError:
         USE_POSTGRES = False
         logger.warning('pg8000 não disponível — usando SQLite')
@@ -142,8 +147,6 @@ def integrity_error():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", handlers=[logging.StreamHandler()])
-logger = logging.getLogger(__name__)
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
 
 app = Flask(__name__)
