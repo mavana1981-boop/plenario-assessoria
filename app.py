@@ -1044,11 +1044,48 @@ def view_pauta(evento_id):
         key = f"PROP_{item.get('id_principal','')}"
         item['responsavel_username'] = notas_db.get(key, {}).get('responsavel_username', '')
 
+    # Data do evento (apenas YYYY-MM-DD)
+    data_evento = ''
+    try:
+        dh = evento.get('dataHoraInicio', '') or ''
+        if dh and dh != 'N/D':
+            data_evento = str(dh)[:10]  # '2026-05-20'
+    except Exception:
+        pass
+
+    # Monta set de projetos na pauta atual (códigos normalizados)
+    projetos_pauta = set()
+    for item in itens:
+        proj = item.get('projeto_original') or item.get('projeto', '')
+        projetos_pauta.add(_normalizar_codigo(proj.split(' ao ')[0].strip()))
+
+    # Detecta remanescentes e REQs com PL na mesma pauta
+    for item in itens:
+        saved_at = item.get('saved_at', '') or ''
+        tem_analise = bool(item.get('resumo_materia', '').strip())
+        item['eh_remanescente'] = False
+        item['req_pl_mesmo_dia'] = False
+
+        if tem_analise and saved_at and data_evento:
+            data_salvo = str(saved_at)[:10]  # '2026-05-19'
+            if data_salvo and data_salvo != data_evento:
+                item['eh_remanescente'] = True
+
+        # REQ com PL referenciado na mesma pauta
+        proj = item.get('projeto', '') or ''
+        if ' ao ' in proj and tem_analise:
+            # Ex: "REQ 123/2026 ao PL 456/2023"
+            ref_parte = proj.split(' ao ')[1].strip()
+            ref_norm = _normalizar_codigo(ref_parte)
+            if ref_norm in projetos_pauta:
+                item['req_pl_mesmo_dia'] = True
+
     return render_template('pauta.html', evento_id=evento_id, evento=evento, itens=itens,
                            from_cache=from_cache, user_role=current_user.role,
                            user_categoria=current_user.categoria,
                            last_updated=last_updated, last_saved_user=last_saved_user,
                            assessores=assessores,
+                           data_evento=data_evento,
                            eh_responsavel_pauta=eh_responsavel_pauta)
 
 @app.route('/save_item', methods=['POST'])
