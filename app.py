@@ -275,13 +275,16 @@ with app.app_context():
             pass
 
         _cats = {
+            # Oposição
             'vinicius.scheffel': 'oposicao', 'lianna.barros': 'oposicao',
             'marcelo.uvara': 'oposicao', 'elyesley.silva': 'oposicao',
             'pedro.chaves': 'oposicao',
+            # Minoria
             'ulisses.branco': 'minoria', 'eduardo.borba': 'minoria',
             'luisa.marreco': 'minoria', 'luiz.garibaldi': 'minoria',
             'assessor_plenario': 'minoria', 'marcelo.oliveira': 'minoria',
         }
+        # Atualiza categorias — sempre roda para corrigir registros existentes
         for _un, _cat in _cats.items():
             try:
                 c.execute(f'UPDATE users SET categoria={_p} WHERE username={_p}', (_cat, _un))
