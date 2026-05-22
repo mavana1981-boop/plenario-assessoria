@@ -1648,12 +1648,19 @@ def add_usuario():
     conn = get_conn()
     c = conn.cursor()
     try:
+        # Verifica se já existe
+        c.execute('SELECT id FROM users WHERE username=?', (username,))
+        if c.fetchone():
+            return jsonify({'error': 'Usuário já existe'}), 409
         c.execute('INSERT INTO users (username, password, role, categoria, nome_display) VALUES (?, ?, ?, ?, ?)',
                   (username, hashed, role, categoria, nome_display or username))
         conn.commit()
         return jsonify({'message': 'Usuário criado!'})
-    except (sqlite3.IntegrityError, Exception):
-        return jsonify({'error': 'Usuário já existe'}), 409
+    except Exception as e:
+        logger.error(f"Erro add_usuario: {e}")
+        if 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
+            return jsonify({'error': 'Usuário já existe'}), 409
+        return jsonify({'error': str(e)}), 500
     finally:
         conn.close()
 
@@ -1752,13 +1759,17 @@ def atribuir_responsavel():
 @login_required
 def listar_assessores():
     """Lista usuários disponíveis para atribuição de proposição."""
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('SELECT username, nome_display, foto FROM users WHERE role != "restrito" ORDER BY nome_display, username')
-    rows = c.fetchall()
-    conn.close()
-    assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or ''} for r in rows]
-    return jsonify({'assessores': assessores})
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute('SELECT username, nome_display, foto FROM users WHERE categoria != ? ORDER BY nome_display, username', ('restrito',))
+        rows = c.fetchall()
+        conn.close()
+        assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or ''} for r in rows]
+        return jsonify({'assessores': assessores})
+    except Exception as e:
+        logger.error(f"Erro listar_assessores: {e}")
+        return jsonify({'assessores': [], 'error': str(e)})
 
 @app.route('/exportar_orientacoes_pdf', methods=['POST'])
 @login_required
