@@ -78,8 +78,9 @@ def get_conn():
                     sql = re.sub(r'INSERT OR IGNORE INTO\b', 'INSERT INTO', sql, flags=re.I)
                     sql += ' ON CONFLICT DO NOTHING'
                 sql = re.sub(r'\bAUTOINCREMENT\b', '', sql, flags=re.I)
+                # pg8000 não aceita params=None
                 if params is not None:
-                    return _orig_exec(sql, params)
+                    return _orig_exec(sql, list(params) if not isinstance(params, (list, tuple)) else params)
                 return _orig_exec(sql)
             def _execmany(sql, params):
                 sql = sql.replace('?', '%s')
@@ -990,12 +991,16 @@ def view_pauta(evento_id):
         evento = {'id': evento_id, 'dataHoraInicio': 'N/D', 'situacao': 'N/D', 'descricao': 'Sessão Deliberativa', 'local': 'Plenário'}
 
     # Carrega assessores com foto e responsavel_pauta
-    conn2 = get_conn()
-    c2 = conn2.cursor()
-    c2.execute('SELECT username, nome_display, foto, responsavel_pauta FROM users WHERE role != "restrito" ORDER BY nome_display, username')
-    rows_ass = c2.fetchall()
-    conn2.close()
-    assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or '', 'responsavel_pauta': bool(r[3])} for r in rows_ass]
+    try:
+        conn2 = get_conn()
+        c2 = conn2.cursor()
+        c2.execute('SELECT username, nome_display, foto, responsavel_pauta FROM users ORDER BY nome_display, username')
+        rows_ass = c2.fetchall()
+        conn2.close()
+        assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or '', 'responsavel_pauta': bool(r[3])} for r in rows_ass]
+    except Exception as e:
+        logger.warning(f"Erro ao carregar assessores: {e}")
+        assessores = []
     # Verifica se usuário atual é responsável pela pauta
     eh_responsavel_pauta = any(a['username'] == current_user.username and a['responsavel_pauta'] for a in assessores) or current_user.role == 'Admin'
     # Adiciona responsavel_username em cada item
