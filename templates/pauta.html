@@ -605,31 +605,48 @@
           }
           const j = await r.json();
           if (j.error) { alert(j.error); return; }
-          // Atualiza foto e nome ao lado do select
+          // Atualiza container com logo + foto + nome
           const container = sel.closest('[id^="resp-container-"]');
           if (container) {
-            const fotoEl = container.querySelector('img');
-            const nomeEl = container.querySelector('small');
+            // Remove elementos antigos (logo, foto, small)
+            container.querySelectorAll('img:not(select img), small').forEach(el => el.remove());
             if (!username) {
-              // Limpa responsável
-              if (fotoEl) fotoEl.remove();
-              if (nomeEl) nomeEl.textContent = 'Sem responsável atribuído';
+              const sm = document.createElement('small');
+              sm.className = 'text-muted fst-italic';
+              sm.textContent = 'Sem responsável atribuído';
+              sel.before(sm);
             } else {
               const r2 = await fetch('/listar_assessores');
               const j2 = await r2.json();
               const assessor = j2.assessores.find(a => a.username === username);
               if (assessor) {
-                if (assessor.foto) {
-                  let img = container.querySelector('img');
-                  if (!img) {
-                    img = document.createElement('img');
-                    img.style.cssText = 'width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid #ccc;';
-                    container.insertBefore(img, container.firstChild);
-                  }
-                  img.src = assessor.foto;
-                  img.alt = assessor.nome;
+                // Logo da bancada primeiro
+                if (assessor.categoria === 'minoria') {
+                  const logo = document.createElement('img');
+                  logo.src = '/static/logo_minoria.png';
+                  logo.style.cssText = 'height:22px;object-fit:contain;';
+                  logo.alt = 'Minoria';
+                  sel.before(logo);
+                } else if (assessor.categoria === 'oposicao') {
+                  const logo = document.createElement('img');
+                  logo.src = '/static/logo_oposicao.png';
+                  logo.style.cssText = 'height:22px;object-fit:contain;';
+                  logo.alt = 'Oposição';
+                  sel.before(logo);
                 }
-                if (nomeEl) nomeEl.innerHTML = 'Responsável: <strong>' + assessor.nome + '</strong>';
+                // Foto do usuário
+                if (assessor.foto) {
+                  const foto = document.createElement('img');
+                  foto.src = assessor.foto;
+                  foto.alt = assessor.nome;
+                  foto.style.cssText = 'width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid #ccc;';
+                  sel.before(foto);
+                }
+                // Nome
+                const sm = document.createElement('small');
+                sm.className = 'text-muted';
+                sm.innerHTML = 'Responsável: <strong>' + assessor.nome + '</strong>';
+                sel.before(sm);
               }
             }
           }
