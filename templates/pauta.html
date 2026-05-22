@@ -587,6 +587,18 @@
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({item_key: itemKey, evento_id: eventoId, responsavel_username: username})
           });
+          // Verifica se sessão expirou (retornou HTML de login)
+          const ct = r.headers.get('content-type') || '';
+          if (!ct.includes('application/json')) {
+            if (r.status === 401 || r.url.includes('login')) {
+              alert('Sessão expirada. Faça login novamente.');
+              window.location.href = '/login';
+              return;
+            }
+            const txt = await r.text();
+            alert('Erro inesperado: ' + txt.substring(0, 200));
+            return;
+          }
           const j = await r.json();
           if (j.error) { alert(j.error); return; }
           // Atualiza foto e nome ao lado do select
