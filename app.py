@@ -1015,10 +1015,10 @@ def view_pauta(evento_id):
     try:
         conn2 = get_conn()
         c2 = conn2.cursor()
-        c2.execute('SELECT username, nome_display, foto, responsavel_pauta FROM users ORDER BY nome_display, username')
+        c2.execute('SELECT username, nome_display, foto, responsavel_pauta, categoria FROM users ORDER BY nome_display, username')
         rows_ass = c2.fetchall()
         conn2.close()
-        assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or '', 'responsavel_pauta': bool(r[3])} for r in rows_ass]
+        assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or '', 'responsavel_pauta': bool(r[3]), 'categoria': r[4] or 'geral'} for r in rows_ass]
     except Exception as e:
         logger.warning(f"Erro ao carregar assessores: {e}")
         assessores = []
