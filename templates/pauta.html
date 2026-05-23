@@ -1730,19 +1730,27 @@ async function exportarOrientacoesPDF() {
 
 <!-- ═══ MODAL PAUTA ICONOGRÁFICA ══════════════════════════════════════════ -->
 <div class="modal fade" id="modalIconografica" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width:95vw;">
     <div class="modal-content">
       <div class="modal-header" style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);color:#fff;">
-        <h5 class="modal-title"><i class="fas fa-th-large me-2"></i>Pauta Iconográfica — Configurar</h5>
+        <h5 class="modal-title"><i class="fas fa-th-large me-2"></i>Pauta Iconográfica</h5>
+        <div class="ms-auto me-3 d-flex gap-2">
+          <span id="icon-status" class="badge bg-warning text-dark" style="font-size:0.75rem;"></span>
+        </div>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body" id="iconografica-body">
-        <!-- Itens preenchidos via JS -->
+      <div class="modal-body p-0" style="background:#f4ede1;">
+        <!-- Preview em tempo real -->
+        <div id="icon-preview-container" style="padding:16px;">
+          <div id="icon-preview" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:794px;margin:0 auto;">
+            <!-- Cards gerados via JS -->
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
         <button class="btn btn-primary" id="btn-gerar-iconografica">
-          <i class="fas fa-print me-1"></i>Gerar e Imprimir
+          <i class="fas fa-print me-1"></i>Imprimir / Salvar PDF
         </button>
       </div>
     </div>
@@ -1751,9 +1759,261 @@ async function exportarOrientacoesPDF() {
 <script>
 (function() {
   const _prioridades = {};
-  const _imagens     = {};
+  const _imagens     = {}; // dataURL por id
+  const _imgBusy     = {}; // flag carregando
 
-  function abrirModalIconografica() {
+  const C = {cream:"#f4ede1",ink:"#1e3550",inkSoft:"#34547a",forest:"#3d8b4a",leaf:"#7ab450",ruby:"#c0392b",amber:"#f4c542"};
+
+  function oriCfg(o){
+    o=(o||'').toUpperCase();
+    if(o==='SIM')        return{bg:'#2e7d32',icon:'check'};
+    if(o==='NÃO')        return{bg:'#c0392b',icon:'cross'};
+    if(o==='OBSTRUÇÃO')  return{bg:'#c0392b',icon:'lock'};
+    if(o==='NEGOCIAÇÃO') return{bg:'#e6a817',icon:'check'};
+    if(o==='LIBERADO')   return{bg:'#5e7184',icon:'check'};
+    if(o==='ABSTENÇÃO')  return{bg:'#9e9e9e',icon:'check'};
+    return{bg:'#9e9e9e',icon:'check'};
+  }
+
+  function svgIco(t,c){
+    if(t==='check')return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M20 33 L29 42 L45 24" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    if(t==='cross')return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M22 22 L42 42 M42 22 L22 42" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round"/></svg>`;
+    if(t==='lock') return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M24 30 v-4 a8 8 0 0 1 16 0" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/><rect x="22" y="30" width="20" height="16" rx="2" fill="#fff"/></svg>`;
+    return'';
+  }
+
+  function e(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+  // Busca imagem via backend (Gemini para keywords + Pexels)
+  async function buscarImagem(resumo, id) {
+    try {
+      const r = await fetch('/buscar_imagem_item', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({resumo, id_principal: id})
+      });
+      if (!r.ok) return null;
+      const j = await r.json();
+      return j.imagem_url || null;
+    } catch { return null; }
+  }
+
+  // Renderiza um card no preview
+  function renderCard(item, container) {
+    const id  = String(item.id_principal);
+    const cfg = oriCfg(item.orientacao);
+    const resumoEl = document.getElementById('resumo-ia-' + id);
+    const resumo   = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || '';
+    const descricao = (resumo || item.ementa || '').substring(0, 180);
+    const imgSrc   = _imagens[id];
+    const prio     = !!_prioridades[id];
+    const shadow   = prio ? `0 0 0 3px ${C.amber},0 6px 14px rgba(0,0,0,.10)` : '0 3px 10px rgba(0,0,0,.06)';
+
+    container.innerHTML = `
+      <div style="background:#fff;border-radius:10px;padding:11px 12px 0;position:relative;
+        box-shadow:${shadow};overflow:hidden;font-family:'Barlow',sans-serif;">
+        <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${cfg.bg};"></div>
+        ${prio ? `<div style="position:absolute;top:6px;right:6px;background:${C.amber};color:#fff;font-size:8px;font-weight:900;letter-spacing:.8px;padding:2px 6px;border-radius:4px;">★ PRIORIDADE</div>` : ''}
+
+        <!-- Controles inline -->
+        <div style="position:absolute;bottom:8px;right:8px;display:flex;gap:4px;z-index:10;">
+          <label title="Trocar imagem" style="cursor:pointer;background:rgba(255,255,255,.9);border:1px solid #ccc;border-radius:4px;padding:2px 6px;font-size:10px;">
+            📷 <input type="file" accept="image/*" class="d-none icon-img-inline" data-id="${id}">
+          </label>
+          <label title="${prio?'Remover prioridade':'Marcar como prioritária'}" style="cursor:pointer;background:${prio?C.amber:'rgba(255,255,255,.9)'};color:${prio?'#fff':'#333'};border:1px solid #ccc;border-radius:4px;padding:2px 6px;font-size:10px;" class="icon-prio-inline" data-id="${id}">★</label>
+        </div>
+
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;padding-left:2px;">
+          <div style="width:22px;height:22px;border-radius:50%;background:${C.inkSoft};color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">${e(item.ordem)}</div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:800;color:${C.ink};line-height:1.1;padding-right:60px;">${e(item.projeto||'')}</div>
+        </div>
+
+        ${imgSrc ? `
+        <div style="width:100%;height:120px;border-radius:6px;overflow:hidden;margin:4px 0 6px;background:#f5f5f5;display:flex;align-items:center;justify-content:center;">
+          <img src="${imgSrc}" style="max-width:100%;max-height:100%;width:100%;height:100%;object-fit:contain;background:#fff;">
+        </div>` : `
+        <div class="icon-img-placeholder" data-id="${id}" style="width:100%;height:50px;border-radius:6px;margin:4px 0 6px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:11px;">
+          ${_imgBusy[id] ? '⏳ Buscando imagem…' : '📷 Sem imagem'}
+        </div>`}
+
+        <div style="font-size:9px;color:${C.inkSoft};line-height:1.5;padding-left:2px;">
+          <div><strong>Autor:</strong> ${e((item.autor||'N/D').substring(0,60))}</div>
+          <div><strong>Relator:</strong> ${e((item.relator||'N/D').substring(0,60))}</div>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px;margin-top:6px;padding-left:2px;padding-bottom:8px;">
+          <div style="flex:1;font-size:10px;color:#2c3e50;line-height:1.4;">${e(descricao)}</div>
+          <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
+            ${svgIco(cfg.icon, cfg.bg)}
+            <div style="font-size:8px;font-weight:900;color:${cfg.bg};margin-top:2px;letter-spacing:.5px;">${e(item.orientacao||'—')}</div>
+          </div>
+        </div>
+        <div style="height:4px;background:linear-gradient(90deg,${C.leaf} 0%,${C.forest} 100%);margin-left:-12px;margin-right:-12px;"></div>
+      </div>`;
+
+    // Listener trocar imagem
+    container.querySelector('.icon-img-inline')?.addEventListener('change', function() {
+      const file = this.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => { _imagens[id] = ev.target.result; renderCard(item, container); };
+      reader.readAsDataURL(file);
+    });
+
+    // Listener prioridade
+    container.querySelector('.icon-prio-inline')?.addEventListener('click', function() {
+      _prioridades[id] = !_prioridades[id];
+      renderCard(item, container);
+    });
+  }
+
+  // Busca imagens para todos os itens
+  async function buscarTodasImagens(itens) {
+    const status = document.getElementById('icon-status');
+    let n = 0;
+    for (const item of itens) {
+      const id = String(item.id_principal);
+      if (_imagens[id]) { n++; continue; }
+      const resumoEl = document.getElementById('resumo-ia-' + id);
+      const resumo = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || item.ementa || '';
+      const query = resumo.substring(0, 80);
+      if (!query) continue;
+      _imgBusy[id] = true;
+      if (status) status.textContent = `Buscando imagens… ${n+1}/${itens.length}`;
+      // Atualiza placeholder
+      const ph = document.querySelector(`.icon-img-placeholder[data-id="${id}"]`);
+      if (ph) ph.textContent = '⏳ Buscando…';
+      const dataUrl = await buscarImagem(query, id);
+      _imgBusy[id] = false;
+      if (dataUrl) _imagens[id] = dataUrl;
+      n++;
+      // Re-renderiza o card
+      const container = document.querySelector(`[data-card-id="${id}"]`);
+      if (container) {
+        const itemData = itens.find(i => String(i.id_principal) === id);
+        if (itemData) renderCard(itemData, container);
+      }
+    }
+    if (status) status.textContent = '✅ Pronto';
+  }
+
+  async function abrirModalIconografica() {
+    const preview = document.getElementById('icon-preview');
+    if (!preview) return;
+    const itens = window.ITENS_DATA || [];
+
+    // Limpa e renderiza grid
+    preview.innerHTML = '';
+    itens.forEach(item => {
+      const wrapper = document.createElement('div');
+      wrapper.dataset.cardId = String(item.id_principal);
+      preview.appendChild(wrapper);
+      renderCard(item, wrapper);
+    });
+
+    const modal = new bootstrap.Modal(document.getElementById('modalIconografica'));
+    modal.show();
+
+    // Busca imagens em background
+    buscarTodasImagens(itens);
+  }
+
+  async function b64url(url){
+    try{
+      const r=await fetch(url);const blob=await r.blob();
+      return await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(blob);});
+    }catch{return null;}
+  }
+
+  function buildPrintHTML(data){
+    const mid=Math.ceil(data.items.length/2);
+    const left=data.items.slice(0,mid),right=data.items.slice(mid);
+    const card=it=>{
+      const cfg=oriCfg(it.orientacao);
+      const shadow=it.prioridade?`0 0 0 2.5px ${C.amber},0 6px 14px rgba(0,0,0,.10)`:'0 3px 10px rgba(0,0,0,.06)';
+      const prio=it.prioridade?`<div style="position:absolute;top:6px;right:6px;background:${C.amber};color:#fff;font-size:8px;font-weight:900;padding:2px 6px;border-radius:4px;">★ PRIORIDADE</div>`:'';
+      const img=it.imagem?`<div style="width:100%;height:110px;border-radius:6px;overflow:hidden;margin:4px 0 6px;background:#fff;display:flex;align-items:center;justify-content:center;"><img src="${it.imagem}" style="max-width:100%;max-height:110px;object-fit:contain;"></div>`:'';
+      return`<div style="background:#fff;border-radius:10px;padding:11px 12px 0;position:relative;box-shadow:${shadow};overflow:hidden;page-break-inside:avoid;">
+        <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${cfg.bg};"></div>
+        ${prio}
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;padding-left:2px;">
+          <div style="width:22px;height:22px;border-radius:50%;background:${C.inkSoft};color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${e(it.num)}</div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:800;color:${C.ink};line-height:1.1;">${e(it.codigo)}</div>
+        </div>
+        ${img}
+        <div style="font-size:9px;color:${C.inkSoft};line-height:1.5;padding-left:2px;">
+          <div><strong>Autor:</strong> ${e(it.autor)}</div>
+          <div><strong>Relator:</strong> ${e(it.relator)}</div>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px;margin-top:6px;padding-left:2px;padding-bottom:8px;">
+          <div style="flex:1;font-size:10px;color:#2c3e50;line-height:1.4;">${e(it.descricao)}</div>
+          <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
+            ${svgIco(cfg.icon,cfg.bg)}
+            <div style="font-size:8px;font-weight:900;color:${cfg.bg};margin-top:2px;letter-spacing:.5px;">${e(it.orientacao||'—')}</div>
+          </div>
+        </div>
+        <div style="height:4px;background:linear-gradient(90deg,${C.leaf} 0%,${C.forest} 100%);margin-left:-12px;margin-right:-12px;"></div>
+      </div>`;
+    };
+    const logos=`<div style="display:flex;justify-content:center;align-items:center;gap:26px;margin-top:12px;">
+      ${data.logo_min?`<img src="${data.logo_min}" style="height:38px;object-fit:contain;">`:`<div style="font-size:10px;font-weight:900;color:${C.forest};">LIDERANÇA DA MINORIA</div>`}
+      ${data.logo_opo?`<img src="${data.logo_opo}" style="height:38px;object-fit:contain;">`:`<div style="font-size:10px;font-weight:900;color:${C.ruby};">OPOSIÇÃO</div>`}
+    </div>`;
+    return`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pauta Iconográfica</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800;900&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet">
+<style>@page{size:A4;margin:0}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}body{margin:0;padding:0;background:${C.cream};font-family:'Barlow',sans-serif;color:${C.ink}}.page{width:794px;min-height:1123px;margin:0 auto;background:${C.cream};padding-bottom:30px;position:relative}.pattern{position:absolute;inset:0;opacity:.04;pointer-events:none;background-image:radial-gradient(${C.ink} 1px,transparent 1px);background-size:16px 16px}.col{display:flex;flex-direction:column;gap:14px}</style></head><body>
+<div class="page"><div class="pattern"></div>
+<div style="padding:24px 28px 10px;text-align:center;">
+  <div style="font-family:'Barlow Condensed',sans-serif;font-size:26px;font-weight:800;color:${C.ink};line-height:1.15;">
+    Pauta Iconográfica — Plenário da Câmara<br/><span style="font-size:16px;font-weight:600;">${e(data.data)}</span>
+  </div>${logos}
+</div>
+<div style="padding:12px 22px 0;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+  <div class="col">${left.map(card).join('')}</div>
+  <div class="col">${right.map(card).join('')}</div>
+</div></div></body></html>`;
+  }
+
+  async function gerarIconografica() {
+    const btn = document.getElementById('btn-gerar-iconografica');
+    if (btn) { btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Preparando…'; }
+
+    const [logo_min, logo_opo] = await Promise.all([b64url('/static/logo_minoria.png'), b64url('/static/logo_oposicao.png')]);
+    const dataEvento = (document.querySelector('[data-evento-data]')||{}).dataset?.eventoData||'';
+
+    const itens = (window.ITENS_DATA||[]).map(item => {
+      const id = String(item.id_principal);
+      const resumoEl = document.getElementById('resumo-ia-'+id);
+      const resumo = (resumoEl&&resumoEl.textContent.trim())||item.resumo_ia||'';
+      return {
+        num: String(item.ordem||''), codigo: item.projeto||'',
+        autor: (item.autor||'N/D').substring(0,60),
+        relator: (item.relator||'N/D').substring(0,60),
+        descricao: (resumo||(item.ementa||'')).substring(0,180),
+        orientacao: (item.orientacao||'').toUpperCase(),
+        prioridade: !!_prioridades[id],
+        imagem: _imagens[id]||null,
+      };
+    });
+
+    itens.sort((a,b)=>(b.prioridade?1:0)-(a.prioridade?1:0));
+
+    bootstrap.Modal.getInstance(document.getElementById('modalIconografica'))?.hide();
+
+    const w = window.open('','_blank');
+    if (!w) { alert('Permita pop-ups.'); return; }
+    w.document.write(buildPrintHTML({data:dataEvento, items:itens, logo_min, logo_opo}));
+    w.document.close();
+    w.focus();
+    setTimeout(()=>w.print(), 800);
+
+    if (btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-print me-1"></i>Imprimir / Salvar PDF'; }
+  }
+
+  document.addEventListener('DOMContentLoaded', ()=>{
+    document.getElementById('btn-iconografica')?.addEventListener('click', abrirModalIconografica);
+    document.getElementById('btn-gerar-iconografica')?.addEventListener('click', gerarIconografica);
+  });
+})();
+</script>
     const body = document.getElementById('iconografica-body');
     if (!body) return;
     const itens = window.ITENS_DATA || [];
