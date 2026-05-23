@@ -1,2195 +1,319 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Assessoria - Plenário da Câmara dos Deputados</title>
-  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-  <link href="/static/style.css" rel="stylesheet">
-  <style>
-    .item-header {
-      display: flex; justify-content: space-between; align-items: center;
-      cursor: pointer; color: #006633; font-weight: 600; font-size: 0.95rem; padding: 0.3rem 0;
-    }
-    .item-header:hover { color: #004d26; }
-    .item-info { font-size: 0.85rem; color: #555; }
-    .collapse-toggle-icon { transition: transform 0.3s ease; }
-    .collapse.show + .item-header .collapse-toggle-icon,
-    .item-header[aria-expanded="true"] .collapse-toggle-icon { transform: rotate(180deg); }
-    .secao-badge {
-      font-size: 0.75rem;
-      padding: 0.3em 0.5em;
-      border-radius: 0.3rem;
-      margin-left: 10px;
-      color: #fff !important;
-    }
-    .secao-badge.bg-warning { color: #000 !important; }
-    .secao-badge.bg-primary { background-color: #0d6efd !important; }
-    .secao-badge.bg-info { background-color: #17a2b8 !important; }
-    .secao-badge.bg-success { background-color: #28a745 !important; }
-    .secao-badge.bg-warning { background-color: #ffc107 !important; }
-    .secao-badge.bg-secondary { background-color: #6c757d !important; }
-    .last-updated {
-      font-size: 0.75rem;
-      color: #6c757d;
-      margin-left: 10px;
-    }
-
-    .editor-overlay {
-      position: absolute;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(255,255,255,0.8);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      z-index: 9999;
-      font-size: 0.9rem;
-      color: #333;
-      font-style: italic;
-    }
-    .editor-spinner {
-      margin: 10px auto;
-      width: 40px;
-      height: 40px;
-      border: 4px solid #ccc;
-      border-top-color: #007bff;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
-    @keyframes spin {
-      from { transform: rotate(0deg); }
-      to   { transform: rotate(360deg); }
-    }
-    .ql-container { font-size: 14px; font-family: 'Segoe UI', Arial, sans-serif; }
-    .ql-editor { min-height: 550px; }
-    .ql-toolbar.ql-snow, .ql-container.ql-snow { width: 100%; box-sizing: border-box; }
-    .logo-header { width: 80px; height: 50px; object-fit: contain; background: transparent; }
-  </style>
-</head>
-
-<body>
-  <div class="alert text-center py-1 mb-0" 
-     style="font-size:0.85rem; background-color:#b5d3bc; color:#4d5d4d; border:1px solid #dbe3da;">
-    ⚠️ Ambiente de desenvolvimento — dados e análises podem conter erros.
-  </div>
-
-  <div class="header" style="background: #fff !important; border-bottom: 3px solid #1A6B3A; box-shadow: 0 2px 6px rgba(0,0,0,0.08);">
-    <div class="container header-wrap d-flex align-items-center justify-content-between">
-      <div class="d-flex align-items-center">
-        <div class="header-logos me-3 d-flex align-items-center gap-3">
-          <img src="/static/logo_minoria.png" alt="Liderança da Minoria"
-            style="width:90px;height:55px;object-fit:contain;background:transparent;"
-            onerror="this.style.display='none'">
-          <img src="/static/logo_oposicao.png" alt="Oposição"
-            style="width:90px;height:55px;object-fit:contain;background:transparent;"
-            onerror="this.style.display='none'">
-        </div>
-        <div class="header-text">
-          <h1 class="titulo-app mb-0" style="color:#1A6B3A !important;">Assessoria de Plenário</h1>
-          <p class="subtitulo-app mb-0" style="color:#444 !important;">Lideranças da Minoria e da Oposição — Câmara dos Deputados</p>
-        </div>
-      </div>
-      <div class="text-end">
-        <a href="{{ url_for('logout') }}" class="btn btn-outline-success btn-sm mb-1">
-          <i class="fas fa-sign-out-alt me-2"></i>Sair
-        </a>
-        <a href="{{ url_for('trocar_senha') }}" class="btn btn-outline-secondary btn-sm mb-1 ms-1">
-          <i class="fas fa-key me-1"></i>Senha
-        </a><br>
-        <small style="color:#444;">{{ current_user.username }}</small>
-        {% if current_user.is_authenticated and current_user.role == 'Admin' %}
-          <a href="{{ url_for('admin_usuarios') }}" 
-            class="btn btn-sm mb-1 ms-1"
-            style="color: rgba(255,255,255,0.5); border: none;"
-            onmouseover="this.style.color='#ffc107'" 
-            onmouseout="this.style.color='rgba(255,255,255,0.5)'">
-            <i class="fas fa-cog"></i>
-          </a>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-
-  <div class="container my-4">
-    <div class="sessao-info p-3 bg-light border rounded mb-3">
-      <h5 class="mb-2"><i class="fas fa-users text-success me-2"></i>Sessão Deliberativa</h5>
-      {% if from_cache %}
-      <div class="alert alert-warning text-center py-2 mb-3" style="font-size: 0.9rem;">
-        🔁 Exibindo versão em cache — dados indisponíveis ou instáveis no momento.
-      </div>
-      {% endif %}
-      <div class="small text-muted">
-        <strong><i class="far fa-clock me-1"></i>Data/Hora:</strong>
-        <span data-evento-data="{{ evento.dataHoraInicio | datetimeformat('%d/%m/%Y') if evento.dataHoraInicio and evento.dataHoraInicio != 'N/D' else '' }}">
-        {{ evento.dataHoraInicio | default('N/D') | replace('T', ' ') | datetimeformat('%d/%m/%Y %H:%M') if evento.dataHoraInicio != 'N/D' else 'N/D' }}
-        </span><br>
-        <strong><i class="fas fa-info-circle me-1"></i>Situação:</strong>
-        <span class="badge {{ 'bg-success' if evento.situacao|default('')|lower == 'em andamento' else 'bg-secondary' }}">
-          {{ evento.situacao | default('N/D') }}
-        </span><br>
-        <strong><i class="fas fa-align-left me-1"></i>Descrição:</strong> {{ evento.descricao | default('Sem descrição') }}<br>
-        <strong><i class="fas fa-map-marker-alt me-1"></i>Local:</strong> {{ evento.local | default('N/D') }}<br>
-        <strong><i class="fas fa-save me-1"></i>Última atualização:</strong>
-        <span id="ultimo-salvamento">
-          {% if last_updated %}{{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}{% else %}Nenhum registro{% endif %}
-        </span>
-        <span id="ultimo-usuario" class="text-muted">
-          {% if last_saved_user %} — por <strong>{{ last_saved_user }}</strong>{% endif %}
-        </span>
-      </div>
-    </div>
-
-    <div class="d-flex align-items-center flex-wrap">
-      {% if user_categoria != 'restrito' %}
-      <a href="{{ url_for('selecionar_data') }}" class="btn btn-outline-secondary btn-sm mb-3">
-        <i class="fas fa-arrow-left me-2"></i>Voltar para Seleção de Data
-      </a>
-      <a href="{{ url_for('view_pauta', evento_id=evento_id, force_reload='true') }}" class="btn btn-outline-primary btn-sm mb-3 ms-2">
-        <i class="fas fa-sync-alt me-2"></i>Atualizar Pauta
-      </a>
-      <a href="/limpar_cache/{{ evento_id }}" class="btn btn-outline-warning btn-sm mb-3 ms-2"
-              title="Remove cache e reprocessa a pauta"
-              onclick="return confirm('Limpar cache desta pauta?')">
-        <i class="fas fa-broom me-1"></i>Limpar Cache
-      </a>
-      <a href="{{ url_for('export_resumo', evento_id=evento_id) }}"
-        class="btn btn-outline-success btn-sm mb-3 ms-2" target="_blank" rel="noopener">
-        <i class="fas fa-file-export me-2"></i>Exportar resumo
-      </a>
-      <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-iconografica"
-        style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
-        <i class="fas fa-th-large me-2"></i>Pauta Iconográfica
-      </button>
-      <button class="btn btn-sm mb-3 ms-2 text-white"
-        style="background:linear-gradient(135deg,#25D366,#128C7E);"
-        data-bs-toggle="modal" data-bs-target="#modalMensagens">
-        <i class="fab fa-whatsapp me-2"></i>Mensagens Plenário
-      </button>
-      {% endif %}
-      <button class="btn btn-sm mb-3 ms-2 text-white"
-        style="background:linear-gradient(135deg,#B8860B,#DAA520);"
-        data-bs-toggle="modal" data-bs-target="#modalOrientacoes"
-        onclick="carregarOrientacoes()">
-        <i class="fas fa-vote-yea me-2"></i>Orientações
-      </button>
-
-      {% if last_updated and user_categoria != 'restrito' %}
-      <small class="last-updated mb-3">Atualizado em {{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</small>
-      {% endif %}
-    </div>
-
-    {% if user_categoria == 'restrito' %}
-    <div class="alert alert-info mt-2">
-      <i class="fas fa-info-circle me-2"></i>
-      Seu acesso é restrito ao registro de <strong>Orientações</strong>.
-      Clique no botão acima para registrar a orientação do seu grupo.
-    </div>
-    {% else %}
-    {% if itens %}
-      {% for item in itens %}
-      <div class="item-card mb-3">
-        <div class="card-body">
-          <div class="item-header" data-bs-toggle="collapse" data-bs-target="#col-{{ item.ordem }}-{{ item.id_principal }}" aria-expanded="false">
-            <div>
-              <i class="fas fa-file-alt text-primary me-2"></i>
-              Item {{ item.ordem }} — <strong>{{ item.projeto }}</strong> — <strong>Autor:</strong> {{ item.autor }}
-              <span class="badge secao-badge 
-                {{ 'bg-primary' if item.status in ['Proposta em Análise', 'Propostas em Análise'] else 
-                   'bg-info' if item.status in ['Proposta Prevista', 'Propostas Previstas'] else 
-                   'bg-success' if item.status in ['Proposta Analisada', 'Propostas Analisadas'] else 
-                   'bg-warning text-dark' if item.status in ['Proposta Não Analisada', 'Propostas Não Analisadas'] else 
-                   'bg-secondary' }}">
-                {{ item.status | default('N/D') }}
-              </span>
-              <div class="item-info mt-1">
-                <strong>Situação:</strong> {{ item.situacao | default('N/D') }} &nbsp;&nbsp;
-                <strong>Relator:</strong> {{ item.relator }}
-              </div>
-              <div class="item-info mt-1 text-muted fst-italic"
-                   style="font-size:0.82rem; width:100%; white-space:normal; word-break:break-word;"
-                   data-ementa-id="{{ item.id_principal }}"
-                   data-projeto="{{ item.projeto }}"
-                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
-                   data-autor="{{ item.autor | replace('"','&quot;')  }}">
-                {{ item.ementa }}
-              </div>
-              <div class="resumo-ia-ementa mt-1"
-                   id="resumo-ia-{{ item.id_principal }}"
-                   data-id="{{ item.id_principal }}"
-                   data-projeto="{{ item.projeto | replace('"','&quot;') }}"
-                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
-                   data-autor="{{ item.autor | replace('"','&quot;') }}"
-                   style="font-size:0.82rem; color:#1A6B3A; font-weight:500; white-space:normal; word-break:break-word; display:none;">
-              </div>
-            </div>
-            <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
-          </div>
-
-          <div class="collapse" id="col-{{ item.ordem }}-{{ item.id_principal }}">
-            <hr class="mt-2 mb-2">
-
-            <!-- ASSESSOR RESPONSÁVEL -->
-            <div class="mb-3 d-flex align-items-center gap-2 flex-wrap" id="resp-container-{{ item.ordem }}">
-              {% set resp = assessores | selectattr('username', 'equalto', item.responsavel_username) | list %}
-              {% if resp %}
-                {% set r = resp[0] %}
-                {# Logo da bancada SEMPRE primeiro #}
-                {% if r.categoria == 'minoria' %}
-                  <img src="/static/logo_minoria.png" style="height:22px;object-fit:contain;" alt="Minoria">
-                {% elif r.categoria == 'oposicao' %}
-                  <img src="/static/logo_oposicao.png" style="height:22px;object-fit:contain;" alt="Oposição">
-                {% endif %}
-                {# Depois a foto do usuário se houver #}
-                {% if r.foto %}
-                  <img src="{{ r.foto }}" alt="{{ r.nome }}" style="width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
-                {% endif %}
-                <small class="text-muted">Responsável: <strong>{{ r.nome }}</strong></small>
-              {% else %}
-                <small class="text-muted fst-italic">Sem responsável atribuído</small>
-              {% endif %}
-              {% if eh_responsavel_pauta %}
-              <select class="form-select form-select-sm w-auto select-responsavel"
-                      data-item-key="PROP_{{ item.id_principal }}"
-                      data-evento-id="{{ evento_id }}"
-                      style="font-size:0.78rem; max-width:180px;">
-                <option value="">— Sem responsável —</option>
-                {% for a in assessores %}
-                  {% if a.username not in ['admin','PL','NOVO'] %}
-                    <option value="{{ a.username }}" {% if a.username == item.responsavel_username %}selected{% endif %}>
-                      {{ a.nome }}
-                    </option>
-                  {% endif %}
-                {% endfor %}
-              </select>
-              {% endif %}
-            </div>
-
-            {% if user_role == 'Assessor' %}
-              <!-- 🟡 MODO LEITURA -->
-
-              {# Aviso de item remanescente #}
-              {% if item.eh_remanescente and item.resumo_materia %}
-              <div class="alert alert-warning py-1 px-2 mb-2" style="font-size:0.82rem;">
-                <i class="fas fa-clock me-1"></i>
-                <strong>Item remanescente.</strong>
-                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
-                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
-              </div>
-              {% endif %}
-
-              {# Aviso de REQ com PL na mesma pauta #}
-              {% if item.req_pl_mesmo_dia and item.resumo_materia %}
-              <div class="alert alert-info py-1 px-2 mb-2" style="font-size:0.82rem;">
-                <i class="fas fa-link me-1"></i>
-                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
-                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
-              </div>
-              {% endif %}
-              <div class="mt-2">
-                <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
-                <div class="p-2 border rounded bg-light" style="min-height:150px; white-space:pre-wrap;">
-                  {{ item.resumo_materia | safe }}
-                </div>
-              </div>
-
-              <div class="mt-2">
-                <label class="form-label small"><strong>Orientação:</strong></label><br>
-                <span class="badge bg-secondary">{{ item.orientacao or '—' }}</span>
-              </div>
-
-              {% if item.destaques_emendas %}
-              <div class="mt-4">
-                <h6><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
-                <div class="table-responsive">
-                  <table class="table table-sm table-striped align-middle">
-                    <thead class="table-light">
-                      <tr>
-                        <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo Destaque</th><th>Situação</th><th>Resumo</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {% for d in item.destaques_emendas %}
-                      <tr>
-                        <td><strong>{{ d.numero }}</strong></td>
-                        <td>{{ d.autoria }}</td>
-                        <td>{{ d.descricao }}</td>
-                        <td>{{ d.tipo_destaque }}</td>
-                        <td><span class="badge {{ 'bg-warning' if d.situacao|lower == 'em tramitação' else 'bg-secondary' }}">{{ d.situacao }}</span></td>
-                        <td style="white-space:pre-wrap;">{{ d.resumo_nota | safe }}</td>
-                      </tr>
-                      {% endfor %}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              {% endif %}
-
-            {% else %}
-              <!-- 🔵 EDIÇÃO PARA ADMIN E ASSESSOR PLENÁRIO -->
-
-              {# Aviso de item remanescente #}
-              {% if item.eh_remanescente and item.resumo_materia %}
-              <div class="alert alert-warning py-1 px-2 mb-2" style="font-size:0.82rem;">
-                <i class="fas fa-clock me-1"></i>
-                <strong>Item remanescente.</strong>
-                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
-                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
-              </div>
-              {% endif %}
-
-              {# Aviso de REQ com PL na mesma pauta #}
-              {% if item.req_pl_mesmo_dia and item.resumo_materia %}
-              <div class="alert alert-info py-1 px-2 mb-2" style="font-size:0.82rem;">
-                <i class="fas fa-link me-1"></i>
-                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
-                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
-              </div>
-              {% endif %}
-              <div class="mt-2">
-                <label class="form-label small"><strong>Gerar sugestão de análise (Projeto principal):</strong></label>
-
-                <!-- Botão procurar último parecer -->
-                <div class="mb-2">
-                  <button class="btn btn-outline-info btn-sm" type="button"
-                    id="btn-ultimo-doc-{{ item.ordem }}"
-                    data-id-principal="{{ item.id_principal }}"
-                    data-projeto="{{ item.projeto }}"
-                    data-ordem="{{ item.ordem }}"
-                    onclick="verificarUltimoDoc(this)">
-                    <i class="fas fa-search me-1"></i>Procurar último parecer (PRLP/Substitutivo)
-                  </button>
-                  <div id="ultimo-doc-resultado-{{ item.ordem }}" class="mt-1" style="display:none;">
-                    <small class="text-info fw-bold" id="ultimo-doc-texto-{{ item.ordem }}"></small>
-                  </div>
-                </div>
-
-                <div class="input-group mb-2">
-                  <input type="text" id="numero_pl_{{ item.ordem }}" class="form-control" placeholder="Ex: PL 4363/2025">
-                  <button class="btn btn-outline-primary btn-gerar-analise" type="button"
-                    data-ordem="{{ item.ordem }}"
-                    data-projeto="{{ item.projeto }}"
-                    data-ementa="{{ item.ementa | replace('"', '') | replace("'", '')  }}"
-                    data-autor="{{ item.autor }}"
-                    data-relator="{{ item.relator }}"
-                    data-id-principal="{{ item.id_principal }}"
-                    onclick="gerarAnalise('{{ item.ordem }}', this)">
-                    <img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">
-                    Gerar Análise
-                  </button>
-                </div>
-                <small class="text-muted">A análise será inserida automaticamente no campo de Resumo/Nota Técnica.</small>
-              </div>
-
-              <div class="mt-2 position-relative" style="width:100%;">
-                <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
-                <textarea id="editor-resumo-materia-{{ item.ordem }}" class="d-none">{% if item.resumo_materia %}{{ item.resumo_materia | safe }}{% endif %}</textarea>
-                <div id="quill-editor-{{ item.ordem }}" data-ordem="{{ item.ordem }}" style="width:100%; background:#fff; min-height:500px;"></div>
-                <div id="overlay-{{ item.ordem }}" class="editor-overlay" style="display:none;">
-                  <div class="editor-spinner"></div>
-                  <p>📄 Modelo analisando a Proposição...<br>🧠 Gerando sugestão de nota técnica...</p>
-                </div>
-              </div>
-
-              <div class="mt-2">
-                <label class="form-label small"><strong>Orientação:</strong></label>
-                <select class="form-control editable-field orientacao" data-ordem="{{ item.ordem }}">
-                  <option value="" {% if not item.orientacao %}selected{% endif %}>Selecione</option>
-                  <option value="NEGOCIAÇÃO" {% if item.orientacao == 'NEGOCIAÇÃO' %}selected{% endif %}>NEGOCIAÇÃO</option>
-                  <option value="SIM" {% if item.orientacao == 'SIM' %}selected{% endif %}>SIM</option>
-                  <option value="NÃO" {% if item.orientacao == 'NÃO' %}selected{% endif %}>NÃO</option>
-                  <option value="LIBERADO" {% if item.orientacao == 'LIBERADO' %}selected{% endif %}>LIBERADO</option>
-                  <option value="OBSTRUÇÃO" {% if item.orientacao == 'OBSTRUÇÃO' %}selected{% endif %}>OBSTRUÇÃO</option>
-                  <option value="ABSTENÇÃO" {% if item.orientacao == 'ABSTENÇÃO' %}selected{% endif %}>ABSTENÇÃO</option>
-                </select>
-              </div>
-
-              {% if item.destaques_emendas %}
-              <div class="mt-4">
-                <h6><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
-                <div class="table-responsive">
-                  <table class="table table-sm table-striped align-middle">
-                    <thead class="table-light">
-                      <tr>
-                        <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo Destaque</th><th>Situação</th><th>IA</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {% for d in item.destaques_emendas %}
-                      <tr>
-                        <td><strong>{{ d.numero }}</strong></td>
-                        <td>{{ d.autoria }}</td>
-                        <td>{{ d.descricao }}</td>
-                        <td>{{ d.tipo_destaque }}</td>
-                        <td><span class="badge {{ 'bg-warning' if d.situacao|lower == 'em tramitação' else 'bg-secondary' }}">{{ d.situacao }}</span></td>
-                        <td>
-                          <button class="btn btn-outline-primary btn-sm"
-                            onclick="analisarDestaque(this)"
-                            data-id-principal="{{ item.id_principal }}"
-                            data-descricao="{{ d.descricao | replace('"','') }}"
-                            data-numero="{{ d.numero }}"
-                            data-autoria="{{ d.autoria | replace('"','') }}"
-                            data-projeto="{{ item.projeto }}">
-                            <i class="fas fa-robot"></i>
-                          </button>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td colspan="6">
-                          <div id="analise-destaque-{{ d.numero | replace(' ','-') }}" class="mt-1" style="display:none;">
-                            <div class="p-2 border rounded bg-light" style="font-size:0.85rem;"></div>
-                          </div>
-                          <label class="form-label small mt-2"><strong>Resumo/Nota Técnica — {{ d.numero }}:</strong></label>
-                          <textarea id="editor-resumo-destaque-{{ item.ordem }}-{{ loop.index }}" class="editable-field" data-numero="{{ d.numero }}">{% if d.resumo_nota %}{{ d.resumo_nota | safe }}{% endif %}</textarea>
-                        </td>
-                      </tr>
-                      {% endfor %}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              {% endif %}
-
-              <div class="d-flex align-items-center gap-3 mt-3 flex-wrap">
-                <button class="btn btn-primary btn-sm save-btn"
-                        data-ordem="{{ item.ordem }}"
-                        data-id-principal="{{ item.id_principal }}">Salvar</button>
-                <small class="text-muted" id="info-salvo-{{ item.ordem }}" style="font-size:0.8rem;">
-                  {% if item.saved_by and item.saved_at %}
-                    <i class="fas fa-check-circle text-success me-1"></i>
-                    Salvo por <strong>{{ item.saved_by }}</strong> em {{ item.saved_at | datetimeformat('%d/%m/%Y %H:%M') }}
-                  {% endif %}
-                </small>
-              </div>
-
-              <!-- DESTAQUES -->
-              <div class="mt-4">
-                <div class="d-flex align-items-center gap-2 mb-2">
-                  <h6 class="mb-0"><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
-                  <button class="btn btn-outline-warning btn-sm btn-buscar-destaques"
-                          data-id-proposicao="{{ item.id_principal }}"
-                          data-ordem="{{ item.ordem }}"
-                          data-projeto="{{ item.projeto }}">
-                    <i class="fas fa-search me-1"></i>Buscar Destaques
-                  </button>
-                  <span class="spinner-busca-{{ item.ordem }}" style="display:none;">
-                    <span class="spinner-border spinner-border-sm text-warning"></span>
-                    Buscando...
-                  </span>
-                </div>
-                <div id="tabela-destaques-{{ item.ordem }}" style="display:none;">
-                  <div class="table-responsive">
-                    <table class="table table-sm table-striped align-middle">
-                      <thead class="table-warning">
-                        <tr>
-                          <th>Número</th>
-                          <th>Autoria</th>
-                          <th>Descrição</th>
-                          <th>Tipo</th>
-                          <th>Situação</th>
-                          <th>IA</th>
-                        </tr>
-                      </thead>
-                      <tbody id="tbody-destaques-{{ item.ordem }}"></tbody>
-                    </table>
-                  </div>
-                  <div id="sem-destaques-{{ item.ordem }}" class="alert alert-info py-2" style="display:none;">
-                    <i class="fas fa-info-circle me-2"></i>Nenhum destaque em tramitação encontrado para esta proposição.
-                  </div>
-                </div>
-              </div>
-            {% endif %}
-          </div>
-        </div>
-      </div>
-      {% endfor %}
-    {% else %}
-      <div class="alert alert-info">Nenhum item encontrado na pauta para este evento.</div>
-    {% endif %}
-    {% endif %} {# fecha o else do restrito #}
-  </div>
-
-    <!-- JS -->
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-  <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
-  <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
-
-  <script>
-    const quillInstances = {};
-
-    // Inicializa Quill quando collapse abre
-    document.addEventListener('DOMContentLoaded', () => {
-      document.querySelectorAll('.collapse').forEach(collapseEl => {
-        collapseEl.addEventListener('shown.bs.collapse', () => {
-          const quillDiv = collapseEl.querySelector('[id^="quill-editor-"]');
-          if (!quillDiv) return;
-          const ordem = quillDiv.dataset.ordem;
-          if (quillInstances[ordem]) return;
-
-          const textarea = collapseEl.querySelector(`#editor-resumo-materia-${ordem}`);
-          const conteudo = textarea ? textarea.value : '';
-
-          const quill = new Quill(`#quill-editor-${ordem}`, {
-            theme: 'snow',
-            modules: {
-              toolbar: [
-                ['bold', 'italic', 'underline'],
-                [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-                ['clean']
-              ]
-            }
-          });
-
-          if (conteudo) quill.clipboard.dangerouslyPasteHTML(conteudo);
-          quillInstances[ordem] = quill;
-        });
-      });
-
-      // Botão SALVAR
-      document.querySelectorAll('.save-btn').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const ordem = btn.dataset.ordem;
-          const idPrincipal = btn.dataset.idPrincipal;
-
-          const quill = quillInstances[ordem];
-          const resumoMateria = quill ? quill.root.innerHTML : '';
-
-          const orientacaoEl = document.querySelector(`.orientacao[data-ordem="${ordem}"]`);
-          const orientacao = orientacaoEl ? orientacaoEl.value : '';
-
-          const dataToSend = {
-            evento_id: {{ evento_id|safe }},
-            ordem,
-            id_principal: idPrincipal,
-            resumo_materia: resumoMateria,
-            orientacao,
-            resumo_parecer: '',
-            destaques: []
-          };
-
-          const originalHtml = btn.innerHTML;
-          btn.disabled = true;
-          btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Salvando...';
-
-          try {
-            const r = await fetch('/save_item', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(dataToSend)
-            });
-            const j = await r.json();
-            btn.innerHTML = '<i class="fas fa-check me-1"></i>Salvo!';
-            btn.classList.remove('btn-success');
-            btn.classList.add('btn-outline-success');
-
-            // Atualiza info de salvamento ao lado do botão
-            const agora = new Date();
-            const horaFmt = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
-            const infoEl = document.getElementById(`info-salvo-${ordem}`);
-            if (infoEl) infoEl.innerHTML = `<i class="fas fa-check-circle text-success me-1"></i>Salvo por <strong>{{ current_user.username }}</strong> em ${horaFmt}`;
-
-            // Atualiza cabeçalho da sessão
-            const ultimoEl = document.getElementById('ultimo-salvamento');
-            const usuarioEl = document.getElementById('ultimo-usuario');
-            if (ultimoEl) ultimoEl.textContent = horaFmt;
-            if (usuarioEl) usuarioEl.innerHTML = ` — por <strong>{{ current_user.username }}</strong>`;
-
-            setTimeout(() => {
-              btn.innerHTML = originalHtml;
-              btn.classList.remove('btn-outline-success');
-              btn.classList.add('btn-success');
-              btn.disabled = false;
-            }, 2500);
-          } catch (error) {
-            alert('Erro ao salvar: falha na conexão.');
-            btn.innerHTML = originalHtml;
-            btn.disabled = false;
-          }
-        });
-      });
-
-      // Enriquece ementas nos cabeçalhos dos itens com complemento IA
-      (async () => {
-        const ementaEls = document.querySelectorAll('[data-ementa-id]');
-        for (const el of ementaEls) {
-          const idP    = el.dataset.ementaId;
-          const proj   = el.dataset.projeto || '';
-          const ementa = el.dataset.ementa  || '';
-          const autor  = el.dataset.autor   || '';
-          if (!ementa || ementa.length < 10) continue;
-          const enriquecida = await enriquecerEmenta(idP, proj, ementa, autor);
-          if (enriquecida && enriquecida !== ementa) {
-            el.textContent = enriquecida;
-          }
-        }
-      })();
-      // Cache de resumos IA
-    const resumoCache = {};
-
-    async function carregarResumoIA(el) {
-      const id     = el.dataset.id;
-      const proj   = el.dataset.projeto;
-      const ementa = el.dataset.ementa;
-      const autor  = el.dataset.autor;
-      if (resumoCache[id]) {
-        el.textContent = resumoCache[id];
-        el.style.display = 'block';
-        return;
-      }
-      try {
-        const r = await fetch('/resumo_ementa', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({id_principal: id, projeto: proj, ementa, autor})
-        });
-        const j = await r.json();
-        if (j.resumo) {
-          resumoCache[id] = j.resumo;
-          el.textContent = j.resumo;
-          el.style.display = 'block';
-          // Salva no backend para exportar/infográfico
-          fetch('/salvar_resumo_ia', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({evento_id: window.EVENTO_ID, id_principal: id, resumo: j.resumo})
-          }).catch(()=>{});
-        }
-      } catch(e) { /* silencioso */ }
-    }
-
-    // Carrega resumos de todos os itens sequencialmente (não bloqueia a UI)
-    async function carregarTodosResumos() {
-      const els = document.querySelectorAll('.resumo-ia-ementa');
-      for (const el of els) {
-        await carregarResumoIA(el);
-      }
-    }
-    // Após carregar resumos, popula ITENS_DATA com resumo_ia
-    async function carregarTodosResumos() {
-      const els = document.querySelectorAll('.resumo-ia-ementa');
-      for (const el of els) {
-        await carregarResumoIA(el);
-        // Atualiza ITENS_DATA com o resumo gerado
-        const id = el.dataset.id;
-        if (window.ITENS_DATA) {
-          const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
-          if (item && resumoCache[id]) item.resumo_ia = resumoCache[id];
-        }
-      }
-    }
-    setTimeout(carregarTodosResumos, 1000);
-      document.addEventListener('change', async (e) => {
-        const sel = e.target.closest('.select-responsavel');
-        if (!sel) return;
-        const itemKey  = sel.dataset.itemKey;
-        const eventoId = sel.dataset.eventoId;
-        const username = sel.value;
-        try {
-          const r = await fetch('/atribuir_responsavel', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({item_key: itemKey, evento_id: eventoId, responsavel_username: username})
-          });
-          // Verifica se sessão expirou (retornou HTML de login)
-          const ct = r.headers.get('content-type') || '';
-          if (!ct.includes('application/json')) {
-            if (r.status === 401 || r.url.includes('login')) {
-              alert('Sessão expirada. Faça login novamente.');
-              window.location.href = '/login';
-              return;
-            }
-            const txt = await r.text();
-            alert('Erro inesperado: ' + txt.substring(0, 200));
-            return;
-          }
-          const j = await r.json();
-          if (j.error) { alert(j.error); return; }
-          // Atualiza container com logo + foto + nome
-          const container = sel.closest('[id^="resp-container-"]');
-          if (container) {
-            // Remove elementos antigos (logo, foto, small)
-            container.querySelectorAll('img:not(select img), small').forEach(el => el.remove());
-            if (!username) {
-              const sm = document.createElement('small');
-              sm.className = 'text-muted fst-italic';
-              sm.textContent = 'Sem responsável atribuído';
-              sel.before(sm);
-            } else {
-              const r2 = await fetch('/listar_assessores');
-              const j2 = await r2.json();
-              const assessor = j2.assessores.find(a => a.username === username);
-              if (assessor) {
-                // Logo da bancada primeiro
-                if (assessor.categoria === 'minoria') {
-                  const logo = document.createElement('img');
-                  logo.src = '/static/logo_minoria.png';
-                  logo.style.cssText = 'height:22px;object-fit:contain;';
-                  logo.alt = 'Minoria';
-                  sel.before(logo);
-                } else if (assessor.categoria === 'oposicao') {
-                  const logo = document.createElement('img');
-                  logo.src = '/static/logo_oposicao.png';
-                  logo.style.cssText = 'height:22px;object-fit:contain;';
-                  logo.alt = 'Oposição';
-                  sel.before(logo);
-                }
-                // Foto do usuário
-                if (assessor.foto) {
-                  const foto = document.createElement('img');
-                  foto.src = assessor.foto;
-                  foto.alt = assessor.nome;
-                  foto.style.cssText = 'width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid #ccc;';
-                  sel.before(foto);
-                }
-                // Nome
-                const sm = document.createElement('small');
-                sm.className = 'text-muted';
-                sm.innerHTML = 'Responsável: <strong>' + assessor.nome + '</strong>';
-                sel.before(sm);
-              }
-            }
-          }
-        } catch(err) { alert('Erro: ' + err.message); }
-      });
-      document.addEventListener('click', async (e) => {
-        const btn = e.target.closest('.btn-buscar-destaques');
-        if (!btn) return;
-        const idProp  = btn.dataset.idProposicao;
-        const ordem   = btn.dataset.ordem;
-        const spinner = document.querySelector(`.spinner-busca-${ordem}`);
-        const tabela  = document.getElementById(`tabela-destaques-${ordem}`);
-        const tbody   = document.getElementById(`tbody-destaques-${ordem}`);
-        const semMsg  = document.getElementById(`sem-destaques-${ordem}`);
-        if (!tabela || !tbody) return;
-
-        btn.disabled = true;
-        if (spinner) spinner.style.display = 'inline-flex';
-        tabela.style.display = 'none';
-        tbody.innerHTML = '';
-        if (semMsg) semMsg.style.display = 'none';
-
-        try {
-          const r = await fetch(`/destaques/${idProp}`);
-          const j = await r.json();
-          tabela.style.display = 'block';
-          if (j.destaques && j.destaques.length > 0) {
-            const projeto = btn.dataset.projeto || '';
-            j.destaques.forEach(d => {
-              const badge = d.situacao.toLowerCase().includes('tramitação')
-                ? `<span class="badge bg-warning text-dark">${d.situacao}</span>`
-                : `<span class="badge bg-secondary">${d.situacao}</span>`;
-              tbody.innerHTML += `<tr>
-                <td><strong>${d.numero}</strong></td>
-                <td>${d.autoria}</td>
-                <td>${d.descricao}</td>
-                <td>${d.tipo_destaque}</td>
-                <td>${badge}</td>
-                <td>
-                  <button class="btn btn-outline-primary btn-sm"
-                    onclick="analisarDestaque(this)"
-                    data-id-principal="${idProp}"
-                    data-descricao="${d.descricao.replace(/"/g,"'")}"
-                    data-numero="${d.numero}"
-                    data-autoria="${d.autoria.replace(/"/g,"'")}"
-                    data-projeto="${projeto}">
-                    <i class="fas fa-robot"></i>
-                  </button>
-                </td>
-              </tr>
-              <tr>
-                <td colspan="6">
-                  <div id="analise-destaque-${d.numero.replace(/\s/g,'-')}" class="mt-1" style="display:none;">
-                    <div class="p-2 border rounded bg-light" style="font-size:0.85rem;"></div>
-                  </div>
-                </td>
-              </tr>`;
-            });
-          } else {
-            if (semMsg) semMsg.style.display = 'block';
-          }
-        } catch(err) {
-          tabela.style.display = 'block';
-          if (semMsg) { semMsg.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>Erro: ${err.message}`; semMsg.style.display = 'block'; }
-        } finally {
-          if (spinner) spinner.style.display = 'none';
-          btn.disabled = false;
-        }
-      });
-
-    });
-
-    // Botão Gerar Análise — usa ementa da proposição via Groq
-    async function gerarAnalise(ordem, btn) {
-      const overlay      = document.getElementById("overlay-" + ordem);
-      const ementa       = btn.dataset.ementa || '';
-      const projeto      = btn.dataset.projeto || '';
-      const autor        = btn.dataset.autor || '';
-      const relator      = btn.dataset.relator || '';
-      const id_principal = btn.dataset.idPrincipal || '';
-
-      btn.disabled = true;
-      btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando...';
-      overlay.style.display = "flex";
-
-      try {
-        const r = await fetch('/analisar_ia', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projeto, ementa, autor, relator, id_principal })
-        });
-        if (!r.ok) { alert('Erro do servidor: ' + await r.text()); return; }
-        const j = await r.json();
-        if (j.resumo) {
-          if (!quillInstances[ordem]) {
-            const quill = new Quill(`#quill-editor-${ordem}`, {
-              theme: 'snow',
-              modules: { toolbar: [['bold','italic','underline'],[{'list':'ordered'},{'list':'bullet'}],['clean']] }
-            });
-            quillInstances[ordem] = quill;
-          }
-          quillInstances[ordem].clipboard.dangerouslyPasteHTML(j.resumo);
-        } else {
-          alert('Erro da IA: ' + (j.error || 'Resposta vazia'));
-        }
-      } catch(e) {
-        alert('Erro ao conectar com a IA: ' + e.message);
-      } finally {
-        overlay.style.display = "none";
-        btn.disabled = false;
-        btn.innerHTML = '<img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">Gerar Análise';
-      }
-    }
-  </script>
-
-<!-- MODAL MENSAGENS PLENÁRIO -->
-<div class="modal fade" id="modalMensagens" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
-    <div class="modal-content">
-      <div class="modal-header" style="background:linear-gradient(135deg,#25D366,#128C7E);">
-        <h5 class="modal-title text-white">
-          <i class="fab fa-whatsapp me-2"></i>Mensagens para o Plenário
-        </h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-
-        <div class="mb-3" id="select-item-container">
-          <label class="form-label fw-bold">Selecione o Item:</label>
-          <select class="form-select" id="select-item-msg">
-            <option value="">-- Selecione --</option>
-            {% for item in itens %}
-            <option value="{{ loop.index0 }}"
-              data-projeto="{{ item.projeto }}"
-              data-ementa="{{ item.ementa | replace('"','')  }}"
-              data-autor="{{ item.autor }}"
-              data-relator="{{ item.relator }}"
-              data-orientacao="{{ item.orientacao or '' }}">
-              Item {{ item.ordem }} — {{ item.projeto }}
-            </option>
-            {% endfor %}
-          </select>
-        </div>
-
-        <div class="mb-3">
-          <label class="form-label fw-bold">Tipo de Mensagem:</label>
-          <div class="d-flex gap-2 flex-wrap">
-
-            <button class="btn btn-outline-primary btn-sm btn-tipo-msg" data-tipo="apresentacao">
-              <i class="fas fa-file-alt me-1"></i>Apresentação
-            </button>
-
-            <!-- Votação Nominal com opções -->
-            <div class="dropdown d-inline-block">
-              <button class="btn btn-outline-danger btn-sm dropdown-toggle" type="button"
-                data-bs-toggle="dropdown" aria-expanded="false">
-                <i class="fas fa-vote-yea me-1"></i>Votação Nominal
-              </button>
-              <ul class="dropdown-menu">
-                <li><h6 class="dropdown-header">Mérito</h6></li>
-                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Mérito">⚖️ Mérito</a></li>
-                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Substitutivo">📄 Substitutivo</a></li>
-                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Emenda Substitutiva">📝 Emenda Substitutiva</a></li>
-                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Subemenda Substitutiva">📋 Subemenda Substitutiva</a></li>
-                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="">✏️ Outro (digitar)</a></li>
-                <li><hr class="dropdown-divider"></li>
-                <li><h6 class="dropdown-header">Requerimento</h6></li>
-                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Requerimento de Urgência">🚨 Urgência</a></li>
-                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Requerimento de Retirada de Pauta">↩️ Retirada de Pauta</a></li>
-                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Requerimento de Adiamento de Discussão">🕐 Adiamento de Discussão</a></li>
-                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Requerimento de Adiamento de Votação">🕑 Adiamento de Votação</a></li>
-              </ul>
-            </div>
-
-            <!-- Resultado Final -->
-            <div class="dropdown d-inline-block">
-              <button class="btn btn-success btn-sm dropdown-toggle" type="button"
-                data-bs-toggle="dropdown" aria-expanded="false">
-                <i class="fas fa-flag-checkered me-1"></i>Resultado Final
-              </button>
-              <ul class="dropdown-menu">
-                <li><a class="dropdown-item btn-aprovado-tipo" href="#" data-tipo="aprovado_simbolico">
-                  ✅ Aprovado Simbolicamente
-                </a></li>
-                <li><hr class="dropdown-divider"></li>
-                <li><a class="dropdown-item btn-aprovado-tipo" href="#" data-tipo="aprovado_nominal">
-                  🗳️ Aprovado — buscar votos
-                </a></li>
-                <li><a class="dropdown-item btn-aprovado-tipo" href="#" data-tipo="rejeitado_nominal">
-                  ❌ Rejeitado — buscar votos
-                </a></li>
-              </ul>
-            </div>
-
-            <!-- Resultado Requerimento -->
-            <div class="dropdown d-inline-block">
-              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
-                data-bs-toggle="dropdown" aria-expanded="false">
-                <i class="fas fa-clipboard-check me-1"></i>Resultado Requerimento
-              </button>
-              <ul class="dropdown-menu">
-                <li><h6 class="dropdown-header">Urgência</h6></li>
-                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Urgência" data-tipo="aprovado_simbolico">✅ Aprovado Simbolicamente</a></li>
-                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Urgência" data-tipo="aprovado_nominal">🗳️ Aprovado — buscar votos</a></li>
-                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Urgência" data-tipo="rejeitado_nominal">❌ Rejeitado — buscar votos</a></li>
-                <li><hr class="dropdown-divider"></li>
-                <li><h6 class="dropdown-header">Retirada de Pauta</h6></li>
-                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Retirada de Pauta" data-tipo="aprovado_simbolico">✅ Aprovado Simbolicamente</a></li>
-                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Retirada de Pauta" data-tipo="aprovado_nominal">🗳️ Aprovado — buscar votos</a></li>
-                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Retirada de Pauta" data-tipo="rejeitado_nominal">❌ Rejeitado — buscar votos</a></li>
-                <li><hr class="dropdown-divider"></li>
-                <li><h6 class="dropdown-header">Adiamento de Discussão</h6></li>
-                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Discussão" data-tipo="aprovado_simbolico">✅ Aprovado Simbolicamente</a></li>
-                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Discussão" data-tipo="aprovado_nominal">🗳️ Aprovado — buscar votos</a></li>
-                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Discussão" data-tipo="rejeitado_nominal">❌ Rejeitado — buscar votos</a></li>
-                <li><hr class="dropdown-divider"></li>
-                <li><h6 class="dropdown-header">Adiamento de Votação</h6></li>
-                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Votação" data-tipo="aprovado_simbolico">✅ Aprovado Simbolicamente</a></li>
-                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Votação" data-tipo="aprovado_nominal">🗳️ Aprovado — buscar votos</a></li>
-                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Votação" data-tipo="rejeitado_nominal">❌ Rejeitado — buscar votos</a></li>
-              </ul>
-            </div>
-
-            <button class="btn btn-outline-success btn-sm btn-tipo-msg" data-tipo="iniciada">
-              <i class="fas fa-play-circle me-1"></i>Iniciada
-            </button>
-            <button class="btn btn-outline-warning btn-sm btn-tipo-msg" data-tipo="encerrada_ordem">
-              <i class="fas fa-stop-circle me-1"></i>Encerrada Ordem
-            </button>
-            <button class="btn btn-outline-dark btn-sm btn-tipo-msg" data-tipo="encerrada_sessao">
-              <i class="fas fa-flag-checkered me-1"></i>Encerrada Sessão
-            </button>
-
-          </div>
-        </div>
-
-        <div class="mb-3" id="campo-objeto" style="display:none;">
-          <label class="form-label fw-bold">Objeto da Votação:</label>
-          <div class="d-flex gap-2 flex-wrap mb-2">
-            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Mérito">Mérito</button>
-            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Substitutivo">Substitutivo</button>
-            <div class="dropdown">
-              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="btnRequerimento" data-bs-toggle="dropdown" aria-expanded="false">
-                Requerimento
-              </button>
-              <ul class="dropdown-menu" aria-labelledby="btnRequerimento">
-                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Urgência">De Urgência</a></li>
-                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Adiamento de Discussão">Adiamento de Discussão</a></li>
-                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Adiamento de Votação">Adiamento de Votação</a></li>
-              </ul>
-            </div>
-            <div class="dropdown" id="dropdown-dtq-container">
-              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
-                id="btnDTQ" data-bs-toggle="dropdown" aria-expanded="false"
-                onclick="carregarDestaquesDTQ()">
-                DTQ
-              </button>
-              <ul class="dropdown-menu" id="menu-dtq" aria-labelledby="btnDTQ">
-                <li><span class="dropdown-item text-muted fst-italic" id="dtq-loading">
-                  <span class="spinner-border spinner-border-sm me-1"></span>Buscando destaques...
-                </span></li>
-              </ul>
-            </div>
-            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Redação Final">Redação Final</button>
-          </div>
-          <input type="text" class="form-control" id="input-objeto" placeholder="Ou digite o objeto manualmente...">
-        </div>
-
-        <div id="preview-msg-container" style="display:none;">
-          <label class="form-label fw-bold">Mensagem Gerada:</label>
-          <textarea id="preview-msg" class="form-control" rows="12"
-            style="font-family:monospace;font-size:0.88rem;background:#f0fdf4;border:2px solid #25D366;resize:vertical;"></textarea>
-          <div class="d-flex gap-2 mt-2">
-            <button class="btn btn-success btn-sm" id="btn-copiar-msg">
-              <i class="fas fa-copy me-1"></i>Copiar Mensagem
-            </button>
-            <span id="copiado-msg" class="text-success align-self-center" style="display:none;font-size:0.85rem;">✅ Copiado!</span>
-          </div>
-        </div>
-
-      </div>
-    </div>
-  </div>
-</div>
-
-<script>
-  // Dados dinâmicos para o modal de mensagens (gerados pelo servidor)
-  window.EVENTO_ID  = {{ evento_id|safe }};
-  window.ITENS_DATA = [
-    {% for item in itens %}
-    {
-      ordem:        {{ item.ordem | tojson }},
-      id_principal: {{ item.id_principal | tojson }},
-      projeto:      {{ item.projeto | tojson }},
-      ementa:       {{ item.ementa | tojson }},
-      autor:        {{ item.autor | tojson }},
-      relator:      {{ item.relator | tojson }},
-      orientacao:   {{ (item.orientacao or '') | tojson }},
-      resumo_ia:    ''
-    }{% if not loop.last %},{% endif %}
-    {% endfor %}
-  ];
-</script>
-<script src="/static/mensagens.js"></script>
-
-<script>
-  async function verificarUltimoDoc(btn) {
-    const idPrincipal = btn.dataset.idPrincipal;
-    if (!idPrincipal) { alert('ID da proposição não encontrado.'); return; }
-
-    const resultadoDiv = btn.parentElement.querySelector('[id^="ultimo-doc-resultado-"]');
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando...';
-
-    try {
-      const r = await fetch(`/verificar_doc/${idPrincipal}`);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const j = await r.json();
-
-      let html = '';
-      if (j.tipo) {
-        const numStr  = j.numero ? ` nº ${j.numero}` : '';
-        const dataStr = j.data   ? ` — ${j.data}` : '';
-        html = `<i class="fas fa-check-circle text-success me-1"></i>` +
-               `Último documento: <strong>${j.tipo}${numStr}</strong>${dataStr} ` +
-               `<span class="text-success">(texto disponível para análise)</span>`;
-      } else {
-        html = `<i class="fas fa-info-circle text-warning me-1"></i>` +
-               `Nenhum PRLP ou Substitutivo encontrado. A análise usará a ementa.`;
-      }
-
-      if (resultadoDiv) {
-        resultadoDiv.querySelector('small').innerHTML = html;
-        resultadoDiv.style.display = 'block';
-      } else {
-        const span = document.createElement('div');
-        span.className = 'mt-1';
-        span.innerHTML = `<small class="fw-bold">${html}</small>`;
-        btn.parentElement.appendChild(span);
-      }
-    } catch(e) {
-      alert('Erro ao buscar documento: ' + e.message);
-    } finally {
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-search me-1"></i>Procurar último parecer (PRLP/Substitutivo)';
-    }
-  }
-
-  async function gerarQuadroDTQ(btn) {
-    const projeto   = btn.dataset.projeto;
-    const numero    = btn.dataset.numero;
-    const autoria   = btn.dataset.autoria || '';
-    const descricao = btn.dataset.descricao;
-    const analise   = btn.dataset.analise;
-    const urlDoc    = btn.dataset.urlDoc;
-    const labelDoc  = btn.dataset.labelDoc;
-
-    btn.disabled = true;
-    btn.innerHTML = '⏳ Gerando quadro...';
-
-    try {
-      const r = await fetch('/gerar_quadro_dtq', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ projeto, numero, descricao, analise_html: analise, url_documento: urlDoc, label_documento: labelDoc })
-      });
-      const j = await r.json();
-      if (!j.ok) { alert('Erro: ' + j.error); return; }
-      const d = j.dados;
-
-      // Constrói popup via DOM — sem document.write com template literal
-      const popup = window.open('', '_blank', 'width=900,height=700,scrollbars=yes,resizable=yes');
-      const pd = popup.document;
-      pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Quadro DTQ</title></head><body></body></html>'); pd.close();
-
-      const st = pd.createElement('style');
-      st.textContent = '* {box-sizing:border-box;margin:0;padding:0} body{font-family:Arial,sans-serif;padding:30px;background:#fff} .quadro{border:2px solid #1a1a2e;border-radius:4px;overflow:hidden;max-width:820px;margin:0 auto} .header{background:#1a1a2e;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center} .header-titulo{font-size:14px;font-weight:bold;flex:1} .header-logos{background:#fff;padding:4px 8px;border-radius:3px;display:flex;align-items:center;gap:8px} .header-logos img{height:34px;width:100px;object-fit:contain} .dtq-bar{background:#2c3e6b;color:#fff;text-align:center;padding:6px;font-size:13px;font-weight:bold} .descricao{background:#f0f4ff;text-align:center;padding:8px 16px;font-size:12px;color:#333;border-bottom:1px solid #ccc} .votos{display:grid;grid-template-columns:1fr 1fr} .voto-sim{border-right:1px solid #ccc;padding:12px} .voto-nao{padding:12px} .voto-label-sim{color:#1A6B3A;font-weight:bold;font-size:12px;margin-bottom:6px} .voto-label-nao{color:#cc0000;font-weight:bold;font-size:12px;margin-bottom:6px} .voto-conteudo-sim{color:#1A6B3A;font-size:13px;font-weight:bold;line-height:1.4} .voto-conteudo-nao{color:#cc0000;font-size:13px;font-weight:bold;line-height:1.4} .explicacao{background:#f9f9f9;border-top:2px solid #1a1a2e;padding:12px 16px} .explicacao-titulo{text-align:center;font-weight:bold;font-size:12px;color:#1a1a2e;margin-bottom:8px;letter-spacing:1px} .explicacao-texto{font-size:12px;color:#333;line-height:1.6} .btn-imprimir{display:block;margin:16px auto 0;padding:8px 24px;background:#1a1a2e;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px} @media print{.btn-imprimir{display:none}body{padding:0}}';
-      pd.head.appendChild(st);
-
-      const origin = window.location.origin;
-      pd.body.innerHTML =
-        '<div class="quadro">' +
-          '<div class="header">' +
-            '<div class="header-titulo">' + (d.titulo||'') + '</div>' +
-            '<div class="header-logos">' +
-              '<img src="' + origin + '/static/logo_oposicao.png" onerror="this.style.display=\'none\'">' +
-              '<img src="' + origin + '/static/logo_minoria.png" onerror="this.style.display=\'none\'">' +
-            '</div>' +
-          '</div>' +
-          '<div class="dtq-bar">' + numero + (autoria ? ' - ' + autoria : '') + '</div>' +
-          '<div class="descricao">' + (d.descricao||'') + '</div>' +
-          '<div class="votos">' +
-            '<div class="voto-sim"><div class="voto-label-sim">Voto SIM: ' + (d.sim_label||'') + '</div><div class="voto-conteudo-sim">' + (d.sim_conteudo||'') + '</div></div>' +
-            '<div class="voto-nao"><div class="voto-label-nao">Voto NÃO: ' + (d.nao_label||'') + '</div><div class="voto-conteudo-nao">' + (d.nao_conteudo||'') + '</div></div>' +
-          '</div>' +
-          '<div class="explicacao"><div class="explicacao-titulo">EXPLICAÇÃO</div><div class="explicacao-texto">' + (d.explicacao||'') + '</div></div>' +
-        '</div>';
-
-      const btnPrint = pd.createElement('button');
-      btnPrint.className = 'btn-imprimir';
-      btnPrint.textContent = '🖨️ Imprimir / Salvar PDF';
-      btnPrint.onclick = function() { popup.print(); };
-      pd.body.appendChild(btnPrint);
-
-    } catch(e) {
-      alert('Erro: ' + e.message);
-    } finally {
-      btn.disabled = false;
-      btn.innerHTML = '🖼️ Criar Quadro do DTQ';
-    }
-  }
-
-  async function verTextoDoc(urlDoc, label) {
-    const popup = window.open('', '_blank', 'width=800,height=700,scrollbars=yes,resizable=yes');
-    const pd = popup.document;
-    pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body></body></html>'); pd.close();
-    const st = pd.createElement('style');
-    st.textContent = 'body{font-family:monospace;font-size:13px;padding:20px;line-height:1.6;color:#222} h3{color:#1A6B3A;border-bottom:2px solid #1A6B3A;padding-bottom:8px;margin-bottom:12px} pre{white-space:pre-wrap;word-break:break-word;background:#f8f8f8;padding:15px;border-radius:4px}';
-    pd.head.appendChild(st);
-    const h3 = pd.createElement('h3'); h3.textContent = label; pd.body.appendChild(h3);
-    const loading = pd.createElement('p'); loading.textContent = '⏳ Extraindo texto do PDF...'; loading.style.color = '#666'; pd.body.appendChild(loading);
-    try {
-      const r = await fetch('/extrair_texto_doc', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({url_documento: urlDoc})
-      });
-      const j = await r.json();
-      const texto = j.texto || '(texto não extraído — verifique se o PDF está acessível)';
-      loading.remove();
-      const info = pd.createElement('p'); info.style.fontSize = '0.8rem'; info.style.color = '#666';
-      info.textContent = 'Total: ' + texto.length + ' caracteres';
-      pd.body.appendChild(info);
-      const pre = pd.createElement('pre'); pre.textContent = texto; pd.body.appendChild(pre);
-    } catch(e) {
-      loading.textContent = 'Erro: ' + e.message; loading.style.color = 'red';
-    }
-  }
-
-  async function analisarDestaque(btn) {
-    const idPrincipal = btn.dataset.idPrincipal;
-    const descricao   = btn.dataset.descricao || '';
-    const numero      = btn.dataset.numero    || '';
-    const projeto     = btn.dataset.projeto   || '';
-    const autoria     = btn.dataset.autoria   || '';
-
-    if (!idPrincipal) { alert('ID da proposição não encontrado.'); return; }
-
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-
-    try {
-      const r = await fetch('/listar_documentos/' + idPrincipal);
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const j = await r.json();
-      const docs = j.documentos || [];
-      if (docs.length === 0) { alert('Nenhum documento encontrado.'); return; }
-
-      // === MONTA MODAL VIA DOM (sem innerHTML com dados dinâmicos) ===
-      document.getElementById('modal-sel-doc')?.remove();
-
-      const modalEl  = document.createElement('div');
-      modalEl.id     = 'modal-sel-doc';
-      modalEl.className = 'modal fade';
-      modalEl.setAttribute('tabindex', '-1');
-
-      const mDialog  = document.createElement('div');
-      mDialog.className = 'modal-dialog';
-      const mContent = document.createElement('div');
-      mContent.className = 'modal-content';
-
-      // Header
-      const mHeader = document.createElement('div');
-      mHeader.className = 'modal-header bg-primary text-white';
-      const mTitle = document.createElement('h6');
-      mTitle.className = 'modal-title';
-      mTitle.textContent = 'Selecione o documento para análise';
-      const mClose = document.createElement('button');
-      mClose.type = 'button';
-      mClose.className = 'btn-close btn-close-white';
-      mClose.setAttribute('data-bs-dismiss', 'modal');
-      mHeader.appendChild(mTitle);
-      mHeader.appendChild(mClose);
-
-      // Body
-      const mBody = document.createElement('div');
-      mBody.className = 'modal-body';
-      const mInfo = document.createElement('p');
-      mInfo.className = 'small text-muted mb-2';
-      const mStrong = document.createElement('strong');
-      mStrong.textContent = numero;
-      mInfo.appendChild(mStrong);
-      mInfo.appendChild(document.createTextNode(' — ' + descricao));
-      mBody.appendChild(mInfo);
-      mBody.appendChild(document.createElement('hr'));
-
-      // Opções de documentos
-      docs.forEach((d, i) => {
-        const wrap = document.createElement('div');
-        wrap.className = 'form-check mb-1 d-flex align-items-start gap-2';
-
-        const inp = document.createElement('input');
-        inp.className = 'form-check-input mt-1';
-        inp.type = 'radio';
-        inp.name = 'doc_sel';
-        inp.id   = 'doc_' + i;
-        inp.value = String(i);
-        if (i === 0) inp.checked = true;
-
-        const lbl = document.createElement('label');
-        lbl.className = 'form-check-label small flex-grow-1';
-        lbl.setAttribute('for', 'doc_' + i);
-        lbl.textContent = d.label;
-
-        const btnVer = document.createElement('button');
-        btnVer.type = 'button';
-        btnVer.className = 'btn btn-outline-secondary btn-sm py-0 px-1';
-        btnVer.style.fontSize = '0.7rem';
-        btnVer.textContent = '👁 Ver';
-        btnVer.addEventListener('click', () => verTextoDoc(d.url, d.label));
-
-        wrap.appendChild(inp);
-        wrap.appendChild(lbl);
-        wrap.appendChild(btnVer);
-        mBody.appendChild(wrap);
-      });
-
-      // Footer
-      const mFooter = document.createElement('div');
-      mFooter.className = 'modal-footer';
-
-      const btnCancelar = document.createElement('button');
-      btnCancelar.type = 'button';
-      btnCancelar.className = 'btn btn-secondary btn-sm';
-      btnCancelar.setAttribute('data-bs-dismiss', 'modal');
-      btnCancelar.textContent = 'Cancelar';
-
-      const btnDebug = document.createElement('button');
-      btnDebug.type = 'button';
-      btnDebug.className = 'btn btn-outline-warning btn-sm';
-      btnDebug.innerHTML = '<i class="fas fa-bug me-1"></i>Debug texto';
-
-      const btnConfirmar = document.createElement('button');
-      btnConfirmar.type = 'button';
-      btnConfirmar.className = 'btn btn-primary btn-sm';
-      btnConfirmar.innerHTML = '<i class="fas fa-robot me-1"></i>Analisar';
-
-      mFooter.appendChild(btnCancelar);
-      mFooter.appendChild(btnDebug);
-      mFooter.appendChild(btnConfirmar);
-
-      mContent.appendChild(mHeader);
-      mContent.appendChild(mBody);
-      mContent.appendChild(mFooter);
-      mDialog.appendChild(mContent);
-      modalEl.appendChild(mDialog);
-      document.body.appendChild(modalEl);
-
-      const modal = new bootstrap.Modal(modalEl);
-      modal.show();
-
-      // === BOTÃO DEBUG ===
-      btnDebug.addEventListener('click', async () => {
-        const sel = mBody.querySelector('input[name="doc_sel"]:checked');
-        if (!sel) return;
-        const doc = docs[parseInt(sel.value)];
-        btnDebug.disabled = true;
-        btnDebug.textContent = '⏳ Carregando...';
-        try {
-          const rd = await fetch('/debug_destaque', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({url_documento: doc.url, descricao: descricao})
-          });
-          const jd = await rd.json();
-
-          // Popup via DOM
-          const pu = window.open('', '_blank', 'width=950,height=750,scrollbars=yes,resizable=yes');
-          const pd = pu.document;
-          pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body></body></html>'); pd.close();
-
-          const st = pd.createElement('style');
-          st.textContent = 'body{font-family:Arial,sans-serif;font-size:13px;padding:20px}h3{color:#1A6B3A;margin-bottom:8px}.info{background:#f0f8f0;border-left:3px solid #1A6B3A;padding:8px;margin:8px 0;font-size:12px}.instrucao{background:#fff3cd;border:1px solid #ffc107;padding:10px;border-radius:4px;margin:10px 0}textarea{width:100%;font-family:monospace;font-size:12px;border:1px solid #ccc;padding:8px;resize:vertical}#btn-an{background:#1A6B3A;color:#fff;border:none;padding:8px 20px;border-radius:4px;cursor:pointer;margin-top:8px}#btn-an:disabled{background:#aaa}#res{margin-top:12px;padding:10px;border:1px solid #ccc;border-radius:4px;display:none;background:#f9f9f9}.ok{color:green}.err{color:red}';
-          pd.head.appendChild(st);
-
-          const h3 = pd.createElement('h3'); h3.textContent = '📄 ' + doc.label; pd.body.appendChild(h3);
-          const inf = pd.createElement('div'); inf.className = 'info';
-          inf.innerHTML = 'Chars: ' + jd.total_chars + ' | Refs: ' + JSON.stringify(jd.refs_extraidas) + ' | ' +
-            (jd.busca_info||[]).map(l => '<span class="' + (l.startsWith('✅')?'ok':'err') + '">' + l + '</span>').join(' | ');
-          pd.body.appendChild(inf);
-
-          const ins = pd.createElement('div'); ins.className = 'instrucao';
-          ins.textContent = '💡 Selecione o trecho relevante, cole abaixo e clique em Analisar.';
-          pd.body.appendChild(ins);
-
-          const l1 = pd.createElement('label'); l1.textContent = 'Texto completo:'; pd.body.appendChild(l1);
-          const ta1 = pd.createElement('textarea'); ta1.readOnly = true; ta1.style.height = '280px';
-          ta1.value = jd.texto_completo || jd.primeiros_500 || ''; pd.body.appendChild(ta1);
-
-          const l2 = pd.createElement('label'); l2.style.marginTop = '8px'; l2.style.display = 'block';
-          l2.textContent = 'Trecho para análise:'; pd.body.appendChild(l2);
-          const ta2 = pd.createElement('textarea'); ta2.style.height = '100px';
-          ta2.placeholder = 'Cole o trecho aqui...';
-          ta2.value = (jd.trecho_relevante && !jd.trecho_relevante.startsWith('(não')) ? jd.trecho_relevante : '';
-          pd.body.appendChild(ta2);
-
-          const bAn = pd.createElement('button'); bAn.id = 'btn-an'; bAn.textContent = '🤖 Analisar com IA';
-          pd.body.appendChild(bAn);
-          const divRes = pd.createElement('div'); divRes.id = 'res'; pd.body.appendChild(divRes);
-
-          bAn.addEventListener('click', async () => {
-            const trecho = ta2.value.trim();
-            if (!trecho) { pu.alert('Cole o trecho antes de analisar.'); return; }
-            bAn.disabled = true; bAn.textContent = '⏳ Analisando...';
-            try {
-              const rr = await fetch('/analisar_destaque', {
-                method: 'POST', credentials: 'same-origin',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({id_principal: idPrincipal, descricao, numero, projeto,
-                  url_documento: doc.url, label_documento: doc.label, trecho_manual: trecho})
-              });
-              const jj = await rr.json();
-              divRes.style.display = 'block';
-              divRes.innerHTML = jj.resumo || ('<span style="color:red">Erro: ' + (jj.error||'') + '</span>');
-            } catch(err) { pu.alert('Erro: ' + err.message); }
-            finally { bAn.disabled = false; bAn.textContent = '🤖 Analisar com IA'; }
-          });
-
-        } catch(e) { alert('Erro: ' + e.message); }
-        finally { btnDebug.disabled = false; btnDebug.innerHTML = '<i class="fas fa-bug me-1"></i>Debug texto'; }
-      });
-
-      // === BOTÃO ANALISAR ===
-      btnConfirmar.addEventListener('click', async () => {
-        const sel = mBody.querySelector('input[name="doc_sel"]:checked');
-        if (!sel) return;
-        const doc = docs[parseInt(sel.value)];
-        modal.hide();
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-        try {
-          const r2 = await fetch('/analisar_destaque', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({id_principal: idPrincipal, descricao, numero, projeto,
-              url_documento: doc.url, label_documento: doc.label})
-          });
-          const j2 = await r2.json();
-          if (j2.resumo) {
-            // Encontra container de resultado
-            const numKey = numero.replace(/\s/g, '-');
-            let box = document.getElementById('analise-destaque-' + numKey);
-            if (!box) {
-              const tr = btn.closest('tr');
-              const ntr = tr ? tr.nextElementSibling : null;
-              if (ntr) box = ntr.querySelector('[id^="analise-destaque-"]');
-            }
-            if (!box) {
-              box = document.createElement('div');
-              box.className = 'mt-2 p-2 border rounded bg-light';
-              btn.closest('td').appendChild(box);
-            }
-            // Insere resultado
-            const inner = box.querySelector('div') || box;
-            inner.innerHTML = '';
-            const dRes = document.createElement('div');
-            dRes.innerHTML = j2.resumo;
-            inner.appendChild(dRes);
-            // Botão criar quadro
-            const dBtn = document.createElement('div');
-            dBtn.className = 'mt-2';
-            const bq = document.createElement('button');
-            bq.className = 'btn btn-sm btn-dark';
-            bq.textContent = '🖼️ Criar Quadro do DTQ';
-            bq.dataset.projeto   = projeto;
-            bq.dataset.numero    = numero;
-            bq.dataset.autoria   = autoria;
-            bq.dataset.descricao = descricao;
-            bq.dataset.analise   = j2.resumo;
-            bq.dataset.urlDoc    = doc.url;
-            bq.dataset.labelDoc  = doc.label;
-            bq.onclick = function() { gerarQuadroDTQ(this); };
-            dBtn.appendChild(bq);
-            inner.appendChild(dBtn);
-            box.style.display = 'block';
-          } else {
-            alert('Erro: ' + (j2.error || 'Resposta vazia'));
-          }
-        } catch(e) { alert('Erro: ' + e.message); }
-        finally { btn.disabled = false; btn.innerHTML = '<i class="fas fa-robot"></i>'; }
-      });
-
-      // Limpa ao fechar
-      modalEl.addEventListener('hidden.bs.modal', () => {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fas fa-robot"></i>';
-        modalEl.remove();
-        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
-        document.body.classList.remove('modal-open');
-        document.body.style.removeProperty('overflow');
-        document.body.style.removeProperty('padding-right');
-      });
-
-    } catch(e) {
-      alert('Erro ao carregar documentos: ' + e.message);
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-robot"></i>';
-    }
-  }
-
-  async function limparCacheEvento(eventoId) {
-    if (!confirm('Limpar cache desta pauta? Os títulos de REQ serão reprocessados ao atualizar.')) return;
-    const r = await fetch(`/limpar_cache/${eventoId}`, {
-      method: 'POST',
-      credentials: 'same-origin'
-    });
-    if (!r.ok) {
-      alert('Erro HTTP: ' + r.status);
-      return;
-    }
-    const j = await r.json();
-    if (j.message) {
-      window.location.href = window.location.href.split('?')[0] + '?force_reload=true';
-    } else {
-      alert(j.error || 'Erro ao limpar cache');
-    }
-  }
-</script>
-
-<!-- MODAL ORIENTAÇÕES v2 -->
-<div class="modal fade" id="modalOrientacoes" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable">
-    <div class="modal-content">
-      <div class="modal-header" style="background:linear-gradient(135deg,#B8860B,#DAA520);">
-        <h5 class="modal-title text-white">
-          <i class="fas fa-vote-yea me-2"></i>Orientações — Pauta do Plenário
-        </h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body p-0">
-        <div id="ori-loading" class="text-center p-4">
-          <div class="spinner-border text-warning"></div>
-          <p class="mt-2">Carregando orientações...</p>
-        </div>
-        <div id="ori-conteudo" style="display:none; overflow-x:auto;">
-          <table class="table table-bordered table-sm mb-0" id="tabela-orientacoes"
-                 style="font-size:0.82rem; min-width:1000px;">
-            <thead>
-              <tr style="background:#f0f0f0;">
-                <th style="width:35px;">#</th>
-                <th style="width:130px;">Proposição</th>
-                <th>Ementa</th>
-                <th style="width:150px;">Orientação PL</th>
-                <th style="width:150px;">Orientação NOVO</th>
-                <th style="width:150px;">Orientação Oposição</th>
-                <th style="width:150px;">Orientação Minoria</th>
-              </tr>
-            </thead>
-            <tbody id="tbody-orientacoes"></tbody>
-          </table>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <small class="text-muted me-auto">
-          <i class="fas fa-info-circle me-1"></i>
-          Cada grupo edita apenas sua coluna. Salvo automaticamente ao selecionar.
-        </small>
-        <button class="btn btn-outline-danger btn-sm" onclick="exportarOrientacoesPDF()">
-          <i class="fas fa-file-pdf me-2"></i>Exportar PDF
-        </button>
-        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script>
-// ============================================================
-// MODAL ORIENTAÇÕES
-// ============================================================
-const USER_CATEGORIA = "{{ user_categoria }}";
-const EVENTO_ID_ORI  = {{ evento_id|safe }};
-
-const ITENS_ORI = [
-  {% for item in itens %}
-  {
-    ordem:        "{{ item.ordem }}",
-    id_principal: "{{ item.id_principal }}",
-    projeto:      "{{ item.projeto | replace('"','') | replace("'",'') }}",
-    ementa:       {{ item.ementa | tojson }}
-  }{% if not loop.last %},{% endif %}
+{% extends "base.html" %}
+{% block title %}Calendário Escolar{% endblock %}
+{% block page_title %}Calendário{% endblock %}
+{% block topbar_actions %}
+  <button onclick="ressincronizar()" class="btn btn-outline btn-sm" title="Aplica feriados/recessos já cadastrados na frequência">🔄 Sincronizar Frequência</button>
+  {% if current_user.email == 'mavana1981@gmail.com' %}
+  <a href="{{ url_for('calendario.importar') }}" class="btn btn-primary btn-sm">📥 Importar PDF</a>
+  {% endif %}
+{% endblock %}
+{% block extra_css %}
+<style>
+.cal-nav{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+.cal-nav-btn{width:34px;height:34px;border-radius:8px;border:1.5px solid var(--neutral-200);background:white;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;}
+.cal-nav-btn:hover{background:var(--navy-700);color:white;border-color:var(--navy-700);}
+.cal-nav-title{font-size:1.1rem;font-weight:800;color:var(--navy-900);min-width:180px;text-align:center;}
+.cal-hoje-btn{padding:5px 14px;border-radius:8px;border:1.5px solid var(--neutral-200);background:white;font-size:.8rem;font-weight:600;cursor:pointer;}
+.cal-hoje-btn:hover{background:var(--navy-50);}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);border:1px solid var(--neutral-200);border-radius:12px;overflow:hidden;background:var(--neutral-200);gap:1px;}
+.cal-dow{background:var(--navy-900);color:white;font-size:.7rem;font-weight:700;text-align:center;padding:8px 4px;text-transform:uppercase;letter-spacing:.05em;}
+.cal-cell{min-height:110px;background:white;padding:7px 8px;transition:background .1s;}
+.cal-cell:hover{background:var(--navy-50);}
+.cal-cell.vazio{background:var(--neutral-50);}
+.cal-cell.vazio:hover{background:var(--neutral-50);}
+.cal-cell.fds{background:#f8f9fa;}
+.cal-cell.hoje-cell{background:var(--navy-50);}
+.cal-cell.hoje-cell .cal-dia{background:var(--navy-700);color:white;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;}
+.cal-dia{font-size:.8rem;font-weight:800;color:var(--navy-700);margin-bottom:4px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;}
+.cal-cell.vazio .cal-dia,.cal-cell.fds .cal-dia{color:var(--neutral-300);}
+.cal-event{font-size:.7rem;line-height:1.35;border-radius:5px;padding:3px 7px;margin-bottom:3px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:white;font-weight:600;}
+.cal-event:hover{opacity:.85;}
+.cal-add{font-size:.65rem;color:var(--neutral-300);margin-top:4px;display:none;cursor:pointer;}
+.cal-cell:hover .cal-add{display:block;color:var(--navy-400);}
+
+/* Legenda */
+.legenda{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;}
+.legenda-item{display:flex;align-items:center;gap:5px;font-size:.78rem;color:var(--neutral-600);}
+.legenda-dot{width:11px;height:11px;border-radius:3px;flex-shrink:0;}
+
+/* Modais */
+.mov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;}
+.mov.open{display:flex;}
+.mbox{background:white;border-radius:16px;width:min(520px,95vw);max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,.3);}
+.mhead{padding:18px 24px;border-bottom:1px solid var(--neutral-200);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:white;z-index:1;}
+.mbody{padding:20px 24px;display:grid;gap:14px;}
+.mfoot{padding:14px 24px;border-top:1px solid var(--neutral-200);display:flex;gap:8px;justify-content:flex-end;position:sticky;bottom:0;background:white;}
+.tipo-btn{padding:6px 14px;border-radius:8px;border:1.5px solid var(--neutral-200);font-size:.8rem;font-weight:600;cursor:pointer;background:white;transition:all .15s;}
+.tipo-btn.sel{color:white;}
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Legenda -->
+<div class="legenda">
+  {% for tipo,cor in [('Feriado','#e05c5c'),('Recesso','#9ca3af'),('Reunião','#3B82F6'),('Prova','#f59e0b'),('Evento','#4d7c5f'),('Comemorativo','#8b5cf6'),('Outro','#6b7280')] %}
+  <div class="legenda-item"><div class="legenda-dot" style="background:{{ cor }};"></div>{{ tipo }}</div>
   {% endfor %}
-];
+</div>
 
-const ORI_OPCOES = ['SIM', 'NÃO', 'NEGOCIAÇÃO', 'LIBERADO', 'OBSTRUÇÃO', 'ABSTENÇÃO'];
-const ORI_CORES  = {
-  'SIM':        '#d4edda',
-  'NÃO':        '#f8d7da',
-  'NEGOCIAÇÃO': '#fff3cd',
-  'LIBERADO':   '#cce5ff',
-  'OBSTRUÇÃO':  '#ffe5d0',
-  'ABSTENÇÃO':  '#e2e3e5',
-  '':           '#ffffff',
-};
+<!-- Navegação -->
+<div class="cal-nav">
+  <button class="cal-nav-btn" onclick="mudarMes(-1)">‹</button>
+  <div class="cal-nav-title" id="navTitle"></div>
+  <button class="cal-nav-btn" onclick="mudarMes(1)">›</button>
+  <button class="cal-hoje-btn" onclick="irHoje()">Hoje</button>
+</div>
 
-function grupoDoUsuario() {
-  const un = "{{ current_user.username }}".toUpperCase();
-  if (USER_CATEGORIA === 'restrito') {
-    if (un === 'PL')   return 'PL';
-    if (un === 'NOVO') return 'NOVO';
-  }
-  if (USER_CATEGORIA === 'oposicao') return 'oposicao';
-  if (USER_CATEGORIA === 'minoria')  return 'minoria';
-  return 'todos';
+<!-- Grid -->
+<div class="cal-grid" id="calGrid">
+  {% for d in ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'] %}
+  <div class="cal-dow">{{ d }}</div>
+  {% endfor %}
+</div>
+
+<!-- Modal: detalhe do evento -->
+<div class="mov" id="modalEv">
+  <div class="mbox">
+    <div class="mhead">
+      <h3 id="evTitulo" style="font-weight:800;font-size:1rem;color:var(--navy-900);"></h3>
+      <button onclick="fecharModal('modalEv')" style="font-size:1.3rem;color:var(--neutral-400);background:none;border:none;cursor:pointer;">✕</button>
+    </div>
+    <div class="mbody" id="evBody"></div>
+    <div class="mfoot">
+      <button onclick="fecharModal('modalEv')" class="btn btn-outline btn-sm">Fechar</button>
+      <button onclick="excluirEvento()" class="btn btn-danger btn-sm">🗑 Excluir</button>
+      <button onclick="editarEvento()" class="btn btn-primary btn-sm">✏ Editar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: novo/editar evento -->
+<div class="mov" id="modalForm">
+  <div class="mbox">
+    <div class="mhead">
+      <h3 id="formTitulo" style="font-weight:800;font-size:1rem;color:var(--navy-900);">+ Novo Evento</h3>
+      <button onclick="fecharModal('modalForm')" style="font-size:1.3rem;color:var(--neutral-400);background:none;border:none;cursor:pointer;">✕</button>
+    </div>
+    <div class="mbody">
+      <div>
+        <label class="form-label" style="font-size:.75rem;">TÍTULO *</label>
+        <input class="form-control" id="fTitulo" placeholder="Nome do evento" />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label class="form-label" style="font-size:.75rem;">DATA INÍCIO *</label>
+          <input class="form-control" type="date" id="fDataIni" />
+        </div>
+        <div>
+          <label class="form-label" style="font-size:.75rem;">DATA FIM <span style="color:var(--neutral-400);font-weight:400;">(opcional)</span></label>
+          <input class="form-control" type="date" id="fDataFim" />
+        </div>
+      </div>
+      <div>
+        <label class="form-label" style="font-size:.75rem;">TIPO</label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;" id="tipoBtns">
+          {% for tipo,cor in [('feriado','#e05c5c'),('recesso','#9ca3af'),('reuniao','#3B82F6'),('prova','#f59e0b'),('evento','#4d7c5f'),('comemorativo','#8b5cf6'),('outro','#6b7280')] %}
+          <button type="button" class="tipo-btn" data-tipo="{{ tipo }}" data-cor="{{ cor }}"
+                  onclick="selTipo(this)" style="border-color:{{ cor }};">
+            {{ tipo|capitalize }}
+          </button>
+          {% endfor %}
+        </div>
+        <input type="hidden" id="fTipo" value="outro" />
+        <input type="hidden" id="fCor" value="#6b7280" />
+      </div>
+      <div>
+        <label class="form-label" style="font-size:.75rem;">DESCRIÇÃO</label>
+        <textarea class="form-control" id="fDescricao" rows="2" placeholder="Observações..."></textarea>
+      </div>
+      <div style="background:var(--sage-50);border:1px solid var(--sage-200);border-radius:8px;padding:10px 14px;font-size:.8125rem;color:var(--sage-700);">
+        <strong>📅→✅</strong> Este evento será automaticamente marcado como <strong>sem aula</strong> na frequência de todas as suas turmas no(s) dia(s) correspondente(s).
+      </div>
+    </div>
+    <div class="mfoot">
+      <button onclick="fecharModal('modalForm')" class="btn btn-outline btn-sm">Cancelar</button>
+      <button onclick="salvarEvento()" class="btn btn-primary btn-sm">Salvar Evento</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const HOJE  = {ano:{{ hoje.year }}, mes:{{ hoje.month }}, dia:{{ hoje.day }}};
+const MESES = ['','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const CORES = {feriado:'#e05c5c',recesso:'#9ca3af',reuniao:'#3B82F6',prova:'#f59e0b',evento:'#4d7c5f',comemorativo:'#8b5cf6',outro:'#6b7280'};
+
+let anoAtual=HOJE.ano, mesAtual=HOJE.mes, eventos=[], evAtualId=null, modoEdicao=false;
+
+// ── Carregar e renderizar ─────────────────────────────────────────────────────
+async function carregar(ano, mes) {
+  const r = await fetch(`/calendario/api/mes?ano=${ano}&mes=${mes}`);
+  eventos = await r.json();
+  renderizar(ano, mes);
 }
 
-const COLUNAS = [
-  { grupo: 'PL',       label: 'PL'       },
-  { grupo: 'NOVO',     label: 'NOVO'     },
-  { grupo: 'oposicao', label: 'Oposição' },
-  { grupo: 'minoria',  label: 'Minoria'  },
-];
+function renderizar(ano, mes) {
+  document.getElementById('navTitle').textContent = `${MESES[mes]} ${ano}`;
+  const grid = document.getElementById('calGrid');
+  while (grid.children.length > 7) grid.removeChild(grid.lastChild);
 
-let oriData = {};
+  const dim = new Date(ano, mes, 0).getDate();
+  let ini   = new Date(ano, mes-1, 1).getDay(); ini = (ini+6)%7;
 
-async function carregarOrientacoes() {
-  document.getElementById('ori-loading').style.display = 'block';
-  document.getElementById('ori-conteudo').style.display = 'none';
-  try {
-    const r = await fetch(`/get_orientacoes/${EVENTO_ID_ORI}`);
-    const j = await r.json();
-    console.log('Orientações carregadas:', j.length, j);
-    oriData = {};
-    j.forEach(o => {
-      const key = `${o.id_principal}|${o.grupo}`;
-      oriData[key] = {
-        orientacao: o.orientacao || '',
-        comentario: o.comentario || ''
-      };
-      console.log('oriData key:', key, '→', o.orientacao);
-    });
-    console.log('oriData final:', oriData);
-    renderizarTabela();
-  } catch(e) {
-    alert('Erro ao carregar orientações: ' + e.message);
-  } finally {
-    document.getElementById('ori-loading').style.display = 'none';
-    document.getElementById('ori-conteudo').style.display = 'block';
-  }
-}
+  for (let i=0; i<ini; i++)
+    grid.insertAdjacentHTML('beforeend','<div class="cal-cell vazio"></div>');
 
-function renderizarTabela() {
-  const tbody    = document.getElementById('tbody-orientacoes');
-  const meuGrupo = grupoDoUsuario();
-  tbody.innerHTML = '';
-
-  ITENS_ORI.forEach((item) => {
-    const tr = document.createElement('tr');
-    const resumoEl = document.getElementById('resumo-ia-' + item.id_principal);
-    const resumo = (resumoEl && resumoEl.textContent.trim()) || resumoCache[item.id_principal] || '';
-    const ementaHtml = `<span style="color:#333">${item.ementa || ''}</span>` +
-      (resumo ? `<br><span style="color:#1A6B3A;font-weight:500">Resumo: ${resumo}</span>` : '');
-    tr.innerHTML = `
-      <td class="text-center fw-bold align-top">${item.ordem}</td>
-      <td class="align-top"><strong>${item.projeto}</strong></td>
-      <td style="font-size:0.78rem; min-width:200px; white-space:normal; word-break:break-word;">${ementaHtml}</td>`;
-
-    COLUNAS.forEach(col => {
-      const key   = `${item.id_principal}|${col.grupo}`;
-      const salvo = oriData[key] || {orientacao: '', comentario: ''};
-      const podeEditar = (meuGrupo === 'todos' || meuGrupo === col.grupo);
-      const corSelect  = ORI_CORES[salvo.orientacao] || '#fff';
-
-      const td = document.createElement('td');
-      td.style.background = ORI_CORES[salvo.orientacao] || '#ffffff';
-      td.style.padding = '5px';
-      td.style.verticalAlign = 'top';
-      td.style.transition = 'background 0.2s';
-
-      if (podeEditar) {
-        td.innerHTML = `
-          <select class="form-select form-select-sm mb-1"
-                  style="background:${corSelect}; font-size:0.78rem; font-weight:600;"
-                  onchange="salvarOrientacao('${item.id_principal}','${col.grupo}',this.value,this)">
-            <option value="">— selecione —</option>
-            ${ORI_OPCOES.map(op =>
-              `<option value="${op}" ${salvo.orientacao===op?'selected':''}>${op}</option>`
-            ).join('')}
-          </select>
-          <textarea class="form-control form-control-sm"
-                    rows="4"
-                    placeholder="Comentário / justificativa..."
-                    style="font-size:0.75rem; resize:vertical; min-height:80px;"
-                    onchange="salvarComentario('${item.id_principal}','${col.grupo}',this.value)"
-                    >${salvo.comentario}</textarea>`;
-      } else {
-        const badgeCor = salvo.orientacao === 'SIM' ? '#1A6B3A'
-                       : salvo.orientacao === 'NÃO' || salvo.orientacao === 'OBSTRUÇÃO' ? '#8B0000'
-                       : salvo.orientacao === 'LIBERADO' ? '#7B5C00'
-                       : '#555';
-        td.innerHTML = salvo.orientacao
-          ? `<div style="background:${ORI_CORES[salvo.orientacao]};border-radius:4px;padding:3px 6px;
-                         color:${badgeCor};font-weight:700;font-size:0.78rem;text-align:center;">
-               ${salvo.orientacao}
-             </div>
-             ${salvo.comentario
-               ? `<div style="font-size:0.72rem;color:#555;margin-top:4px;white-space:pre-wrap;">${salvo.comentario}</div>`
-               : ''}`
-          : `<span class="text-muted" style="font-size:0.75rem;">—</span>`;
-      }
-      tr.appendChild(td);
-    });
-
-    tbody.appendChild(tr);
+  // Índice eventos por data
+  const map = {};
+  eventos.forEach(ev => {
+    // Expande eventos multi-dia
+    let d = new Date(ev.data_inicio + 'T00:00:00');
+    const fim = ev.data_fim ? new Date(ev.data_fim + 'T00:00:00') : d;
+    while (d <= fim) {
+      const k = d.toISOString().slice(0,10);
+      if (!map[k]) map[k] = [];
+      map[k].push(ev);
+      d.setDate(d.getDate()+1);
+    }
   });
-}
 
-async function salvarOrientacao(id_principal, grupo, orientacao, selectEl) {
-  const cor = ORI_CORES[orientacao] || '#ffffff';
-  // Muda fundo do select
-  selectEl.style.background = cor;
-  // Muda fundo da célula inteira
-  const td = selectEl.closest('td');
-  if (td) td.style.background = cor;
+  for (let dia=1; dia<=dim; dia++) {
+    const dow    = (ini+dia-1)%7, fds=dow>=5;
+    const isHoje = ano===HOJE.ano && mes===HOJE.mes && dia===HOJE.dia;
+    const dStr   = `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+    const evs    = map[dStr]||[];
 
-  const key = `${id_principal}|${grupo}`;
-  if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
-  oriData[key].orientacao = orientacao;
-  await _enviarOrientacao(id_principal, grupo);
-}
-
-async function salvarComentario(id_principal, grupo, comentario) {
-  const key = `${id_principal}|${grupo}`;
-  if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
-  oriData[key].comentario = comentario;
-  await _enviarOrientacao(id_principal, grupo);
-}
-
-async function _enviarOrientacao(id_principal, grupo) {
-  const key   = `${id_principal}|${grupo}`;
-  const dados = oriData[key] || {};
-  try {
-    await fetch('/salvar_orientacoes', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        evento_id: EVENTO_ID_ORI,
-        orientacoes: [{
-          id_principal,
-          grupo,
-          orientacao: dados.orientacao || '',
-          comentario: dados.comentario || ''
-        }]
-      })
+    let cls = 'cal-cell'+(fds?' fds':'')+(isHoje?' hoje-cell':'');
+    let inner = `<div class="cal-dia">${dia}</div>`;
+    evs.slice(0,3).forEach(ev => {
+      const cor = ev.cor || CORES[ev.tipo] || '#6b7280';
+      inner += `<div class="cal-event" style="background:${cor}" onclick="abrirEvento(${ev.id})">${ev.titulo}</div>`;
     });
-  } catch(e) {
-    console.error('Erro ao salvar:', e);
+    if (evs.length > 3) inner += `<div style="font-size:.65rem;color:var(--neutral-400);">+${evs.length-3} mais</div>`;
+    inner += `<div class="cal-add" onclick="abrirNovoEvento('${dStr}')">+ evento</div>`;
+    grid.insertAdjacentHTML('beforeend', `<div class="${cls}">${inner}</div>`);
   }
+  const rest = (7-(ini+dim)%7)%7;
+  for (let i=0; i<rest; i++)
+    grid.insertAdjacentHTML('beforeend','<div class="cal-cell vazio"></div>');
 }
 
-async function exportarOrientacoesPDF() {
-  // Monta dados para enviar ao servidor
+function mudarMes(d) {
+  mesAtual+=d;
+  if(mesAtual>12){mesAtual=1;anoAtual++;}
+  if(mesAtual<1){mesAtual=12;anoAtual--;}
+  carregar(anoAtual,mesAtual);
+}
+function irHoje(){ anoAtual=HOJE.ano; mesAtual=HOJE.mes; carregar(anoAtual,mesAtual); }
+
+// ── Modal detalhe ─────────────────────────────────────────────────────────────
+function abrirEvento(id) {
+  const ev = eventos.find(x=>x.id===id); if(!ev) return;
+  evAtualId = id;
+  document.getElementById('evTitulo').textContent = ev.titulo;
+  const cor = ev.cor || CORES[ev.tipo] || '#6b7280';
+  let html = `<div style="display:grid;gap:10px;">
+    <div><div style="font-size:.7rem;font-weight:700;color:var(--neutral-400);text-transform:uppercase;">Data</div>
+      <div style="margin-top:2px;">${fmtData(ev.data_inicio)}${ev.data_fim && ev.data_fim!==ev.data_inicio ? ' → '+fmtData(ev.data_fim) : ''}</div></div>
+    <div><div style="font-size:.7rem;font-weight:700;color:var(--neutral-400);text-transform:uppercase;">Tipo</div>
+      <div style="margin-top:2px;"><span style="background:${cor};color:white;padding:2px 10px;border-radius:6px;font-size:.8rem;font-weight:700;">${ev.tipo||'—'}</span></div></div>
+    ${ev.descricao?`<div><div style="font-size:.7rem;font-weight:700;color:var(--neutral-400);text-transform:uppercase;">Descrição</div><div style="margin-top:2px;font-size:.875rem;">${ev.descricao}</div></div>`:''}
+  </div>`;
+  document.getElementById('evBody').innerHTML = html;
+  document.getElementById('modalEv').classList.add('open');
+}
+
+function fmtData(s) {
+  if (!s) return '—';
+  const [a,m,d] = s.split('-');
+  return `${d}/${m}/${a}`;
+}
+
+async function excluirEvento() {
+  if (!evAtualId || !confirm('Excluir este evento?')) return;
+  await fetch(`/calendario/excluir/${evAtualId}`, {method:'POST'});
+  fecharModal('modalEv');
+  carregar(anoAtual, mesAtual);
+}
+
+function editarEvento() {
+  const ev = eventos.find(x=>x.id===evAtualId); if(!ev) return;
+  fecharModal('modalEv');
+  modoEdicao = true;
+  document.getElementById('formTitulo').textContent = '✏ Editar Evento';
+  document.getElementById('fTitulo').value     = ev.titulo;
+  document.getElementById('fDataIni').value    = ev.data_inicio;
+  document.getElementById('fDataFim').value    = ev.data_fim||'';
+  document.getElementById('fDescricao').value  = ev.descricao||'';
+  document.getElementById('fTipo').value       = ev.tipo||'outro';
+  document.getElementById('fCor').value        = ev.cor||'#6b7280';
+  document.querySelectorAll('.tipo-btn').forEach(b => {
+    const sel = b.dataset.tipo === (ev.tipo||'outro');
+    b.classList.toggle('sel', sel);
+    if (sel) b.style.background = b.dataset.cor;
+    else b.style.background = 'white'; b.style.color = sel ? 'white' : '';
+  });
+  document.getElementById('modalForm').classList.add('open');
+}
+
+// ── Modal novo evento ─────────────────────────────────────────────────────────
+function abrirNovoEvento(data) {
+  modoEdicao = false; evAtualId = null;
+  document.getElementById('formTitulo').textContent = '+ Novo Evento';
+  document.getElementById('fTitulo').value    = '';
+  document.getElementById('fDataIni').value   = data||'';
+  document.getElementById('fDataFim').value   = '';
+  document.getElementById('fDescricao').value = '';
+  document.getElementById('fTipo').value      = 'outro';
+  document.getElementById('fCor').value       = '#6b7280';
+  document.querySelectorAll('.tipo-btn').forEach(b => {
+    b.classList.remove('sel'); b.style.background='white'; b.style.color='';
+  });
+  document.getElementById('modalForm').classList.add('open');
+}
+
+function selTipo(btn) {
+  document.querySelectorAll('.tipo-btn').forEach(b => {
+    b.classList.remove('sel'); b.style.background='white'; b.style.color='';
+  });
+  btn.classList.add('sel');
+  btn.style.background = btn.dataset.cor;
+  btn.style.color = 'white';
+  document.getElementById('fTipo').value = btn.dataset.tipo;
+  document.getElementById('fCor').value  = btn.dataset.cor;
+}
+
+async function salvarEvento() {
+  const titulo = document.getElementById('fTitulo').value.trim();
+  const dataIni = document.getElementById('fDataIni').value;
+  if (!titulo || !dataIni) { alert('Título e data de início são obrigatórios.'); return; }
+
   const payload = {
-    evento_id: EVENTO_ID_ORI,
-    itens: ITENS_ORI,
-    orientacoes: oriData,
-    colunas: COLUNAS.map(c => ({grupo: c.grupo, label: c.label}))
+    titulo, data_inicio: dataIni,
+    data_fim:   document.getElementById('fDataFim').value || dataIni,
+    tipo:       document.getElementById('fTipo').value,
+    cor:        document.getElementById('fCor').value,
+    descricao:  document.getElementById('fDescricao').value,
   };
-  const r = await fetch('/exportar_orientacoes_pdf', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+
+  const url  = modoEdicao ? `/calendario/api/salvar/${evAtualId}` : '/calendario/api/salvar';
+  await fetch(url, {
+    method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(payload)
   });
-  const blob = await r.blob();
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `orientacoes_plenario_${EVENTO_ID_ORI}.pdf`;
-  a.click();
+  fecharModal('modalForm');
+  carregar(anoAtual, mesAtual);
 }
+
+function fecharModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.mov').forEach(m => m.addEventListener('click', e => { if(e.target===m) m.classList.remove('open'); }));
+
+async function ressincronizar() {
+  const r = await fetch('/calendario/api/ressincronizar', {method:'POST'});
+  const d = await r.json();
+  alert(`✅ ${d.sincronizados} evento(s) sincronizado(s) com a frequência!`);
+}
+
+// Init
+carregar(anoAtual, mesAtual);
 </script>
-
-<!-- ═══ MODAL PAUTA ICONOGRÁFICA ══════════════════════════════════════════ -->
-<div class="modal fade" id="modalIconografica" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width:95vw;">
-    <div class="modal-content">
-      <div class="modal-header" style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);color:#fff;">
-        <h5 class="modal-title"><i class="fas fa-th-large me-2"></i>Pauta Iconográfica</h5>
-        <div class="ms-auto me-3 d-flex gap-2">
-          <span id="icon-status" class="badge bg-warning text-dark" style="font-size:0.75rem;"></span>
-        </div>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body p-0" style="background:#f4ede1;">
-        <!-- Preview em tempo real -->
-        <div id="icon-preview-container" style="padding:16px;">
-          <div id="icon-preview" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:794px;margin:0 auto;">
-            <!-- Cards gerados via JS -->
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
-        <button class="btn btn-primary" id="btn-gerar-iconografica">
-          <i class="fas fa-print me-1"></i>Imprimir / Salvar PDF
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-<script>
-(function() {
-  const _prioridades = {};
-  const _imagens     = {}; // dataURL por id
-  const _imgBusy     = {}; // flag carregando
-
-  const C = {cream:"#f4ede1",ink:"#1e3550",inkSoft:"#34547a",forest:"#3d8b4a",leaf:"#7ab450",ruby:"#c0392b",amber:"#f4c542"};
-
-  function oriCfg(o){
-    o=(o||'').toUpperCase();
-    if(o==='SIM')        return{bg:'#2e7d32',icon:'check'};
-    if(o==='NÃO')        return{bg:'#c0392b',icon:'cross'};
-    if(o==='OBSTRUÇÃO')  return{bg:'#c0392b',icon:'lock'};
-    if(o==='NEGOCIAÇÃO') return{bg:'#e6a817',icon:'check'};
-    if(o==='LIBERADO')   return{bg:'#5e7184',icon:'check'};
-    if(o==='ABSTENÇÃO')  return{bg:'#9e9e9e',icon:'check'};
-    return{bg:'#9e9e9e',icon:'check'};
-  }
-
-  function svgIco(t,c){
-    if(t==='check')return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M20 33 L29 42 L45 24" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-    if(t==='cross')return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M22 22 L42 42 M42 22 L22 42" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round"/></svg>`;
-    if(t==='lock') return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M24 30 v-4 a8 8 0 0 1 16 0" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/><rect x="22" y="30" width="20" height="16" rx="2" fill="#fff"/></svg>`;
-    return'';
-  }
-
-  function e(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-
-  // Busca imagem via backend (Gemini para keywords + Pexels)
-  async function buscarImagem(resumo, id) {
-    try {
-      const r = await fetch('/buscar_imagem_item', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({resumo, id_principal: id})
-      });
-      if (!r.ok) return null;
-      const j = await r.json();
-      return j.imagem_url || null;
-    } catch { return null; }
-  }
-
-  // Renderiza um card no preview
-  function renderCard(item, container) {
-    const id  = String(item.id_principal);
-    const cfg = oriCfg(item.orientacao);
-    const resumoEl = document.getElementById('resumo-ia-' + id);
-    const resumo   = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || '';
-    const descricao = (resumo || item.ementa || '').substring(0, 180);
-    const imgSrc   = _imagens[id];
-    const prio     = !!_prioridades[id];
-    const shadow   = prio ? `0 0 0 3px ${C.amber},0 6px 14px rgba(0,0,0,.10)` : '0 3px 10px rgba(0,0,0,.06)';
-
-    container.innerHTML = `
-      <div style="background:#fff;border-radius:10px;padding:11px 12px 0;position:relative;
-        box-shadow:${shadow};overflow:hidden;font-family:'Barlow',sans-serif;">
-        <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${cfg.bg};"></div>
-        ${prio ? `<div style="position:absolute;top:6px;right:6px;background:${C.amber};color:#fff;font-size:8px;font-weight:900;letter-spacing:.8px;padding:2px 6px;border-radius:4px;">★ PRIORIDADE</div>` : ''}
-
-        <!-- Controles inline -->
-        <div style="position:absolute;bottom:8px;right:8px;display:flex;gap:4px;z-index:10;">
-          <label title="Trocar imagem" style="cursor:pointer;background:rgba(255,255,255,.9);border:1px solid #ccc;border-radius:4px;padding:2px 6px;font-size:10px;">
-            📷 <input type="file" accept="image/*" class="d-none icon-img-inline" data-id="${id}">
-          </label>
-          <label title="${prio?'Remover prioridade':'Marcar como prioritária'}" style="cursor:pointer;background:${prio?C.amber:'rgba(255,255,255,.9)'};color:${prio?'#fff':'#333'};border:1px solid #ccc;border-radius:4px;padding:2px 6px;font-size:10px;" class="icon-prio-inline" data-id="${id}">★</label>
-        </div>
-
-        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;padding-left:2px;">
-          <div style="width:22px;height:22px;border-radius:50%;background:${C.inkSoft};color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">${e(item.ordem)}</div>
-          <div style="font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:800;color:${C.ink};line-height:1.1;padding-right:60px;">${e(item.projeto||'')}</div>
-        </div>
-
-        ${imgSrc ? `
-        <div style="width:100%;height:120px;border-radius:6px;overflow:hidden;margin:4px 0 6px;background:#f5f5f5;display:flex;align-items:center;justify-content:center;">
-          <img src="${imgSrc}" style="max-width:100%;max-height:100%;width:100%;height:100%;object-fit:contain;background:#fff;">
-        </div>` : `
-        <div class="icon-img-placeholder" data-id="${id}" style="width:100%;height:50px;border-radius:6px;margin:4px 0 6px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:11px;">
-          ${_imgBusy[id] ? '⏳ Buscando imagem…' : '📷 Sem imagem'}
-        </div>`}
-
-        <div style="font-size:9px;color:${C.inkSoft};line-height:1.5;padding-left:2px;">
-          <div><strong>Autor:</strong> ${e((item.autor||'N/D').substring(0,60))}</div>
-          <div><strong>Relator:</strong> ${e((item.relator||'N/D').substring(0,60))}</div>
-        </div>
-        <div style="display:flex;align-items:flex-end;gap:8px;margin-top:6px;padding-left:2px;padding-bottom:8px;">
-          <div style="flex:1;font-size:10px;color:#2c3e50;line-height:1.4;">${e(descricao)}</div>
-          <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
-            ${svgIco(cfg.icon, cfg.bg)}
-            <div style="font-size:8px;font-weight:900;color:${cfg.bg};margin-top:2px;letter-spacing:.5px;">${e(item.orientacao||'—')}</div>
-          </div>
-        </div>
-        <div style="height:4px;background:linear-gradient(90deg,${C.leaf} 0%,${C.forest} 100%);margin-left:-12px;margin-right:-12px;"></div>
-      </div>`;
-
-    // Listener trocar imagem
-    container.querySelector('.icon-img-inline')?.addEventListener('change', function() {
-      const file = this.files[0]; if (!file) return;
-      const reader = new FileReader();
-      reader.onload = ev => { _imagens[id] = ev.target.result; renderCard(item, container); };
-      reader.readAsDataURL(file);
-    });
-
-    // Listener prioridade
-    container.querySelector('.icon-prio-inline')?.addEventListener('click', function() {
-      _prioridades[id] = !_prioridades[id];
-      renderCard(item, container);
-    });
-  }
-
-  // Busca imagens para todos os itens
-  async function buscarTodasImagens(itens) {
-    const status = document.getElementById('icon-status');
-    let n = 0;
-    for (const item of itens) {
-      const id = String(item.id_principal);
-      if (_imagens[id]) { n++; continue; }
-      const resumoEl = document.getElementById('resumo-ia-' + id);
-      const resumo = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || item.ementa || '';
-      const query = resumo.substring(0, 80);
-      if (!query) continue;
-      _imgBusy[id] = true;
-      if (status) status.textContent = `Buscando imagens… ${n+1}/${itens.length}`;
-      // Atualiza placeholder
-      const ph = document.querySelector(`.icon-img-placeholder[data-id="${id}"]`);
-      if (ph) ph.textContent = '⏳ Buscando…';
-      const dataUrl = await buscarImagem(query, id);
-      _imgBusy[id] = false;
-      if (dataUrl) _imagens[id] = dataUrl;
-      n++;
-      // Re-renderiza o card
-      const container = document.querySelector(`[data-card-id="${id}"]`);
-      if (container) {
-        const itemData = itens.find(i => String(i.id_principal) === id);
-        if (itemData) renderCard(itemData, container);
-      }
-    }
-    if (status) status.textContent = '✅ Pronto';
-  }
-
-  async function abrirModalIconografica() {
-    const preview = document.getElementById('icon-preview');
-    if (!preview) return;
-    const itens = window.ITENS_DATA || [];
-
-    // Limpa e renderiza grid
-    preview.innerHTML = '';
-    itens.forEach(item => {
-      const wrapper = document.createElement('div');
-      wrapper.dataset.cardId = String(item.id_principal);
-      preview.appendChild(wrapper);
-      renderCard(item, wrapper);
-    });
-
-    const modal = new bootstrap.Modal(document.getElementById('modalIconografica'));
-    modal.show();
-
-    // Busca imagens em background
-    buscarTodasImagens(itens);
-  }
-
-  async function b64url(url){
-    try{
-      const r=await fetch(url);const blob=await r.blob();
-      return await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(blob);});
-    }catch{return null;}
-  }
-
-  function buildPrintHTML(data){
-    const mid=Math.ceil(data.items.length/2);
-    const left=data.items.slice(0,mid),right=data.items.slice(mid);
-    const card=it=>{
-      const cfg=oriCfg(it.orientacao);
-      const shadow=it.prioridade?`0 0 0 2.5px ${C.amber},0 6px 14px rgba(0,0,0,.10)`:'0 3px 10px rgba(0,0,0,.06)';
-      const prio=it.prioridade?`<div style="position:absolute;top:6px;right:6px;background:${C.amber};color:#fff;font-size:8px;font-weight:900;padding:2px 6px;border-radius:4px;">★ PRIORIDADE</div>`:'';
-      const img=it.imagem?`<div style="width:100%;height:110px;border-radius:6px;overflow:hidden;margin:4px 0 6px;background:#fff;display:flex;align-items:center;justify-content:center;"><img src="${it.imagem}" style="max-width:100%;max-height:110px;object-fit:contain;"></div>`:'';
-      return`<div style="background:#fff;border-radius:10px;padding:11px 12px 0;position:relative;box-shadow:${shadow};overflow:hidden;page-break-inside:avoid;">
-        <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${cfg.bg};"></div>
-        ${prio}
-        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;padding-left:2px;">
-          <div style="width:22px;height:22px;border-radius:50%;background:${C.inkSoft};color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">${e(it.num)}</div>
-          <div style="font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:800;color:${C.ink};line-height:1.1;">${e(it.codigo)}</div>
-        </div>
-        ${img}
-        <div style="font-size:9px;color:${C.inkSoft};line-height:1.5;padding-left:2px;">
-          <div><strong>Autor:</strong> ${e(it.autor)}</div>
-          <div><strong>Relator:</strong> ${e(it.relator)}</div>
-        </div>
-        <div style="display:flex;align-items:flex-end;gap:8px;margin-top:6px;padding-left:2px;padding-bottom:8px;">
-          <div style="flex:1;font-size:10px;color:#2c3e50;line-height:1.4;">${e(it.descricao)}</div>
-          <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
-            ${svgIco(cfg.icon,cfg.bg)}
-            <div style="font-size:8px;font-weight:900;color:${cfg.bg};margin-top:2px;letter-spacing:.5px;">${e(it.orientacao||'—')}</div>
-          </div>
-        </div>
-        <div style="height:4px;background:linear-gradient(90deg,${C.leaf} 0%,${C.forest} 100%);margin-left:-12px;margin-right:-12px;"></div>
-      </div>`;
-    };
-    const logos=`<div style="display:flex;justify-content:center;align-items:center;gap:26px;margin-top:12px;">
-      ${data.logo_min?`<img src="${data.logo_min}" style="height:38px;object-fit:contain;">`:`<div style="font-size:10px;font-weight:900;color:${C.forest};">LIDERANÇA DA MINORIA</div>`}
-      ${data.logo_opo?`<img src="${data.logo_opo}" style="height:38px;object-fit:contain;">`:`<div style="font-size:10px;font-weight:900;color:${C.ruby};">OPOSIÇÃO</div>`}
-    </div>`;
-    return`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pauta Iconográfica</title>
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800;900&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet">
-<style>@page{size:A4;margin:0}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}body{margin:0;padding:0;background:${C.cream};font-family:'Barlow',sans-serif;color:${C.ink}}.page{width:794px;min-height:1123px;margin:0 auto;background:${C.cream};padding-bottom:30px;position:relative}.pattern{position:absolute;inset:0;opacity:.04;pointer-events:none;background-image:radial-gradient(${C.ink} 1px,transparent 1px);background-size:16px 16px}.col{display:flex;flex-direction:column;gap:14px}</style></head><body>
-<div class="page"><div class="pattern"></div>
-<div style="padding:24px 28px 10px;text-align:center;">
-  <div style="font-family:'Barlow Condensed',sans-serif;font-size:26px;font-weight:800;color:${C.ink};line-height:1.15;">
-    Pauta Iconográfica — Plenário da Câmara<br/><span style="font-size:16px;font-weight:600;">${e(data.data)}</span>
-  </div>${logos}
-</div>
-<div style="padding:12px 22px 0;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-  <div class="col">${left.map(card).join('')}</div>
-  <div class="col">${right.map(card).join('')}</div>
-</div></div></body></html>`;
-  }
-
-  async function gerarIconografica() {
-    const btn = document.getElementById('btn-gerar-iconografica');
-    if (btn) { btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Preparando…'; }
-
-    const [logo_min, logo_opo] = await Promise.all([b64url('/static/logo_minoria.png'), b64url('/static/logo_oposicao.png')]);
-    const dataEvento = (document.querySelector('[data-evento-data]')||{}).dataset?.eventoData||'';
-
-    const itens = (window.ITENS_DATA||[]).map(item => {
-      const id = String(item.id_principal);
-      const resumoEl = document.getElementById('resumo-ia-'+id);
-      const resumo = (resumoEl&&resumoEl.textContent.trim())||item.resumo_ia||'';
-      return {
-        num: String(item.ordem||''), codigo: item.projeto||'',
-        autor: (item.autor||'N/D').substring(0,60),
-        relator: (item.relator||'N/D').substring(0,60),
-        descricao: (resumo||(item.ementa||'')).substring(0,180),
-        orientacao: (item.orientacao||'').toUpperCase(),
-        prioridade: !!_prioridades[id],
-        imagem: _imagens[id]||null,
-      };
-    });
-
-    itens.sort((a,b)=>(b.prioridade?1:0)-(a.prioridade?1:0));
-
-    bootstrap.Modal.getInstance(document.getElementById('modalIconografica'))?.hide();
-
-    const w = window.open('','_blank');
-    if (!w) { alert('Permita pop-ups.'); return; }
-    w.document.write(buildPrintHTML({data:dataEvento, items:itens, logo_min, logo_opo}));
-    w.document.close();
-    w.focus();
-    setTimeout(()=>w.print(), 800);
-
-    if (btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-print me-1"></i>Imprimir / Salvar PDF'; }
-  }
-
-  document.addEventListener('DOMContentLoaded', ()=>{
-    document.getElementById('btn-iconografica')?.addEventListener('click', abrirModalIconografica);
-    document.getElementById('btn-gerar-iconografica')?.addEventListener('click', gerarIconografica);
-  });
-})();
-</script>
-    const body = document.getElementById('iconografica-body');
-    if (!body) return;
-    const itens = window.ITENS_DATA || [];
-    body.innerHTML = `
-      <p class="text-muted small mb-3">Marque itens prioritários e adicione imagens opcionais para cada proposição antes de gerar.</p>
-      <div class="list-group">
-        ${itens.map(item => {
-          const id = String(item.id_principal);
-          const resumoEl = document.getElementById('resumo-ia-' + id);
-          const resumo = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || '';
-          const desc = (resumo || item.ementa || '').substring(0, 100);
-          const temImg = !!_imagens[id];
-          return `
-          <div class="list-group-item py-2 px-3">
-            <div class="d-flex align-items-center gap-3">
-              <span class="badge bg-secondary">${item.ordem}</span>
-              <div class="flex-grow-1">
-                <div class="fw-bold small">${item.projeto || ''}</div>
-                <div class="text-muted" style="font-size:0.75rem;">${desc}${desc.length>=100?'…':''}</div>
-              </div>
-              <div class="d-flex align-items-center gap-3 flex-shrink-0">
-                <div class="form-check mb-0">
-                  <input class="form-check-input icon-prio" type="checkbox"
-                    id="iprio-${id}" data-id="${id}" ${_prioridades[id]?'checked':''}>
-                  <label class="form-check-label small fw-bold text-warning" for="iprio-${id}">★ Prioritária</label>
-                </div>
-                <label class="btn btn-outline-secondary btn-sm py-0 px-2 mb-0" style="font-size:0.72rem;cursor:pointer;">
-                  <i class="fas fa-image me-1"></i>${temImg?'<span class="text-success">✅</span>':'Imagem'}
-                  <input type="file" accept="image/*" class="d-none icon-img" data-id="${id}">
-                </label>
-              </div>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>`;
-
-    body.querySelectorAll('.icon-prio').forEach(cb => {
-      cb.addEventListener('change', () => { _prioridades[cb.dataset.id] = cb.checked; });
-    });
-    body.querySelectorAll('.icon-img').forEach(inp => {
-      inp.addEventListener('change', () => {
-        const file = inp.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = ev => {
-          _imagens[inp.dataset.id] = ev.target.result;
-          const lbl = inp.closest('label');
-          if (lbl) lbl.innerHTML = `<i class="fas fa-image me-1"></i><span class="text-success">✅</span><input type="file" accept="image/*" class="d-none icon-img" data-id="${inp.dataset.id}">`;
-          // Re-adiciona listener no novo input
-          lbl.querySelector('.icon-img').addEventListener('change', function() {
-            const f2 = this.files[0]; if (!f2) return;
-            const r2 = new FileReader();
-            r2.onload = e2 => { _imagens[this.dataset.id] = e2.target.result; };
-            r2.readAsDataURL(f2);
-          });
-        };
-        reader.readAsDataURL(file);
-      });
-    });
-
-    new bootstrap.Modal(document.getElementById('modalIconografica')).show();
-  }
-
-  const C = {cream:"#f4ede1",ink:"#1e3550",inkSoft:"#34547a",forest:"#3d8b4a",leaf:"#7ab450",ruby:"#c0392b",amber:"#f4c542"};
-
-  function oriCfg(o) {
-    o = (o||'').toUpperCase();
-    if(o==='SIM')        return{bg:'#2e7d32',icon:'check'};
-    if(o==='NÃO')        return{bg:'#c0392b',icon:'cross'};
-    if(o==='OBSTRUÇÃO')  return{bg:'#c0392b',icon:'lock'};
-    if(o==='NEGOCIAÇÃO') return{bg:'#e6a817',icon:'check'};
-    if(o==='LIBERADO')   return{bg:'#5e7184',icon:'check'};
-    if(o==='ABSTENÇÃO')  return{bg:'#9e9e9e',icon:'check'};
-    return{bg:'#9e9e9e',icon:'check'};
-  }
-
-  function svgIco(t,c){
-    if(t==='check')return`<svg width="46" height="46" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M20 33 L29 42 L45 24" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-    if(t==='cross')return`<svg width="46" height="46" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M22 22 L42 42 M42 22 L22 42" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round"/></svg>`;
-    if(t==='lock') return`<svg width="46" height="46" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M24 30 v-4 a8 8 0 0 1 16 0" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/><rect x="22" y="30" width="20" height="16" rx="2" fill="#fff"/></svg>`;
-    return'';
-  }
-
-  function e(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-
-  function buildHTML(data) {
-    const mid=Math.ceil(data.items.length/2);
-    const left=data.items.slice(0,mid), right=data.items.slice(mid);
-    const card=it=>{
-      const cfg=oriCfg(it.orientacao);
-      const shadow=it.prioridade?`0 0 0 2.5px ${C.amber},0 6px 14px rgba(0,0,0,.10)`:'0 3px 10px rgba(0,0,0,.06)';
-      const prio=it.prioridade?`<div style="position:absolute;top:6px;right:6px;background:${C.amber};color:#fff;font-size:8px;font-weight:900;letter-spacing:.8px;padding:2px 6px;border-radius:4px;">★ PRIORIDADE</div>`:'';
-      const img=it.imagem?`<div style="width:100%;height:84px;border-radius:6px;overflow:hidden;margin:4px 0 6px;"><img src="${it.imagem}" style="width:100%;height:100%;object-fit:cover;"/></div>`:'';
-      return`<div style="background:#fff;border-radius:10px;padding:11px 12px 0;position:relative;box-shadow:${shadow};overflow:hidden;page-break-inside:avoid;">
-        <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${cfg.bg};"></div>
-        ${prio}
-        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;padding-left:2px;">
-          <div style="width:22px;height:22px;border-radius:50%;background:${C.inkSoft};color:#fff;font-size:11.5px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">${e(it.num)}</div>
-          <div style="font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:800;color:${C.ink};line-height:1.1;">${e(it.codigo)}</div>
-        </div>
-        ${img}
-        <div style="font-size:9px;color:${C.inkSoft};line-height:1.5;padding-left:2px;">
-          <div><strong>Autor:</strong> ${e(it.autor)}</div>
-          <div><strong>Relator:</strong> ${e(it.relator)}</div>
-        </div>
-        <div style="display:flex;align-items:flex-end;gap:8px;margin-top:6px;padding-left:2px;padding-bottom:8px;">
-          <div style="flex:1;font-size:10px;color:#2c3e50;line-height:1.4;">${e(it.descricao)}</div>
-          <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
-            ${svgIco(cfg.icon,cfg.bg)}
-            <div style="font-size:8px;font-weight:900;color:${cfg.bg};margin-top:2px;letter-spacing:.5px;">${e(it.orientacao||'—')}</div>
-          </div>
-        </div>
-        <div style="height:4px;background:linear-gradient(90deg,${C.leaf} 0%,${C.forest} 100%);margin-left:-12px;margin-right:-12px;"></div>
-      </div>`;
-    };
-    const logos=`<div style="display:flex;justify-content:center;align-items:center;gap:26px;margin-top:12px;">
-      ${data.logo_min ?`<img src="${data.logo_min}"  style="height:38px;object-fit:contain;">`:`<div style="font-size:10px;font-weight:900;color:${C.forest};">LIDERANÇA DA MINORIA</div>`}
-      ${data.logo_opo ?`<img src="${data.logo_opo}" style="height:38px;object-fit:contain;">`:`<div style="font-size:10px;font-weight:900;color:${C.ruby};">OPOSIÇÃO</div>`}
-    </div>`;
-    return`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pauta Iconográfica</title>
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800;900&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet">
-<style>@page{size:A4;margin:0}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}body{margin:0;padding:0;background:${C.cream};font-family:'Barlow',sans-serif;color:${C.ink}}.page{width:794px;min-height:1123px;margin:0 auto;background:${C.cream};padding-bottom:30px;position:relative}.pattern{position:absolute;inset:0;opacity:.04;pointer-events:none;background-image:radial-gradient(${C.ink} 1px,transparent 1px);background-size:16px 16px}.col{display:flex;flex-direction:column;gap:14px}</style></head><body>
-<div class="page"><div class="pattern"></div>
-<div style="padding:24px 28px 10px;text-align:center;">
-  <div style="font-family:'Barlow Condensed',sans-serif;font-size:26px;font-weight:800;color:${C.ink};line-height:1.15;letter-spacing:.5px;">
-    Pauta Iconográfica — Plenário da Câmara<br/><span style="font-size:16px;font-weight:600;">${e(data.data)}</span>
-  </div>${logos}
-</div>
-<div style="padding:12px 22px 0;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-  <div class="col">${left.map(card).join('')}</div>
-  <div class="col">${right.map(card).join('')}</div>
-</div></div></body></html>`;
-  }
-
-  async function b64(url){try{const r=await fetch(url);const blob=await r.blob();return await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(blob);});}catch{return null;}}
-
-  async function gerarIconografica() {
-    const btn = document.getElementById('btn-gerar-iconografica');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando…'; }
-
-    const [logo_min, logo_opo] = await Promise.all([b64('/static/logo_minoria.png'), b64('/static/logo_oposicao.png')]);
-    const dataEvento = (document.querySelector('[data-evento-data]') || {}).dataset?.eventoData || '';
-
-    const itens = (window.ITENS_DATA || []).map(item => {
-      const id = String(item.id_principal);
-      const resumoEl = document.getElementById('resumo-ia-' + id);
-      const resumo = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || '';
-      return {
-        num: String(item.ordem||''), codigo: item.projeto||'',
-        autor: (item.autor||'N/D').substring(0,60),
-        relator: (item.relator||'N/D').substring(0,60),
-        descricao: (resumo||(item.ementa||'').substring(0,150)),
-        orientacao: (item.orientacao||'').toUpperCase(),
-        prioridade: !!_prioridades[id],
-        imagem: _imagens[id] || null,
-      };
-    });
-
-    itens.sort((a,b) => (b.prioridade?1:0)-(a.prioridade?1:0));
-
-    bootstrap.Modal.getInstance(document.getElementById('modalIconografica'))?.hide();
-
-    const w = window.open('','_blank');
-    if (!w) { alert('Permita pop-ups para gerar a pauta iconográfica.'); return; }
-    w.document.write(buildHTML({data: dataEvento, items: itens, logo_min, logo_opo}));
-    w.document.close();
-    w.focus();
-    setTimeout(() => w.print(), 800);
-
-    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-print me-1"></i>Gerar e Imprimir'; }
-  }
-
-  document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('btn-iconografica')?.addEventListener('click', abrirModalIconografica);
-    document.getElementById('btn-gerar-iconografica')?.addEventListener('click', gerarIconografica);
-  });
-})();
-</script></body>
-</html>
+{% endblock %}
