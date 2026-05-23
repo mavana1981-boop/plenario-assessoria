@@ -1707,9 +1707,20 @@ def gerar_infografico(evento_id):
         evento = {'id': evento_id, 'dataHoraInicio': '', 'situacao': '', 'descricao': 'Sessão Deliberativa', 'local': 'Plenário'}
 
     static_path = os.path.join(app.root_path, 'static')
+    # Carrega resumos IA
+    resumos_ia = {}
+    try:
+        conn_ri = get_conn()
+        c_ri = conn_ri.cursor()
+        c_ri.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
+        resumos_ia = {str(r[0]): r[1] for r in c_ri.fetchall()}
+        conn_ri.close()
+    except Exception:
+        pass
     pdf = gerar_infografico_pdf(evento, itens,
                                  os.path.join(static_path, 'logo_minoria.png'),
-                                 os.path.join(static_path, 'logo_oposicao.png'))
+                                 os.path.join(static_path, 'logo_oposicao.png'),
+                                 resumos_ia=resumos_ia)
     resp = make_response(pdf)
     resp.headers['Content-Type'] = 'application/pdf'
     resp.headers['Content-Disposition'] = f'inline; filename="infografico_plenario_{evento_id}.pdf"'
