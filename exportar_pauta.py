@@ -120,20 +120,19 @@ def exportar_pauta(evento_id):
         if not itens:
             return "Nenhum item encontrado para esta pauta.", 200
 
-        # Carrega resumos IA do banco
+        # Carrega resumos IA do banco (PostgreSQL ou SQLite)
         resumos_ia = {}
         try:
-            from flask import g
-            import sqlite3 as _sq
-            db_path = os.path.join(current_app.root_path, 'plenario.db')
-            if os.path.exists(db_path):
-                conn_r = _sq.connect(db_path)
-                c_r = conn_r.cursor()
-                c_r.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
-                resumos_ia = {str(r[0]): r[1] for r in c_r.fetchall()}
-                conn_r.close()
-        except Exception:
-            pass
+            from app import get_conn as _get_conn
+            conn_r = _get_conn()
+            c_r = conn_r.cursor()
+            c_r.execute('CREATE TABLE IF NOT EXISTS resumos_ia (evento_id INTEGER, id_proposicao TEXT, resumo TEXT, PRIMARY KEY (evento_id, id_proposicao))')
+            c_r.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
+            resumos_ia = {str(r[0]): r[1] for r in c_r.fetchall()}
+            conn_r.commit()
+            conn_r.close()
+        except Exception as e:
+            current_app.logger.warning(f"Resumos IA não carregados: {e}")
 
         static_path = os.path.join(current_app.root_path, "static")
         camara_logo = os.path.join(static_path, "logo_camara.png")
