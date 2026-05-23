@@ -51,39 +51,37 @@ async function gerarMensagem() {
     const obj = document.getElementById('input-objeto')?.value.trim() || '';
     let ementa = itemAtual ? itemAtual.ementa : '';
 
-    if (itemAtual && ['apresentacao','votacao','aprovada_simbolica','aprovado_simbolico','aprovado_nominal','rejeitado_nominal'].includes(tipoAtual)) {
-      try {
-        let resumo = '';
-        if (itemAtual.resumo_ia) {
-          resumo = itemAtual.resumo_ia;
-        } else {
-          const elResumo = document.getElementById('resumo-ia-' + itemAtual.id_principal);
-          if (elResumo && elResumo.textContent.trim()) {
-            resumo = elResumo.textContent.trim();
-            itemAtual.resumo_ia = resumo;
-          }
+    let resumo = '';
+    if (itemAtual) {
+      if (itemAtual.resumo_ia) {
+        resumo = itemAtual.resumo_ia;
+      } else {
+        const elResumo = document.getElementById('resumo-ia-' + itemAtual.id_principal);
+        if (elResumo && elResumo.textContent.trim()) {
+          resumo = elResumo.textContent.trim();
+          itemAtual.resumo_ia = resumo;
         }
-        // Ementa completa + resumo abaixo
-        const ementaBase = stripHTML(itemAtual.ementa || '');
-        ementa = resumo ? `${ementaBase}\n\n*Resumo:* ${resumo}` : ementaBase;
-      } catch(e) {
-        ementa = stripHTML(itemAtual.ementa || '');
       }
     }
 
     let msg = '';
 
     if (tipoAtual === 'apresentacao') {
-      msg = `*${itemAtual.projeto}*\n\n${ementa}\n\nAutor: ${itemAtual.autor}\nRelator: ${itemAtual.relator}\n\n*OPOSIÇÃO ORIENTA: ${ori}*`;
+      // Projeto em negrito + resumo em negrito na mesma linha, depois autor/relator/orientação
+      const linhaProj = resumo ? `*${itemAtual.projeto}* — *${resumo}*` : `*${itemAtual.projeto}*`;
+      msg = `${linhaProj}\n\nAutor: ${itemAtual.autor}\nRelator: ${itemAtual.relator}\n\n*OPOSIÇÃO ORIENTA: ${ori}*`;
 
     } else if (tipoAtual === 'aprovada_simbolica' || tipoAtual === 'aprovado_simbolico') {
-      msg = `O *${itemAtual.projeto}* foi *APROVADO SIMBOLICAMENTE*`;
+      const linhaProj = resumo ? `*${itemAtual.projeto}* — *${resumo}*` : `*${itemAtual.projeto}*`;
+      msg = `O ${linhaProj} foi *APROVADO SIMBOLICAMENTE*`;
 
     } else if (tipoAtual === 'votacao') {
       if (!obj) { document.getElementById('preview-msg-container').style.display = 'none'; return; }
       const descDtq = document.getElementById('input-objeto')?.dataset.descricaoDtq || '';
       const linhaDesc = descDtq ? `\n${descDtq}` : '';
-      msg = `‼ *ATENÇÃO* ‼\n\n*VOTAÇÃO NOMINAL EM PLENÁRIO AGORA*\n\n_${obj}_ - ${itemAtual.projeto}${linhaDesc}\n\n${ementa}\n\n*OPOSIÇÃO ORIENTA: ${ori}*`;
+      // Em votação: só o resumo (sem ementa)
+      const linhaResumo = resumo ? `*${resumo}*` : `*${itemAtual.projeto}*`;
+      msg = `‼ *ATENÇÃO* ‼\n\n*VOTAÇÃO NOMINAL EM PLENÁRIO AGORA*\n\n_${obj}_ - ${itemAtual.projeto}${linhaDesc}\n\n${linhaResumo}\n\n*OPOSIÇÃO ORIENTA: ${ori}*`;
 
     } else if (tipoAtual === 'iniciada') {
       msg = `🟢 *INICIADA A ORDEM DO DIA*\n\nA Ordem do Dia foi iniciada no Plenário da Câmara dos Deputados.`;
@@ -98,7 +96,11 @@ async function gerarMensagem() {
       const v = window._votosAtuais || {sim:'', nao:'', abs:'', resultado: tipoAtual === 'aprovado_nominal' ? 'APROVADO' : 'REJEITADO'};
       const linhaAbs = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
       const emoji = tipoAtual === 'aprovado_nominal' ? '✅' : '❌';
-      msg = `${emoji} O *${itemAtual.projeto}* foi *${v.resultado}*\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
+      // Em aprovação nominal: só o resumo
+      const linhaResumo = resumo ? `*${resumo}*` : '';
+      msg = `${emoji} O *${itemAtual.projeto}* foi *${v.resultado}*` +
+            (linhaResumo ? `\n${linhaResumo}` : '') +
+            `\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
     }
 
     if (msg) {
