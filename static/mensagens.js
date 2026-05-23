@@ -92,7 +92,18 @@ async function gerarMensagem() {
     } else if (tipoAtual === 'encerrada_sessao') {
       msg = `⛔ *ENCERRADA A SESSÃO DELIBERATIVA*\n\nA Sessão Deliberativa foi encerrada no Plenário da Câmara dos Deputados.`;
 
-    } else if (tipoAtual === 'aprovado_nominal' || tipoAtual === 'rejeitado_nominal') {
+    } else if (tipoAtual === 'resultado_req') {
+      const req = window._reqAtual || {tipo: 'Requerimento', resultado: 'aprovado_simbolico'};
+      const emoji = req.resultado === 'aprovado_simbolico' ? '✅' : '❌';
+      const resultadoTxt = req.resultado === 'aprovado_simbolico' ? 'APROVADO' : 'REJEITADO';
+      const proj = itemAtual ? `do *${itemAtual.projeto}*` : '';
+      if (req.resultado === 'aprovado_simbolico') {
+        msg = `${emoji} O Requerimento de *${req.tipo}* ${proj} foi *${resultadoTxt}*`;
+      } else {
+        const v = window._votosAtuais || {sim:'', nao:'', abs:''};
+        const linhaAbs = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
+        msg = `❌ O Requerimento de *${req.tipo}* ${proj} foi *${resultadoTxt}*\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
+      }
       const v = window._votosAtuais || {sim:'', nao:'', abs:'', resultado: tipoAtual === 'aprovado_nominal' ? 'APROVADO' : 'REJEITADO'};
       const linhaAbs = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
       const emoji = tipoAtual === 'aprovado_nominal' ? '✅' : '❌';
@@ -135,7 +146,8 @@ function inicializarModalMensagens() {
 
   // Botões tipo mensagem
   document.querySelectorAll('.btn-tipo-msg').forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
       document.querySelectorAll('.btn-tipo-msg').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       tipoAtual = btn.dataset.tipo;
@@ -144,11 +156,37 @@ function inicializarModalMensagens() {
       const semItem = ['iniciada', 'encerrada_ordem', 'encerrada_sessao'];
       if (selectContainer) selectContainer.style.display = semItem.includes(tipoAtual) ? 'none' : 'block';
       if (campoObj) campoObj.style.display = tipoAtual === 'votacao' ? 'block' : 'none';
-      if (tipoAtual !== 'votacao') {
+      // Se vier com objeto fixo (dropdown de votação nominal)
+      const objetoFixo = btn.dataset.objetoFixo;
+      if (tipoAtual === 'votacao' && objetoFixo !== undefined) {
+        const inputObj = document.getElementById('input-objeto');
+        if (inputObj) { inputObj.value = objetoFixo; inputObj.dataset.descricaoDtq = ''; }
+        if (campoObj) campoObj.style.display = 'block';
+      } else if (tipoAtual !== 'votacao') {
         const inputObj = document.getElementById('input-objeto');
         if (inputObj) { inputObj.value = ''; inputObj.dataset.descricaoDtq = ''; }
       }
       gerarMensagem();
+    });
+  });
+
+  // Botão Resultado Requerimento
+  document.querySelectorAll('.btn-resultado-req').forEach(link => {
+    link.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const tipoReq = link.dataset.req;   // 'Urgência', 'Adiamento de Discussão', 'Adiamento de Votação'
+      const tipoRes = link.dataset.tipo;  // 'aprovado_simbolico' ou 'rejeitado_nominal'
+      tipoAtual = 'resultado_req';
+      window._reqAtual = { tipo: tipoReq, resultado: tipoRes };
+
+      if (tipoRes === 'rejeitado_nominal') {
+        const sim = prompt('Votos SIM:') || '';
+        const nao = prompt('Votos NÃO:') || '';
+        window._votosAtuais = {sim, nao, abs: '', resultado: 'REJEITADO'};
+      } else {
+        window._votosAtuais = null;
+      }
+      await gerarMensagem();
     });
   });
 
