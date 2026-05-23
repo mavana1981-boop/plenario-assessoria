@@ -95,15 +95,18 @@ async function gerarMensagem() {
 
     } else if (tipoAtual === 'resultado_req') {
       const req = window._reqAtual || {tipo: 'Requerimento', resultado: 'aprovado_simbolico'};
-      const emojiReq = req.resultado === 'aprovado_simbolico' ? '✅' : '❌';
-      const resultadoTxt = req.resultado === 'aprovado_simbolico' ? 'APROVADO' : 'REJEITADO';
       const proj = itemAtual ? `do *${itemAtual.projeto}*` : '';
+      const linhaResumo = resumo ? `\n*${resumo}*` : '';
       if (req.resultado === 'aprovado_simbolico') {
-        msg = `${emojiReq} O Requerimento de *${req.tipo}* ${proj} foi *${resultadoTxt}*`;
+        msg = `✅ O Requerimento de *${req.tipo}* ${proj} foi *APROVADO SIMBOLICAMENTE*${linhaResumo}`;
+      } else if (req.resultado === 'aprovado_nominal') {
+        const v = window._votosAtuais || {sim:'', nao:'', abs:''};
+        const linhaAbs = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
+        msg = `✅ O Requerimento de *${req.tipo}* ${proj} foi *APROVADO*${linhaResumo}\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
       } else {
         const v = window._votosAtuais || {sim:'', nao:'', abs:''};
-        const linhaAbsReq = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
-        msg = `${emojiReq} O Requerimento de *${req.tipo}* ${proj} foi *${resultadoTxt}*\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbsReq}`;
+        const linhaAbs = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
+        msg = `❌ O Requerimento de *${req.tipo}* ${proj} foi *REJEITADO*${linhaResumo}\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
       }
 
     } else if (tipoAtual === 'aprovado_nominal' || tipoAtual === 'rejeitado_nominal') {
@@ -176,17 +179,16 @@ function inicializarModalMensagens() {
   document.querySelectorAll('.btn-resultado-req').forEach(link => {
     link.addEventListener('click', async (e) => {
       e.preventDefault();
-      const tipoReq = link.dataset.req;   // 'Urgência', 'Adiamento de Discussão', 'Adiamento de Votação'
-      const tipoRes = link.dataset.tipo;  // 'aprovado_simbolico' ou 'rejeitado_nominal'
+      const tipoReq = link.dataset.req;
+      const tipoRes = link.dataset.tipo; // aprovado_simbolico, aprovado_nominal, rejeitado_nominal
       tipoAtual = 'resultado_req';
       window._reqAtual = { tipo: tipoReq, resultado: tipoRes };
+      window._votosAtuais = null;
 
-      if (tipoRes === 'rejeitado_nominal') {
+      if (tipoRes === 'aprovado_nominal' || tipoRes === 'rejeitado_nominal') {
         const sim = prompt('Votos SIM:') || '';
         const nao = prompt('Votos NÃO:') || '';
-        window._votosAtuais = {sim, nao, abs: '', resultado: 'REJEITADO'};
-      } else {
-        window._votosAtuais = null;
+        window._votosAtuais = {sim, nao, abs: ''};
       }
       await gerarMensagem();
     });
