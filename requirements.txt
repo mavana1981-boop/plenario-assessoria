@@ -7,3 +7,4 @@ reportlab==4.2.2
 gunicorn==22.0.0
 pdfplumber==0.11.4
 pg8000==1.31.2
+pypdf==4.3.1
