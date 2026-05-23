@@ -180,7 +180,8 @@ def exportar_pauta(evento_id):
                 Paragraph(str(it.get("ordem", "—")), normal),
                 Paragraph(it.get("projeto", "—"), normal),
                 Paragraph(it.get("relator", "N/D"), normal),
-                Paragraph(_strip_html(it.get("ementa", "—")), normal)
+                Paragraph(_strip_html(it.get("ementa", "—")) +
+                    ('\nResumo: ' + resumos_ia.get(str(it.get('id_principal','')), '') if resumos_ia.get(str(it.get('id_principal',''))) else ''), normal)
             ])
         tbl = Table(table_data, colWidths=[1.5*cm, 4*cm, 4.5*cm, 7*cm])
         tbl.setStyle(TableStyle([
@@ -202,11 +203,11 @@ def exportar_pauta(evento_id):
 
             ementa = _strip_html(it.get("ementa", ""))
             resumo = resumos_ia.get(str(it.get('id_principal', '')), '')
-            texto_ementa = resumo if resumo else ementa
-            if texto_ementa:
+            if ementa:
                 story.append(Paragraph(f"<b>Ementa:</b> {ementa}", normal))
-                if resumo:
-                    story.append(Paragraph(f"<b>Resumo:</b> {resumo}", normal))
+            if resumo:
+                story.append(Paragraph(f"<b>Resumo:</b> {resumo}", normal))
+            if ementa or resumo:
                 story.append(Spacer(1, 4))
 
             if it.get("resumo_materia"):
