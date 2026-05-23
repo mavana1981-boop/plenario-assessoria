@@ -53,13 +53,18 @@ async function gerarMensagem() {
 
     if (itemAtual && ['apresentacao','votacao','aprovada_simbolica','aprovado_simbolico','aprovado_nominal','rejeitado_nominal'].includes(tipoAtual)) {
       try {
-        // Usa resumo_ia do cache se disponível (já gerado na tela de pauta)
-        const elResumo = document.getElementById('resumo-ia-' + itemAtual.id_principal);
-        if (elResumo && elResumo.textContent.trim()) {
-          ementa = elResumo.textContent.trim();
+        // Prioridade: resumo_ia do item → elemento na DOM → enriquecerEmenta
+        if (itemAtual.resumo_ia) {
+          ementa = itemAtual.resumo_ia;
         } else {
-          ementa = await enriquecerEmenta(itemAtual.id_principal, itemAtual.projeto, itemAtual.ementa, itemAtual.autor);
-          ementa = stripHTML(ementa);
+          const elResumo = document.getElementById('resumo-ia-' + itemAtual.id_principal);
+          if (elResumo && elResumo.textContent.trim()) {
+            ementa = elResumo.textContent.trim();
+            itemAtual.resumo_ia = ementa; // cache no item
+          } else {
+            ementa = await enriquecerEmenta(itemAtual.id_principal, itemAtual.projeto, itemAtual.ementa, itemAtual.autor);
+            ementa = stripHTML(ementa);
+          }
         }
       } catch(e) {
         ementa = stripHTML(itemAtual.ementa || '');
