@@ -1559,13 +1559,14 @@ function renderizarTabela() {
 
   ITENS_ORI.forEach((item) => {
     const tr = document.createElement('tr');
-    // Usa resumo IA se disponível, senão ementa
     const resumoEl = document.getElementById('resumo-ia-' + item.id_principal);
-    const ementaTxt = (resumoEl && resumoEl.textContent.trim()) || resumoCache[item.id_principal] || item.ementa || '';
+    const resumo = (resumoEl && resumoEl.textContent.trim()) || resumoCache[item.id_principal] || '';
+    const ementaHtml = `<span style="color:#333">${item.ementa || ''}</span>` +
+      (resumo ? `<br><span style="color:#1A6B3A;font-weight:500">Resumo: ${resumo}</span>` : '');
     tr.innerHTML = `
       <td class="text-center fw-bold align-top">${item.ordem}</td>
       <td class="align-top"><strong>${item.projeto}</strong></td>
-      <td style="font-size:0.78rem; color:#333; min-width:200px; white-space:normal; word-break:break-word;">${ementaTxt}</td>`;
+      <td style="font-size:0.78rem; min-width:200px; white-space:normal; word-break:break-word;">${ementaHtml}</td>`;
 
     COLUNAS.forEach(col => {
       const key   = `${item.id_principal}|${col.grupo}`;
