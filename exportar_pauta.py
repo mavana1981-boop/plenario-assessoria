@@ -165,47 +165,207 @@ def exportar_pauta(evento_id):
             )
         ])
 
-        story = []
-        story.append(Paragraph("Sessão Deliberativa — Plenário da Câmara dos Deputados", title_style))
-        story.append(Paragraph(f"<b>Data/Hora:</b> {evento.get('dataHoraInicio', '')}", normal))
-        story.append(Paragraph(f"<b>Descrição:</b> {evento.get('descricao', '')}", normal))
-        story.append(Paragraph(f"<b>Local:</b> {evento.get('local', 'CCJC')}", normal))
-        story.append(Spacer(1, 12))
+        # ── PRIMEIRA PÁGINA: formato idêntico ao infográfico ──────────────
+        from gerar_infografico import (
+            gerar_infografico_pdf as _gif,
+            strip_html as _sh,
+            wrap_text as _wt,
+            COR_AZUL_ESCURO, COR_AZUL_CLARO, COR_VERDE, COR_CINZA,
+            COR_BORDA, COR_CINZA_CLARO, CORES_ORIENTACAO
+        )
 
-        story.append(Paragraph("Resumo dos Itens", bold))
-        table_data = [["Item", "Título", "Relator", "Ementa"]]
-        for it in itens:
-            id_p = str(it.get('id_principal', ''))
-            resumo = resumos_ia.get(id_p, '')
-            ementa_txt = _strip_html(it.get("ementa", "—"))
+        buf_inf = BytesIO()
+        W, H = A4
+        MARGIN = 1.2 * cm
+        CONTENT_W = W - 2 * MARGIN
+
+        cv = pdfcanvas.Canvas(buf_inf, pagesize=A4)
+
+        def _header_inf():
+            cab_h = 1.2*cm
+            cv.setFillColor(colors.white)
+            cv.rect(0, H - cab_h, W, cab_h, fill=1, stroke=0)
+            cv.setStrokeColor(COR_VERDE)
+            cv.setLineWidth(1.5)
+            cv.line(0, H - cab_h, W, H - cab_h)
+            cv.setFillColor(COR_VERDE)
+            cv.setFont("Helvetica-Bold", 9)
+            cv.drawCentredString(W/2, H - 0.85*cm,
+                "Lideranças da Minoria e da Oposição — Câmara dos Deputados")
+
+        def _footer_inf():
+            rod_h = 1.5*cm
+            cv.setFillColor(colors.white)
+            cv.rect(0, 0, W, rod_h, fill=1, stroke=0)
+            cv.setStrokeColor(COR_VERDE)
+            cv.setLineWidth(1)
+            cv.line(MARGIN, rod_h, W - MARGIN, rod_h)
+            logo_w, logo_h = 2.0*cm, 1.1*cm
+            y_rod = (rod_h - logo_h) / 2
+            static_path = os.path.join(current_app.root_path, 'static')
+            for fname, xpos in [('logo_minoria.png', MARGIN),
+                                 ('logo_oposicao.png', MARGIN + logo_w + 0.2*cm)]:
+                p = os.path.join(static_path, fname)
+                if os.path.exists(p):
+                    try: cv.drawImage(p, xpos, y_rod, width=logo_w, height=logo_h,
+                                      preserveAspectRatio=True, mask='auto')
+                    except Exception: pass
+            cv.setFillColor(COR_CINZA)
+            cv.setFont("Helvetica", 7)
+            cv.drawCentredString(W/2, 0.55*cm,
+                "Lideranças da Minoria e da Oposição — Plenário / Câmara dos Deputados")
+
+        # Fundo branco
+        cv.setFillColor(colors.white)
+        cv.rect(0, 0, W, H, fill=1, stroke=0)
+        _header_inf()
+        _footer_inf()
+
+        # Título
+        y = H - 1.2*cm - 0.3*cm
+        titulo_h = 1.8*cm
+        cv.setFillColor(COR_AZUL_CLARO)
+        cv.rect(MARGIN, y - titulo_h, CONTENT_W, titulo_h, fill=1, stroke=0)
+        cv.setStrokeColor(COR_AZUL_ESCURO)
+        cv.setLineWidth(1)
+        cv.rect(MARGIN, y - titulo_h, CONTENT_W, titulo_h, fill=0, stroke=1)
+        dh = evento.get('dataHoraInicio', '')
+        try:
+            dt = datetime.fromisoformat(dh)
+            data_fmt = dt.strftime('%d/%m/%Y')
+            hora_fmt = dt.strftime('%H:%M')
+        except Exception:
+            data_fmt = hora_fmt = ''
+        cv.setFillColor(COR_AZUL_ESCURO)
+        cv.setFont("Helvetica-Bold", 10)
+        cv.drawCentredString(W/2, y - 0.7*cm,
+            f"Resumo da Pauta — {evento.get('descricao','Sessão Deliberativa')}")
+        cv.setFillColor(COR_CINZA)
+        cv.setFont("Helvetica", 8)
+        cv.drawCentredString(W/2, y - 1.35*cm,
+            f"Data: {data_fmt}  |  Hora: {hora_fmt}  |  Local: {evento.get('local','')}")
+        y -= titulo_h + 0.3*cm
+
+        # Cards dos itens
+        page_bottom = 1.5*cm + 0.3*cm
+        CARD_MARGIN = 0.3*cm
+        BADGE_W = 2.4*cm
+        INNER_W = CONTENT_W - 2*CARD_MARGIN - BADGE_W - 0.4*cm
+
+        for item in itens:
+            orientacao = (item.get('orientacao') or '').strip().upper()
+            cor_badge, cor_badge_bg, _ = CORES_ORIENTACAO.get(
+                orientacao, (COR_CINZA, COR_CINZA_CLARO, colors.white))
+            projeto = item.get('projeto', '')
+            autor   = _sh(item.get('autor', 'N/D'))
+            relator = item.get('relator', 'N/D')
+            ementa  = _sh(item.get('ementa', ''))
+            resumo  = resumos_ia.get(str(item.get('id_principal', '')), '')
+            ordem   = item.get('ordem', '')
+
+            # Estima altura
+            chars_per_line = int(INNER_W / 4.8)
+            n_lines = max(1, len(ementa) // chars_per_line + 1)
             if resumo:
-                ementa_cell = Paragraph(f"{ementa_txt}<br/><b>Resumo: {resumo}</b>", normal)
-            else:
-                ementa_cell = Paragraph(ementa_txt, normal)
-            table_data.append([
-                Paragraph(str(it.get("ordem", "—")), normal),
-                Paragraph(it.get("projeto", "—"), normal),
-                Paragraph(it.get("relator", "N/D"), normal),
-                ementa_cell
-            ])
-        tbl = Table(table_data, colWidths=[1.5*cm, 4*cm, 4.5*cm, 7*cm])
-        tbl.setStyle(TableStyle([
-            ("GRID", (0,0), (-1,-1), 0.3, colors.gray),
-            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#E8F3EC")),
-            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-            ("FONTSIZE", (0,0), (-1,-1), 9),
-            ("VALIGN", (0,0), (-1,-1), "TOP"),
-        ]))
-        story.append(tbl)
-        story.append(PageBreak())
+                n_lines += max(1, len(resumo) // chars_per_line + 1)
+            n_lines = min(n_lines, 7)
+            card_h = max(1.0*cm + n_lines * 0.38*cm + 0.5*cm, 1.8*cm)
 
+            if y - card_h < page_bottom:
+                cv.showPage()
+                cv.setFillColor(colors.white)
+                cv.rect(0, 0, W, H, fill=1, stroke=0)
+                _header_inf()
+                _footer_inf()
+                y = H - 1.2*cm - 0.3*cm
+
+            # Card background
+            cv.setFillColor(COR_CINZA_CLARO)
+            cv.setStrokeColor(COR_BORDA)
+            cv.setLineWidth(0.5)
+            cv.roundRect(MARGIN, y - card_h, CONTENT_W, card_h, 4, fill=1, stroke=1)
+
+            # Badge orientação
+            bx = MARGIN + CONTENT_W - BADGE_W - CARD_MARGIN
+            cv.setFillColor(cor_badge_bg)
+            cv.roundRect(bx, y - card_h + CARD_MARGIN,
+                         BADGE_W, card_h - 2*CARD_MARGIN, 3, fill=1, stroke=0)
+            cv.setFillColor(cor_badge)
+            cv.setFont("Helvetica-Bold", 7.5)
+            ori_txt = orientacao or "—"
+            cv.drawCentredString(bx + BADGE_W/2,
+                                 y - card_h/2 - 3, ori_txt)
+
+            tx = MARGIN + CARD_MARGIN
+            ty = y - CARD_MARGIN - 0.3*cm
+
+            # Número + Projeto
+            cv.setFillColor(COR_AZUL_ESCURO)
+            cv.setFont("Helvetica-Bold", 8.5)
+            header_txt = f"{ordem}. {projeto}"
+            cv.drawString(tx, ty, header_txt[:80])
+            ty -= 0.35*cm
+
+            # Ementa
+            cv.setFillColor(colors.black)
+            cv.setFont("Helvetica", 7.8)
+            line, lines_drawn = "", 0
+            for word in ementa.split():
+                test = (line + " " + word).strip()
+                if cv.stringWidth(test, "Helvetica", 7.8) <= INNER_W:
+                    line = test
+                else:
+                    if lines_drawn < 4:
+                        cv.drawString(tx, ty - lines_drawn*0.33*cm, line)
+                        lines_drawn += 1
+                    line = word
+            if line and lines_drawn < 4:
+                cv.drawString(tx, ty - lines_drawn*0.33*cm, line)
+                lines_drawn += 1
+
+            # Resumo IA em verde
+            if resumo:
+                ty2 = ty - lines_drawn*0.33*cm - 0.1*cm
+                cv.setFillColor(COR_VERDE)
+                cv.setFont("Helvetica-Bold", 7)
+                resumo_txt = f"Resumo: {resumo}"
+                line2, ld2 = "", 0
+                for word in resumo_txt.split():
+                    test2 = (line2 + " " + word).strip()
+                    if cv.stringWidth(test2, "Helvetica-Bold", 7) <= INNER_W:
+                        line2 = test2
+                    else:
+                        if ld2 < 3:
+                            cv.drawString(tx, ty2 - ld2*0.28*cm, line2)
+                            ld2 += 1
+                        line2 = word
+                if line2 and ld2 < 3:
+                    cv.drawString(tx, ty2 - ld2*0.28*cm, line2)
+
+            # Autor / Relator
+            ty3 = y - card_h + CARD_MARGIN + 0.15*cm
+            cv.setFillColor(COR_CINZA)
+            cv.setFont("Helvetica", 6.5)
+            cv.drawString(tx, ty3, f"Autor: {autor[:60]}  |  Relator: {relator[:50]}")
+
+            y -= card_h + 0.15*cm
+
+        cv.save()
+
+        # Combina: primeira página (canvas) + restante (platypus)
+        from reportlab.lib.utils import ImageReader
+        from pypdf import PdfWriter, PdfReader
+        buf_inf.seek(0)
+
+        # ── PÁGINAS SEGUINTES: detalhes via Platypus ──────────────────────
+        buf_det = BytesIO()
+        story = []
         for it in itens:
             story.append(Paragraph(f"Item {it.get('ordem','—')} — {it.get('projeto','')}", heading))
             story.append(Paragraph(f"<b>Autor:</b> {it.get('autor','N/D')}", normal))
             story.append(Paragraph(f"<b>Relator:</b> {it.get('relator','N/D')}", normal))
             story.append(Paragraph(f"<b>Situação:</b> {it.get('situacao','N/D')}", normal))
             story.append(Spacer(1, 6))
-
             ementa = _strip_html(it.get("ementa", ""))
             resumo = resumos_ia.get(str(it.get('id_principal', '')), '')
             if ementa:
@@ -218,14 +378,38 @@ def exportar_pauta(evento_id):
                 story.append(Paragraph("Nota Técnica", bold))
                 story.append(Paragraph(_strip_html(it["resumo_materia"]), normal))
                 story.append(Spacer(1, 6))
-
             if it.get("orientacao"):
                 story.append(Paragraph(f"<b>Orientação:</b> {it['orientacao']}", bold))
                 story.append(Spacer(1, 10))
 
-        doc.build(story)
-        pdf = buffer.getvalue()
-        buffer.close()
+        doc2 = BaseDocTemplate(buf_det, pagesize=A4,
+                               leftMargin=1.5*cm, rightMargin=1.5*cm,
+                               topMargin=3.0*cm, bottomMargin=2.5*cm)
+        frame2 = Frame(doc2.leftMargin, doc2.bottomMargin, doc2.width, doc2.height-0.5*cm, id="normal")
+        header_text2 = f"Sessão Deliberativa — {data_ptbr(evento.get('dataHoraInicio',''))}"
+        doc2.addPageTemplates([PageTemplate(
+            id="main", frames=[frame2],
+            onPage=lambda c, d: _header_footer(c, d, (camara_logo, pl_logo), header_text2)
+        )])
+        doc2.build(story)
+
+        # Merge: infográfico (primeira(s) página(s)) + detalhes
+        try:
+            from pypdf import PdfWriter, PdfReader
+            writer = PdfWriter()
+            buf_inf.seek(0)
+            buf_det.seek(0)
+            for pdf_buf in [buf_inf, buf_det]:
+                reader = PdfReader(pdf_buf)
+                for page in reader.pages:
+                    writer.add_page(page)
+            final = BytesIO()
+            writer.write(final)
+            pdf = final.getvalue()
+        except ImportError:
+            # Sem pypdf — retorna só o infográfico
+            buf_inf.seek(0)
+            pdf = buf_inf.read()
 
         resp = make_response(pdf)
         resp.headers["Content-Type"] = "application/pdf"
@@ -233,5 +417,6 @@ def exportar_pauta(evento_id):
         return resp
 
     except Exception as e:
-        current_app.logger.error(f"Erro ao exportar pauta CCJC {evento_id}: {e}")
-        return f"Erro ao gerar PDF: {e}", 200
+        current_app.logger.error(f"Erro ao exportar pauta {evento_id}: {e}")
+        import traceback
+        return f"Erro ao gerar PDF: {e}<br><pre>{traceback.format_exc()}</pre>", 200
