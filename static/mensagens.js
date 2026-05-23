@@ -67,9 +67,9 @@ async function gerarMensagem() {
     let msg = '';
 
     if (tipoAtual === 'apresentacao') {
-      // Projeto em negrito + resumo em negrito na mesma linha, depois autor/relator/orientação
       const linhaProj = resumo ? `*${itemAtual.projeto}* — *${resumo}*` : `*${itemAtual.projeto}*`;
-      msg = `${linhaProj}\n\nAutor: ${itemAtual.autor}\nRelator: ${itemAtual.relator}\n\n*OPOSIÇÃO ORIENTA: ${ori}*`;
+      const ementaCompleta = stripHTML(itemAtual.ementa || '');
+      msg = `${linhaProj}\n\n${ementaCompleta}\n\nAutor: ${itemAtual.autor}\nRelator: ${itemAtual.relator}\n\n*OPOSIÇÃO ORIENTA: ${ori}*`;
 
     } else if (tipoAtual === 'aprovada_simbolica' || tipoAtual === 'aprovado_simbolico') {
       const linhaProj = resumo ? `*${itemAtual.projeto}* — *${resumo}*` : `*${itemAtual.projeto}*`;
