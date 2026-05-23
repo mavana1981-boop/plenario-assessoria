@@ -648,6 +648,12 @@
           resumoCache[id] = j.resumo;
           el.textContent = j.resumo;
           el.style.display = 'block';
+          // Salva no backend para exportar/infográfico
+          fetch('/salvar_resumo_ia', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({evento_id: window.EVENTO_ID, id_principal: id, resumo: j.resumo})
+          }).catch(()=>{});
         }
       } catch(e) { /* silencioso */ }
     }
@@ -659,7 +665,19 @@
         await carregarResumoIA(el);
       }
     }
-    // Inicia após 1s para não competir com o carregamento inicial
+    // Após carregar resumos, popula ITENS_DATA com resumo_ia
+    async function carregarTodosResumos() {
+      const els = document.querySelectorAll('.resumo-ia-ementa');
+      for (const el of els) {
+        await carregarResumoIA(el);
+        // Atualiza ITENS_DATA com o resumo gerado
+        const id = el.dataset.id;
+        if (window.ITENS_DATA) {
+          const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
+          if (item && resumoCache[id]) item.resumo_ia = resumoCache[id];
+        }
+      }
+    }
     setTimeout(carregarTodosResumos, 1000);
       document.addEventListener('change', async (e) => {
         const sel = e.target.closest('.select-responsavel');
@@ -1541,12 +1559,13 @@ function renderizarTabela() {
 
   ITENS_ORI.forEach((item) => {
     const tr = document.createElement('tr');
-    // Usa ementa diretamente sem enriquecimento IA (mais rápido e confiável)
-    const ementaTxt = item.ementa || '';
+    // Usa resumo IA se disponível, senão ementa
+    const resumoEl = document.getElementById('resumo-ia-' + item.id_principal);
+    const ementaTxt = (resumoEl && resumoEl.textContent.trim()) || resumoCache[item.id_principal] || item.ementa || '';
     tr.innerHTML = `
       <td class="text-center fw-bold align-top">${item.ordem}</td>
       <td class="align-top"><strong>${item.projeto}</strong></td>
-      <td style="font-size:0.78rem; color:#333; min-width:200px;">${ementaTxt}</td>`;
+      <td style="font-size:0.78rem; color:#333; min-width:200px; white-space:normal; word-break:break-word;">${ementaTxt}</td>`;
 
     COLUNAS.forEach(col => {
       const key   = `${item.id_principal}|${col.grupo}`;
