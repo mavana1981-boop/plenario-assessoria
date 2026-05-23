@@ -2760,10 +2760,80 @@ def limpar_cache(evento_id):
     finally:
         conn.close()
 
-@app.route('/resumo_ementa', methods=['POST'])
+@app.route('/buscar_imagem_item', methods=['POST'])
 @login_required
-def resumo_ementa_single():
-    return resumo_ementa_impl(request.get_json())
+def buscar_imagem_item():
+    """Usa IA para extrair keywords e busca imagem via Wikimedia Commons (gratuito)."""
+    data      = request.get_json()
+    resumo    = data.get('resumo', '')
+    groq_key  = os.environ.get('GROQ_API_KEY', '')
+    gemini_key = os.environ.get('GEMINI_API_KEY', '')
+
+    # Extrai 2-3 palavras-chave do resumo para busca de imagem
+    keywords = ''
+    prompt_kw = f"""Extraia 2 ou 3 palavras-chave em inglês para buscar uma imagem que ilustre o tema desta proposição legislativa brasileira.
+Responda APENAS com as palavras separadas por espaço, sem explicação.
+Proposição: {resumo[:300]}"""
+
+    for key, url, body_fn in [
+        (gemini_key,
+         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={gemini_key}",
+         lambda: {"contents":[{"parts":[{"text":prompt_kw}]}],"generationConfig":{"maxOutputTokens":20,"temperature":0.1}}),
+        (groq_key,
+         "https://api.groq.com/openai/v1/chat/completions",
+         lambda: {"model":"llama-3.3-70b-versatile","messages":[{"role":"user","content":prompt_kw}],"max_tokens":20,"temperature":0.1}),
+    ]:
+        if not key: continue
+        try:
+            headers = {"Content-Type": "application/json"}
+            if 'groq' in url: headers["Authorization"] = f"Bearer {key}"
+            r = requests.post(url, headers=headers, json=body_fn(), timeout=8)
+            if r.ok:
+                if 'generativelanguage' in url:
+                    keywords = r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+                else:
+                    keywords = r.json()['choices'][0]['message']['content'].strip()
+                keywords = re.sub(r'[^\w\s]', '', keywords).strip()
+                break
+        except Exception as e:
+            logger.warning(f"Erro keywords imagem: {e}")
+
+    if not keywords:
+        keywords = 'brazil congress law'
+
+    # Busca no Wikimedia Commons (API gratuita, sem key)
+    try:
+        r = requests.get(
+            'https://en.wikipedia.org/api/rest_v1/page/summary/' + keywords.replace(' ', '_'),
+            headers={'User-Agent': 'PlenarioApp/1.0'},
+            timeout=6
+        )
+        if r.ok:
+            thumb = r.json().get('thumbnail', {}).get('source', '')
+            if thumb:
+                return jsonify({'imagem_url': thumb, 'keywords': keywords})
+    except Exception:
+        pass
+
+    # Fallback: Wikimedia Commons search
+    try:
+        r = requests.get(
+            f"https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch={requests.utils.quote(keywords)}&gsrlimit=1&prop=imageinfo&iiprop=url|mime&iiurlwidth=400&format=json",
+            headers={'User-Agent': 'PlenarioApp/1.0'},
+            timeout=8
+        )
+        if r.ok:
+            pages = r.json().get('query', {}).get('pages', {})
+            for page in pages.values():
+                imgs = page.get('imageinfo', [])
+                if imgs:
+                    url_img = imgs[0].get('thumburl') or imgs[0].get('url', '')
+                    if url_img:
+                        return jsonify({'imagem_url': url_img, 'keywords': keywords})
+    except Exception:
+        pass
+
+    return jsonify({'imagem_url': None, 'keywords': keywords})
 
 @app.route('/resumos_evento/<int:evento_id>')
 @login_required
