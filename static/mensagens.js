@@ -53,19 +53,19 @@ async function gerarMensagem() {
 
     if (itemAtual && ['apresentacao','votacao','aprovada_simbolica','aprovado_simbolico','aprovado_nominal','rejeitado_nominal'].includes(tipoAtual)) {
       try {
-        // Prioridade: resumo_ia do item → elemento na DOM → enriquecerEmenta
+        let resumo = '';
         if (itemAtual.resumo_ia) {
-          ementa = itemAtual.resumo_ia;
+          resumo = itemAtual.resumo_ia;
         } else {
           const elResumo = document.getElementById('resumo-ia-' + itemAtual.id_principal);
           if (elResumo && elResumo.textContent.trim()) {
-            ementa = elResumo.textContent.trim();
-            itemAtual.resumo_ia = ementa; // cache no item
-          } else {
-            ementa = await enriquecerEmenta(itemAtual.id_principal, itemAtual.projeto, itemAtual.ementa, itemAtual.autor);
-            ementa = stripHTML(ementa);
+            resumo = elResumo.textContent.trim();
+            itemAtual.resumo_ia = resumo;
           }
         }
+        // Ementa completa + resumo abaixo
+        const ementaBase = stripHTML(itemAtual.ementa || '');
+        ementa = resumo ? `${ementaBase}\n\n*Resumo:* ${resumo}` : ementaBase;
       } catch(e) {
         ementa = stripHTML(itemAtual.ementa || '');
       }
