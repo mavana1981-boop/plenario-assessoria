@@ -95,22 +95,23 @@ async function gerarMensagem() {
 
     } else if (tipoAtual === 'resultado_req') {
       const req = window._reqAtual || {tipo: 'Requerimento', resultado: 'aprovado_simbolico'};
-      const emoji = req.resultado === 'aprovado_simbolico' ? '✅' : '❌';
+      const emojiReq = req.resultado === 'aprovado_simbolico' ? '✅' : '❌';
       const resultadoTxt = req.resultado === 'aprovado_simbolico' ? 'APROVADO' : 'REJEITADO';
       const proj = itemAtual ? `do *${itemAtual.projeto}*` : '';
       if (req.resultado === 'aprovado_simbolico') {
-        msg = `${emoji} O Requerimento de *${req.tipo}* ${proj} foi *${resultadoTxt}*`;
+        msg = `${emojiReq} O Requerimento de *${req.tipo}* ${proj} foi *${resultadoTxt}*`;
       } else {
         const v = window._votosAtuais || {sim:'', nao:'', abs:''};
-        const linhaAbs = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
-        msg = `❌ O Requerimento de *${req.tipo}* ${proj} foi *${resultadoTxt}*\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
+        const linhaAbsReq = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
+        msg = `${emojiReq} O Requerimento de *${req.tipo}* ${proj} foi *${resultadoTxt}*\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbsReq}`;
       }
+
+    } else if (tipoAtual === 'aprovado_nominal' || tipoAtual === 'rejeitado_nominal') {
       const v = window._votosAtuais || {sim:'', nao:'', abs:'', resultado: tipoAtual === 'aprovado_nominal' ? 'APROVADO' : 'REJEITADO'};
       const linhaAbs = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
-      const emoji = tipoAtual === 'aprovado_nominal' ? '✅' : '❌';
-      // Em aprovação nominal: só o resumo
+      const emojiNom = tipoAtual === 'aprovado_nominal' ? '✅' : '❌';
       const linhaResumo = resumo ? `*${resumo}*` : '';
-      msg = `${emoji} O *${itemAtual.projeto}* foi *${v.resultado}*` +
+      msg = `${emojiNom} O *${itemAtual.projeto}* foi *${v.resultado}*` +
             (linhaResumo ? `\n${linhaResumo}` : '') +
             `\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
     }
