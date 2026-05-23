@@ -42,7 +42,8 @@ let itemAtual = null;
 async function gerarMensagem() {
   if (!tipoAtual) return;
   const semItem = ['iniciada', 'encerrada_ordem', 'encerrada_sessao'];
-  if (!semItem.includes(tipoAtual) && !itemAtual) {
+  const itemOpcional = ['resultado_req']; // item é opcional
+  if (!semItem.includes(tipoAtual) && !itemOpcional.includes(tipoAtual) && !itemAtual) {
     document.getElementById('preview-msg-container').style.display = 'none';
     return;
   }
