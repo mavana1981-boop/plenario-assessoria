@@ -1924,11 +1924,12 @@ def exportar_orientacoes_pdf():
     COR_AZUL   = colors.HexColor("#0D2B5E")
     COR_CINZA  = colors.HexColor("#555555")
     CORES_ORI  = {
-        'a favor':   colors.HexColor("#d4edda"),
-        'contra':    colors.HexColor("#f8d7da"),
-        'obstrução': colors.HexColor("#fff3cd"),
-        'liberado':  colors.HexColor("#cce5ff"),
-        'abstenção': colors.HexColor("#e2e3e5"),
+        'SIM':        colors.HexColor("#d4edda"),
+        'NÃO':        colors.HexColor("#f8d7da"),
+        'NEGOCIAÇÃO': colors.HexColor("#fff3cd"),
+        'LIBERADO':   colors.HexColor("#cce5ff"),
+        'OBSTRUÇÃO':  colors.HexColor("#ffe5d0"),
+        'ABSTENÇÃO':  colors.HexColor("#e2e3e5"),
         '—':         colors.white,
         '':          colors.white,
     }
@@ -2748,7 +2749,80 @@ def limpar_cache(evento_id):
     finally:
         conn.close()
 
-@app.route('/enriquecer_ementa', methods=['POST'])
+@app.route('/resumo_ementa', methods=['POST'])
+@login_required
+def resumo_ementa():
+    """Gera resumo de até 3 linhas da ementa. Para REQ busca dados do PL na web."""
+    data         = request.get_json()
+    projeto      = data.get('projeto', '')
+    ementa       = data.get('ementa', '')
+    autor        = data.get('autor', '')
+    id_principal = data.get('id_principal', '')
+    groq_key     = os.environ.get('GROQ_API_KEY', '')
+    gemini_key   = os.environ.get('GEMINI_API_KEY', '')
+
+    if not groq_key and not gemini_key:
+        return jsonify({'resumo': ementa[:200]})
+
+    # Para REQ: busca ementa do PL referenciado
+    contexto_pl = ''
+    proj_base = projeto.split(' ao ')[0].strip()
+    siglas_req = ('REQ', 'RQS', 'RQU', 'REC')
+    if any(proj_base.upper().startswith(s) for s in siglas_req):
+        m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', ementa, re.IGNORECASE)
+        if not m_pl:
+            m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL)\s+([\d.]+)[/\-](\d{4})', projeto, re.IGNORECASE)
+        if m_pl:
+            sigla_ref = m_pl.group(1).upper()
+            num_ref   = m_pl.group(2).replace('.', '')
+            ano_ref   = m_pl.group(3)
+            try:
+                r_api = requests.get(
+                    f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
+                    headers={'Accept': 'application/json'}, timeout=8
+                )
+                if r_api.ok:
+                    dados = r_api.json().get('dados', [])
+                    if dados:
+                        contexto_pl = f"\nO {sigla_ref} {num_ref}/{ano_ref} trata de: {dados[0].get('ementa', '')}"
+            except Exception:
+                pass
+
+    prompt = f"""Você é um assessor legislativo. Gere um resumo MUITO CURTO (máximo 3 linhas, máximo 180 caracteres) do que esta proposição trata na prática.
+Seja direto e claro. Não repita o número da proposição. Use linguagem simples.
+
+Proposição: {projeto}
+Autor: {autor}
+Ementa: {ementa}{contexto_pl}
+
+Responda APENAS com o resumo, sem introdução, sem aspas, sem markdown."""
+
+    # Tenta Gemini primeiro, depois Groq
+    for key, url, body_fn in [
+        (gemini_key,
+         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={gemini_key}",
+         lambda: {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 100, "temperature": 0.2}}),
+        (groq_key,
+         "https://api.groq.com/openai/v1/chat/completions",
+         lambda: {"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "max_tokens": 100, "temperature": 0.2}),
+    ]:
+        if not key:
+            continue
+        try:
+            headers = {"Content-Type": "application/json"}
+            if 'groq' in url:
+                headers["Authorization"] = f"Bearer {key}"
+            r = requests.post(url, headers=headers, json=body_fn(), timeout=15)
+            if r.ok:
+                if 'generativelanguage' in url:
+                    texto = r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+                else:
+                    texto = r.json()['choices'][0]['message']['content'].strip()
+                return jsonify({'resumo': texto})
+        except Exception as e:
+            logger.warning(f"Erro resumo_ementa: {e}")
+
+    return jsonify({'resumo': ementa[:200]})
 @login_required
 def enriquecer_ementa():
     """Retorna ementa original + complemento IA. Para REQ, busca ementa do PL referenciado."""
@@ -2960,7 +3034,7 @@ def get_orientacoes(evento_id):
         c.execute('''SELECT id_principal, grupo, orientacao, comentario, saved_by, saved_at
                      FROM orientacoes_grupo WHERE evento_id=?''', (evento_id,))
         rows = c.fetchall()
-        result = [{'id_principal': r[0], 'grupo': r[1], 'orientacao': r[2],
+        result = [{'id_principal': str(r[0]), 'grupo': r[1], 'orientacao': r[2],
                    'comentario': r[3], 'saved_by': r[4], 'saved_at': r[5]} for r in rows]
     except Exception as e:
         logger.warning(f"Erro get_orientacoes: {e}")
