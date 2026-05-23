@@ -64,7 +64,8 @@ def wrap_text(c, text, x, y, max_width, font_name, font_size, line_height, color
         c.drawString(x, y - i * line_height, l)
     return len(lines)
 
-def gerar_infografico_pdf(evento, itens, logo_minoria_path=None, logo_oposicao_path=None):
+def gerar_infografico_pdf(evento, itens, logo_minoria_path=None, logo_oposicao_path=None, resumos_ia=None):
+    resumos_ia = resumos_ia or {}
     buffer = BytesIO()
     W, H = A4  # 595 x 842 pts
 
@@ -181,12 +182,18 @@ def gerar_infografico_pdf(evento, itens, logo_minoria_path=None, logo_oposicao_p
         autor = strip_html(item.get('autor', 'N/D'))
         relator = item.get('relator', 'N/D')
         ementa = strip_html(item.get('ementa', ''))
+        resumo = resumos_ia.get(str(item.get('id_principal', '')), '')
         ordem = item.get('ordem', '')
+
+        # Texto a exibir: ementa + resumo
+        texto_card = ementa
+        if resumo:
+            texto_card = f"{ementa}  |  Resumo: {resumo}"
 
         # Estima altura do card
         ementa_chars_per_line = int(INNER_W / 4.8)
-        ementa_lines = max(1, len(ementa) // ementa_chars_per_line + 1)
-        ementa_lines = min(ementa_lines, 4)
+        ementa_lines = max(1, len(texto_card) // ementa_chars_per_line + 1)
+        ementa_lines = min(ementa_lines, 6)
         card_h = 1.0*cm + ementa_lines * 0.38*cm + 0.5*cm
         card_h = max(card_h, 1.8*cm)
 
@@ -233,11 +240,11 @@ def gerar_infografico_pdf(evento, itens, logo_minoria_path=None, logo_oposicao_p
         ty -= 0.32*cm
         c.drawString(tx, ty, f"Relator: {relator}")
 
-        # Ementa
+        # Ementa + Resumo
         ty -= 0.35*cm
         c.setFillColor(colors.black)
         c.setFont("Helvetica", 7.8)
-        ementa_max = ementa[:280] + "..." if len(ementa) > 280 else ementa
+        ementa_max = ementa[:200] + ("..." if len(ementa) > 200 else "")
         words = ementa_max.split()
         line = ""
         lines_drawn = 0
@@ -253,6 +260,28 @@ def gerar_infografico_pdf(evento, itens, logo_minoria_path=None, logo_oposicao_p
                 line = word
         if line and lines_drawn < max_lines:
             c.drawString(tx, ty - lines_drawn * 0.33*cm, line)
+            lines_drawn += 1
+
+        # Resumo IA abaixo da ementa
+        if resumo:
+            ty2 = ty - lines_drawn * 0.33*cm - 0.15*cm
+            c.setFillColor(colors.HexColor("#1A6B3A"))
+            c.setFont("Helvetica-Bold", 7)
+            resumo_txt = f"Resumo: {resumo[:180]}" + ("..." if len(resumo) > 180 else "")
+            words2 = resumo_txt.split()
+            line2 = ""
+            ld2 = 0
+            for word in words2:
+                test2 = (line2 + " " + word).strip()
+                if c.stringWidth(test2, "Helvetica-Bold", 7) <= INNER_W:
+                    line2 = test2
+                else:
+                    if ld2 < 2:
+                        c.drawString(tx, ty2 - ld2 * 0.30*cm, line2)
+                        ld2 += 1
+                    line2 = word
+            if line2 and ld2 < 2:
+                c.drawString(tx, ty2 - ld2 * 0.30*cm, line2)
 
         return y - card_h - 0.2*cm, False
 
