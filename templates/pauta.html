@@ -628,8 +628,8 @@
     const resumoCache = {};
 
     async function carregarResumoIA(el) {
-      const id    = el.dataset.id;
-      const proj  = el.dataset.projeto;
+      const id     = el.dataset.id;
+      const proj   = el.dataset.projeto;
       const ementa = el.dataset.ementa;
       const autor  = el.dataset.autor;
       if (resumoCache[id]) {
@@ -652,19 +652,15 @@
       } catch(e) { /* silencioso */ }
     }
 
-    // Carrega resumos quando visíveis (IntersectionObserver)
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          carregarResumoIA(entry.target);
-          observer.unobserve(entry.target);
-        }
-      });
-    }, {rootMargin: '100px'});
-
-    document.querySelectorAll('.resumo-ia-ementa').forEach(el => {
-      observer.observe(el);
-    });
+    // Carrega resumos de todos os itens sequencialmente (não bloqueia a UI)
+    async function carregarTodosResumos() {
+      const els = document.querySelectorAll('.resumo-ia-ementa');
+      for (const el of els) {
+        await carregarResumoIA(el);
+      }
+    }
+    // Inicia após 1s para não competir com o carregamento inicial
+    setTimeout(carregarTodosResumos, 1000);
       document.addEventListener('change', async (e) => {
         const sel = e.target.closest('.select-responsavel');
         if (!sel) return;
