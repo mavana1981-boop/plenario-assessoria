@@ -215,6 +215,14 @@
                    data-autor="{{ item.autor | replace('"','&quot;')  }}">
                 {{ item.ementa }}
               </div>
+              <div class="resumo-ia-ementa mt-1"
+                   id="resumo-ia-{{ item.id_principal }}"
+                   data-id="{{ item.id_principal }}"
+                   data-projeto="{{ item.projeto | replace('"','&quot;') }}"
+                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
+                   data-autor="{{ item.autor | replace('"','&quot;') }}"
+                   style="font-size:0.82rem; color:#1A6B3A; font-weight:500; white-space:normal; word-break:break-word; display:none;">
+              </div>
             </div>
             <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
           </div>
@@ -616,7 +624,47 @@
           }
         }
       })();
-      // Atribuição de assessor responsável
+      // Cache de resumos IA
+    const resumoCache = {};
+
+    async function carregarResumoIA(el) {
+      const id    = el.dataset.id;
+      const proj  = el.dataset.projeto;
+      const ementa = el.dataset.ementa;
+      const autor  = el.dataset.autor;
+      if (resumoCache[id]) {
+        el.textContent = resumoCache[id];
+        el.style.display = 'block';
+        return;
+      }
+      try {
+        const r = await fetch('/resumo_ementa', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({id_principal: id, projeto: proj, ementa, autor})
+        });
+        const j = await r.json();
+        if (j.resumo) {
+          resumoCache[id] = j.resumo;
+          el.textContent = j.resumo;
+          el.style.display = 'block';
+        }
+      } catch(e) { /* silencioso */ }
+    }
+
+    // Carrega resumos quando visíveis (IntersectionObserver)
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          carregarResumoIA(entry.target);
+          observer.unobserve(entry.target);
+        }
+      });
+    }, {rootMargin: '100px'});
+
+    document.querySelectorAll('.resumo-ia-ementa').forEach(el => {
+      observer.observe(el);
+    });
       document.addEventListener('change', async (e) => {
         const sel = e.target.closest('.select-responsavel');
         if (!sel) return;
@@ -938,7 +986,8 @@
       ementa:       {{ item.ementa | tojson }},
       autor:        {{ item.autor | tojson }},
       relator:      {{ item.relator | tojson }},
-      orientacao:   {{ (item.orientacao or '') | tojson }}
+      orientacao:   {{ (item.orientacao or '') | tojson }},
+      resumo_ia:    ''
     }{% if not loop.last %},{% endif %}
     {% endfor %}
   ];
@@ -1432,15 +1481,15 @@ const ITENS_ORI = [
   {% endfor %}
 ];
 
-const ORI_OPCOES = ['a favor', 'contra', 'obstrução', 'liberado', 'abstenção', '—'];
+const ORI_OPCOES = ['SIM', 'NÃO', 'NEGOCIAÇÃO', 'LIBERADO', 'OBSTRUÇÃO', 'ABSTENÇÃO'];
 const ORI_CORES  = {
-  'a favor':   '#d4edda',
-  'contra':    '#f8d7da',
-  'obstrução': '#fff3cd',
-  'liberado':  '#cce5ff',
-  'abstenção': '#e2e3e5',
-  '—':         '#ffffff',
-  '':          '#ffffff',
+  'SIM':        '#d4edda',
+  'NÃO':        '#f8d7da',
+  'NEGOCIAÇÃO': '#fff3cd',
+  'LIBERADO':   '#cce5ff',
+  'OBSTRUÇÃO':  '#ffe5d0',
+  'ABSTENÇÃO':  '#e2e3e5',
+  '':           '#ffffff',
 };
 
 function grupoDoUsuario() {
@@ -1469,13 +1518,17 @@ async function carregarOrientacoes() {
   try {
     const r = await fetch(`/get_orientacoes/${EVENTO_ID_ORI}`);
     const j = await r.json();
+    console.log('Orientações carregadas:', j.length, j);
     oriData = {};
     j.forEach(o => {
-      oriData[`${o.id_principal}|${o.grupo}`] = {
+      const key = `${o.id_principal}|${o.grupo}`;
+      oriData[key] = {
         orientacao: o.orientacao || '',
         comentario: o.comentario || ''
       };
+      console.log('oriData key:', key, '→', o.orientacao);
     });
+    console.log('oriData final:', oriData);
     renderizarTabela();
   } catch(e) {
     alert('Erro ao carregar orientações: ' + e.message);
@@ -1528,9 +1581,9 @@ function renderizarTabela() {
                     onchange="salvarComentario('${item.id_principal}','${col.grupo}',this.value)"
                     >${salvo.comentario}</textarea>`;
       } else {
-        const badgeCor = salvo.orientacao === 'a favor' ? '#1A6B3A'
-                       : salvo.orientacao === 'contra' || salvo.orientacao === 'obstrução' ? '#8B0000'
-                       : salvo.orientacao === 'liberado' ? '#7B5C00'
+        const badgeCor = salvo.orientacao === 'SIM' ? '#1A6B3A'
+                       : salvo.orientacao === 'NÃO' || salvo.orientacao === 'OBSTRUÇÃO' ? '#8B0000'
+                       : salvo.orientacao === 'LIBERADO' ? '#7B5C00'
                        : '#555';
         td.innerHTML = salvo.orientacao
           ? `<div style="background:${ORI_CORES[salvo.orientacao]};border-radius:4px;padding:3px 6px;
