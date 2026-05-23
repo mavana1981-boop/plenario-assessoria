@@ -123,7 +123,9 @@
       {% endif %}
       <div class="small text-muted">
         <strong><i class="far fa-clock me-1"></i>Data/Hora:</strong>
-        {{ evento.dataHoraInicio | default('N/D') | replace('T', ' ') | datetimeformat('%d/%m/%Y %H:%M') if evento.dataHoraInicio != 'N/D' else 'N/D' }}<br>
+        <span data-evento-data="{{ evento.dataHoraInicio | datetimeformat('%d/%m/%Y') if evento.dataHoraInicio and evento.dataHoraInicio != 'N/D' else '' }}">
+        {{ evento.dataHoraInicio | default('N/D') | replace('T', ' ') | datetimeformat('%d/%m/%Y %H:%M') if evento.dataHoraInicio != 'N/D' else 'N/D' }}
+        </span><br>
         <strong><i class="fas fa-info-circle me-1"></i>Situação:</strong>
         <span class="badge {{ 'bg-success' if evento.situacao|default('')|lower == 'em andamento' else 'bg-secondary' }}">
           {{ evento.situacao | default('N/D') }}
@@ -157,11 +159,21 @@
         class="btn btn-outline-success btn-sm mb-3 ms-2" target="_blank" rel="noopener">
         <i class="fas fa-file-export me-2"></i>Exportar resumo
       </a>
-      <a href="{{ url_for('gerar_infografico', evento_id=evento_id) }}"
-        class="btn btn-sm mb-3 ms-2 text-white" target="_blank" rel="noopener"
-        style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
-        <i class="fas fa-image me-2"></i>Gerar Infográfico
-      </a>
+      <div class="dropdown d-inline-block mb-3 ms-2">
+        <button class="btn btn-sm text-white dropdown-toggle"
+          style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);"
+          data-bs-toggle="dropdown">
+          <i class="fas fa-image me-2"></i>Infográfico
+        </button>
+        <ul class="dropdown-menu">
+          <li><a class="dropdown-item" href="{{ url_for('gerar_infografico', evento_id=evento_id) }}" target="_blank">
+            📄 Infográfico A4 (clássico)
+          </a></li>
+          <li><a class="dropdown-item" href="#" id="btn-iconografica">
+            🎨 Pauta Iconográfica
+          </a></li>
+        </ul>
+      </div>
       <button class="btn btn-sm mb-3 ms-2 text-white"
         style="background:linear-gradient(135deg,#25D366,#128C7E);"
         data-bs-toggle="modal" data-bs-target="#modalMensagens">
@@ -1727,5 +1739,167 @@ async function exportarOrientacoesPDF() {
 }
 </script>
 
+<!-- ═══ PAUTA ICONOGRÁFICA ═══════════════════════════════════════════════ -->
+<script>
+(function() {
+  const C = {
+    cream:"#f4ede1", creamLt:"#faf6ee", ink:"#1e3550", inkSoft:"#34547a",
+    forest:"#3d8b4a", leaf:"#7ab450", ruby:"#c0392b", gold:"#e6a817",
+    amber:"#f4c542", navy:"#0d2137", navyMid:"#15314f", cyan:"#4db6e8",
+  };
+
+  function orientacaoConfig(ori) {
+    const o = (ori||'').toUpperCase();
+    if (o === 'SIM')        return {bg:'#2e7d32', fg:'#fff', icon:'check'};
+    if (o === 'NÃO')        return {bg:'#c0392b', fg:'#fff', icon:'cross'};
+    if (o === 'OBSTRUÇÃO')  return {bg:'#c0392b', fg:'#fff', icon:'lock'};
+    if (o === 'NEGOCIAÇÃO') return {bg:'#e6a817', fg:'#fff', icon:'check'};
+    if (o === 'LIBERADO')   return {bg:'#5e7184', fg:'#fff', icon:'check'};
+    if (o === 'ABSTENÇÃO')  return {bg:'#9e9e9e', fg:'#fff', icon:'check'};
+    return {bg:'#9e9e9e', fg:'#fff', icon:'check'};
+  }
+
+  function svgIcon(tipo, cor) {
+    if (tipo === 'check') return `<svg width="46" height="46" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${cor}"/><path d="M20 33 L29 42 L45 24" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    if (tipo === 'cross') return `<svg width="46" height="46" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${cor}"/><path d="M22 22 L42 42 M42 22 L22 42" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round"/></svg>`;
+    if (tipo === 'lock')  return `<svg width="46" height="46" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${cor}"/><path d="M24 30 v-4 a8 8 0 0 1 16 0" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/><rect x="22" y="30" width="20" height="16" rx="2" fill="#fff"/></svg>`;
+    return '';
+  }
+
+  function esc(s) {
+    return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function buildIconograficaHTML(data) {
+    const items = data.items;
+    const mid = Math.ceil(items.length / 2);
+    const left = items.slice(0, mid);
+    const right = items.slice(mid);
+
+    const cardHTML = (it) => {
+      const cfg = orientacaoConfig(it.orientacao);
+      return `
+      <div style="background:#fff;border-radius:10px;padding:11px 12px 0;position:relative;
+        box-shadow:0 3px 10px rgba(0,0,0,.06);overflow:hidden;page-break-inside:avoid;">
+        <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${cfg.bg};"></div>
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:5px;padding-left:2px;">
+          <div style="width:22px;height:22px;border-radius:50%;background:${C.inkSoft};color:#fff;
+            font-size:11.5px;font-weight:800;display:flex;align-items:center;justify-content:center;
+            flex-shrink:0;margin-top:1px;">${esc(it.num)}</div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:16px;font-weight:800;
+            color:${C.ink};line-height:1.1;">${esc(it.codigo)}</div>
+        </div>
+        <div style="font-size:9.5px;color:${C.inkSoft};line-height:1.5;padding-left:2px;">
+          <div><strong>Autor:</strong> ${esc(it.autor)}</div>
+          <div><strong>Relator:</strong> ${esc(it.relator)}</div>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px;margin-top:6px;padding-left:2px;padding-bottom:8px;">
+          <div style="flex:1;font-size:10px;color:#2c3e50;line-height:1.4;">${esc(it.descricao)}</div>
+          <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
+            ${svgIcon(cfg.icon, cfg.bg)}
+            <div style="font-size:8px;font-weight:900;color:${cfg.bg};margin-top:2px;letter-spacing:.5px;">${esc(it.orientacao||'—')}</div>
+          </div>
+        </div>
+        <div style="height:4px;background:linear-gradient(90deg,${C.leaf} 0%,${C.forest} 100%);margin-left:-12px;margin-right:-12px;"></div>
+      </div>`;
+    };
+
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pauta Iconográfica</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800;900&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  @page{size:A4;margin:0}
+  @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  body{margin:0;padding:0;background:${C.cream};font-family:'Barlow',sans-serif;color:${C.ink}}
+  .page{width:794px;min-height:1123px;margin:0 auto;background:${C.cream};padding-bottom:30px;position:relative}
+  .pattern{position:absolute;inset:0;opacity:.04;pointer-events:none;
+    background-image:radial-gradient(${C.ink} 1px,transparent 1px);background-size:16px 16px}
+  .col{display:flex;flex-direction:column;gap:14px}
+</style></head><body>
+<div class="page">
+  <div class="pattern"></div>
+  <div style="padding:26px 28px 10px;text-align:center;position:relative;">
+    <div style="font-family:'Barlow Condensed',sans-serif;font-size:28px;font-weight:800;
+      color:${C.ink};line-height:1.15;letter-spacing:.5px;">
+      Pauta Iconográfica — Plenário da Câmara<br/>
+      <span style="font-size:18px;font-weight:600;">${esc(data.data)}</span>
+    </div>
+    <div style="display:flex;justify-content:center;align-items:center;gap:26px;margin-top:12px;">
+      ${data.logo_minoria ? `<img src="${data.logo_minoria}" style="height:36px;object-fit:contain;">` : `<div style="font-size:10px;font-weight:900;color:${C.forest};">LIDERANÇA DA MINORIA</div>`}
+      ${data.logo_oposicao ? `<img src="${data.logo_oposicao}" style="height:36px;object-fit:contain;">` : `<div style="font-size:10px;font-weight:900;color:${C.ruby};">OPOSIÇÃO</div>`}
+    </div>
+  </div>
+  <div style="padding:12px 22px 0;display:grid;grid-template-columns:1fr 1fr;gap:14px;position:relative;">
+    <div class="col">${left.map(cardHTML).join('')}</div>
+    <div class="col">${right.map(cardHTML).join('')}</div>
+  </div>
+</div>
+</body></html>`;
+  }
+
+  async function gerarIconografica() {
+    // Coleta itens da pauta já carregada na página
+    const itens = (window.ITENS_DATA || []).map((item, i) => {
+      const resumoEl = document.getElementById('resumo-ia-' + item.id_principal);
+      const resumo = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || '';
+      const descricao = resumo || (item.ementa || '').substring(0, 120);
+      return {
+        num:        item.ordem || String(i+1),
+        codigo:     item.projeto || '',
+        autor:      (item.autor || 'N/D').substring(0, 60),
+        relator:    (item.relator || 'N/D').substring(0, 60),
+        descricao:  descricao.substring(0, 180),
+        orientacao: (item.orientacao || '').toUpperCase(),
+      };
+    });
+
+    // Tenta carregar logos como base64
+    async function imgToBase64(url) {
+      try {
+        const r = await fetch(url);
+        const blob = await r.blob();
+        return await new Promise((res, rej) => {
+          const fr = new FileReader();
+          fr.onload = () => res(fr.result);
+          fr.onerror = rej;
+          fr.readAsDataURL(blob);
+        });
+      } catch { return null; }
+    }
+
+    const [logo_minoria, logo_oposicao] = await Promise.all([
+      imgToBase64('/static/logo_minoria.png'),
+      imgToBase64('/static/logo_oposicao.png'),
+    ]);
+
+    // Dados do evento (data)
+    const dataEvento = (() => {
+      const el = document.querySelector('[data-evento-data]');
+      if (el) return el.dataset.eventoData;
+      // Tenta pegar da página
+      const t = document.querySelector('.badge-data, .evento-data, h5, h6');
+      return t ? t.textContent.trim() : '';
+    })();
+
+    const html = buildIconograficaHTML({
+      data: dataEvento,
+      items: itens,
+      logo_minoria,
+      logo_oposicao,
+    });
+
+    const w = window.open('', '_blank');
+    if (!w) { alert('Permita pop-ups para gerar a pauta iconográfica.'); return; }
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => w.print(), 800);
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('btn-iconografica');
+    if (btn) btn.addEventListener('click', (e) => { e.preventDefault(); gerarIconografica(); });
+  });
+})();
+</script>
 </body>
 </html>
