@@ -660,18 +660,11 @@
     }
 
     // Carrega resumos de todos os itens sequencialmente (não bloqueia a UI)
+    // Carrega resumos e popula ITENS_DATA com resumo_ia
     async function carregarTodosResumos() {
       const els = document.querySelectorAll('.resumo-ia-ementa');
       for (const el of els) {
         await carregarResumoIA(el);
-      }
-    }
-    // Após carregar resumos, popula ITENS_DATA com resumo_ia
-    async function carregarTodosResumos() {
-      const els = document.querySelectorAll('.resumo-ia-ementa');
-      for (const el of els) {
-        await carregarResumoIA(el);
-        // Atualiza ITENS_DATA com o resumo gerado
         const id = el.dataset.id;
         if (window.ITENS_DATA) {
           const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
@@ -1798,7 +1791,7 @@ async function exportarOrientacoesPDF() {
     } catch { return null; }
   }
 
-  const ORI_OPCOES = ['SIM','NÃO','NEGOCIAÇÃO','LIBERADO','OBSTRUÇÃO','ABSTENÇÃO','—'];
+  const ICON_ORI_OPCOES = ['SIM','NÃO','NEGOCIAÇÃO','LIBERADO','OBSTRUÇÃO','ABSTENÇÃO','—'];
 
   // Orientação local (editada na pauta iconográfica)
   const _orientacoes = {}; // sobrescreve a orientação da pauta geral
@@ -1818,7 +1811,7 @@ async function exportarOrientacoesPDF() {
     const temMarcador = !!marcador;
     const shadow   = temMarcador ? `0 0 0 3px ${C.amber},0 6px 14px rgba(0,0,0,.10)` : '0 3px 10px rgba(0,0,0,.06)';
 
-    const selectOri = ORI_OPCOES.map(o =>
+    const selectOri = ICON_ORI_OPCOES.map(o =>
       `<option value="${o}" ${o===oriAtual?'selected':''}>${o}</option>`
     ).join('');
 
