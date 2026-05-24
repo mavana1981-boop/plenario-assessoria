@@ -455,7 +455,7 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
         for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
             if a.get_text(strip=True).lower() == 'pauta':
                 href = a['href']
-                url_cand = (href if href.startswith('http') else f"https://www.camara.leg.br{href}")
+                url_cand = (camara_url(href))
                 url_cand += ('&' if '?' in url_cand else '?') + 'tipo=PDF'
                 candidatos_pauta.append(url_cand)
 
@@ -590,7 +590,13 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
         logger.warning(f"Erro ao extrair ordem do PDF {evento_id}: {e}")
         return _buscar_ordem_html(evento_id)
 
-def _buscar_ordem_html(evento_id):
+def camara_url(href):
+    """Monta URL completa da Câmara garantindo a barra após o domínio."""
+    if href.startswith('http'):
+        return href
+    if href.startswith('/'):
+        return f"https://www.camara.leg.br{href}"
+    return f"https://www.camara.leg.br/{href}"
     """Fallback: tenta extrair ordem da página HTML de ordem do dia."""
     url = f"https://www.camara.leg.br/internet/ordemdodia/ordemDetalheReuniaoPle.asp?codReuniao={evento_id}"
     try:
@@ -1279,7 +1285,7 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
             href = a['href']
             if 'codteor' not in href.lower():
                 continue
-            url_doc  = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+            url_doc  = camara_url(href)
             m_fn     = re.search(r'filename=([^&"]+)', href)
             filename = (m_fn.group(1) if m_fn else '').upper()
 
@@ -1357,7 +1363,12 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                     for a in row.find_all('a', href=True):
                         href = a['href']
                         if 'codteor' in href.lower():
-                            url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                            if href.startswith('http'):
+                                url_doc = href
+                            elif href.startswith('/'):
+                                url_doc = f"https://www.camara.leg.br{href}"
+                            else:
+                                url_doc = f"https://www.camara.leg.br/{href}"
                             prlps_encontrados.append((num, url_doc))
                             break
 
@@ -2107,7 +2118,7 @@ def buscar_documentos_disponiveis(id_proposicao):
                 # Pega avulso pelo texto do link OU pelo filename
                 eh_avulso = ('AVULSO' in fn and 'LEGISLACAO' not in fn) or txt_link in ('avulsos', 'avulso')
                 if eh_avulso:
-                    url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                    url_doc = camara_url(href)
                     docs.append({
                         'label':    '📄 Avulso — Texto Integral da Proposição',
                         'url':      url_doc,
@@ -2140,7 +2151,7 @@ def buscar_documentos_disponiveis(id_proposicao):
                     href = a['href']
                     if 'codteor' not in href.lower():
                         continue
-                    url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                    url_doc = camara_url(href)
                     if url_doc in vistos:
                         continue
                     vistos.add(url_doc)
@@ -2600,7 +2611,7 @@ def buscar_url_prlp():
                 for a in row.find_all('a', href=True):
                     href = a['href']
                     if 'codteor' in href.lower():
-                        url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                        url_doc = camara_url(href)
                         url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
                         logger.info(f"PRLP {numero_prlp} encontrado: {url_pdf}")
                         return jsonify({'url_pdf': url_pdf})
@@ -2622,7 +2633,7 @@ def buscar_url_prlp():
                 if 'PRLP' in fn or 'PRLP' in href.upper():
                     m_num = re.search(r'PRLP[^\d]*(\d+)', fn or href, re.IGNORECASE)
                     num = int(m_num.group(1)) if m_num else 0
-                    url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                    url_doc = camara_url(href)
                     prlps.append((num, url_doc))
             if prlps:
                 # Pega o que tem o número correto, ou o maior
@@ -2785,7 +2796,7 @@ def debug_ordem(evento_id):
         for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
             if a.get_text(strip=True).lower() == 'pauta':
                 href = a['href']
-                pdf_url = (href if href.startswith('http') else f"https://www.camara.leg.br{href}")
+                pdf_url = (camara_url(href))
                 pdf_url += ('&' if '?' in pdf_url else '?') + 'tipo=PDF'
                 break
         resultado['etapas'].append({'etapa': '2_pdf_url', 'url': pdf_url})
