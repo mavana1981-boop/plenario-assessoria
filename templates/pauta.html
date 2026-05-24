@@ -1129,8 +1129,7 @@
           // Extrai codteor da URL
           const mCt = urlTex.match(/codteor=(\d+)/);
           if (mCt) {
-            const urlPdf = `https://www.camara.leg.br/prop_mostrarintegra?codteor=${mCt[1]}&tipo=PDF`;
-            window.open(urlPdf, '_blank');
+            const urlPdf = `https://www.camara.leg.br/prop_mostrarintegra?codteor=${mCt[1]}&tipo=PDF`;            window.open(urlPdf, '_blank');
             btn.outerHTML = `<a href="${urlPdf}" target="_blank" rel="noopener"
               class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;">
               <i class="fas fa-file-pdf me-1"></i>Ver PRLP ${alvo.numero}</a>`;
