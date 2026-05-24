@@ -1382,6 +1382,35 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                 (l, u) for l, u in candidatos if u != url_ultimo_prlp
             ]
 
+        # Se já temos URL e número do último PRLP, retorna direto sem baixar PDFs
+        if url_ultimo_prlp and numero_ultimo_prlp:
+            url_pdf_direto = url_ultimo_prlp + ('&' if '?' in url_ultimo_prlp else '?') + 'tipo=PDF'
+            logger.info(f"✅ Retorno direto PRLP {numero_ultimo_prlp}: {url_pdf_direto}")
+            # Tenta confirmar que é PDF válido
+            try:
+                rp_test = requests.get(url_pdf_direto, headers=headers, timeout=15)
+                if rp_test.ok and 'pdf' in rp_test.headers.get('Content-Type','').lower():
+                    import pdfplumber
+                    with pdfplumber.open(BytesIO(rp_test.content)) as pdf:
+                        texto_conf = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
+                    return {
+                        'tipo': 'PRLP',
+                        'numero': numero_ultimo_prlp,
+                        'data': '',
+                        'texto': texto_conf[:8000],
+                        'url_pdf': url_pdf_direto
+                    }
+            except Exception as e:
+                logger.warning(f"Erro ao confirmar PRLP direto: {e}")
+            # Retorna mesmo sem confirmar — a URL está correta
+            return {
+                'tipo': 'PRLP',
+                'numero': numero_ultimo_prlp,
+                'data': '',
+                'texto': '',
+                'url_pdf': url_pdf_direto
+            }
+
         palavras_prlp_sbt = [
             'PRLP', 'PARECER PRELIMINAR', 'SUBSTITUTIVO',
             'PARECER DE PLEN', 'PARECER DO RELATOR DE PLEN',
