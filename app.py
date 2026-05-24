@@ -2538,7 +2538,74 @@ Não use ### ou ** fora do HTML."""
 
     return jsonify({'error': 'Nenhuma chave de IA configurada.'}), 500
 
-@app.route('/verificar_doc/<int:id_prop>')
+@app.route('/buscar_url_prlp', methods=['POST'])
+@login_required
+def buscar_url_prlp():
+    """Encontra URL do PDF do PRLP específico pelo número."""
+    data         = request.get_json()
+    id_prop      = data.get('id_proposicao', '')
+    numero_prlp  = str(data.get('numero_prlp', ''))
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'pt-BR,pt;q=0.9',
+    }
+
+    # Estratégia 1: página de pareceres (scraping)
+    try:
+        from bs4 import BeautifulSoup
+        url_pag = f"https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao={id_prop}"
+        r = requests.get(url_pag, headers=headers, timeout=15)
+        if r.ok:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            # Procura linha que menciona PRLP + número correto
+            for row in soup.find_all('tr'):
+                txt = row.get_text(' ', strip=True).upper()
+                if f'PRLP' not in txt:
+                    continue
+                # Verifica se tem o número correto
+                m = re.search(r'PRLP\s*[Nnº°.\s]*(\d+)', txt)
+                if not m or m.group(1) != numero_prlp:
+                    continue
+                # Pega o link
+                for a in row.find_all('a', href=True):
+                    href = a['href']
+                    if 'codteor' in href.lower():
+                        url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                        url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
+                        logger.info(f"PRLP {numero_prlp} encontrado: {url_pdf}")
+                        return jsonify({'url_pdf': url_pdf})
+    except Exception as e:
+        logger.warning(f"Erro buscar_url_prlp estrategia1: {e}")
+
+    # Estratégia 2: ficha de tramitação
+    try:
+        url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_prop}"
+        r = requests.get(url_tram, headers=headers, timeout=15)
+        if r.ok:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            # Busca todos os links com PRLP no filename
+            prlps = []
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                fn_m = re.search(r'filename=([^&"]+)', href)
+                fn = (fn_m.group(1) if fn_m else '').upper()
+                if 'PRLP' in fn or 'PRLP' in href.upper():
+                    m_num = re.search(r'PRLP[^\d]*(\d+)', fn or href, re.IGNORECASE)
+                    num = int(m_num.group(1)) if m_num else 0
+                    url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                    prlps.append((num, url_doc))
+            if prlps:
+                # Pega o que tem o número correto, ou o maior
+                alvo = [p for p in prlps if str(p[0]) == numero_prlp]
+                escolhido = alvo[0] if alvo else sorted(prlps, key=lambda x: x[0], reverse=True)[0]
+                url_pdf = escolhido[1] + ('&' if '?' in escolhido[1] else '?') + 'tipo=PDF'
+                return jsonify({'url_pdf': url_pdf})
+    except Exception as e:
+        logger.warning(f"Erro buscar_url_prlp estrategia2: {e}")
+
+    return jsonify({'url_pdf': None})
 @login_required
 def verificar_doc(id_prop):
     """Retorna tipo, número, data e URL do último PRLP/Substitutivo de plenário."""
