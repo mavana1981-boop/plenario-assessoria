@@ -2760,7 +2760,48 @@ def limpar_cache(evento_id):
     finally:
         conn.close()
 
-@app.route('/buscar_imagem_item', methods=['POST'])
+@app.route('/resumo_ementa', methods=['POST'])
+@login_required
+def resumo_ementa():
+    return resumo_ementa_impl(request.get_json())
+
+@app.route('/resumos_evento/<int:evento_id>')
+@login_required
+def resumos_evento(evento_id):
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
+        rows = c.fetchall()
+        return jsonify({str(r[0]): r[1] for r in rows})
+    except Exception:
+        return jsonify({})
+    finally:
+        conn.close()
+
+@app.route('/salvar_resumo_ia', methods=['POST'])
+@login_required
+def salvar_resumo_ia():
+    data      = request.get_json()
+    evento_id = data.get('evento_id')
+    id_prop   = data.get('id_principal')
+    resumo    = data.get('resumo', '')
+    if not evento_id or not id_prop or not resumo:
+        return jsonify({'ok': False})
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS resumos_ia (
+            evento_id INTEGER, id_proposicao TEXT, resumo TEXT,
+            PRIMARY KEY (evento_id, id_proposicao))''')
+        c.execute('INSERT OR REPLACE INTO resumos_ia (evento_id, id_proposicao, resumo) VALUES (?,?,?)',
+                  (evento_id, str(id_prop), resumo))
+        conn.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+    finally:
+        conn.close()
 @login_required
 def buscar_imagem_item():
     """Usa IA para extrair keywords e busca imagem via Wikimedia Commons (gratuito)."""
