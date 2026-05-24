@@ -1453,7 +1453,7 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                         pass
                 logger.info(f"PDF pag1 (300 chars): {pag1[:300]}")
                 logger.info(f"Documento {tipo} ({label}) para {id_proposicao}: {len(texto)} chars, PRLP nº {numero_prlp}, data {data}")
-                return {'tipo': tipo, 'numero': numero_prlp, 'data': data, 'texto': texto[:8000]}
+                return {'tipo': tipo, 'numero': numero_prlp, 'data': data, 'texto': texto[:8000], 'url_pdf': url_pdf}
             except Exception as e:
                 logger.warning(f"Erro ao processar {label}: {e}")
                 continue
@@ -2509,16 +2509,17 @@ Não use ### ou ** fora do HTML."""
 @app.route('/verificar_doc/<int:id_prop>')
 @login_required
 def verificar_doc(id_prop):
-    """Retorna tipo, número e data do último PRLP/Substitutivo de plenário."""
+    """Retorna tipo, número, data e URL do último PRLP/Substitutivo de plenário."""
     doc = buscar_texto_prlp_ou_sbt(id_prop)
     if doc:
         return jsonify({
             'tipo':      doc.get('tipo'),
             'numero':    doc.get('numero'),
             'data':      doc.get('data'),
-            'tem_texto': bool(doc.get('texto'))
+            'tem_texto': bool(doc.get('texto')),
+            'url_pdf':   doc.get('url_pdf', '')
         })
-    return jsonify({'tipo': None, 'data': None, 'numero': None})
+    return jsonify({'tipo': None, 'data': None, 'numero': None, 'url_pdf': ''})
 
 @app.route('/debug_docs/<path:codigo>')
 @login_required
