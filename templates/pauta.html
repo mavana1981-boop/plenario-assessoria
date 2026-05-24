@@ -1091,66 +1091,46 @@
     }
   }
 
-  // Busca URL do PRLP correto — roda no browser do usuário (IP não bloqueado)
   async function buscarUrlPrlp(btn, idProp, numeroPrlp) {
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
     try {
-      // Busca a página de pareceres diretamente no browser do usuário
-      const urlPag = `https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao=${idProp}`;
-      const resp = await fetch(urlPag, {
-        headers: { 'Accept': 'text/html' },
-        credentials: 'omit'
-      });
+      // Busca proposições relacionadas via API da Câmara (roda no browser, IP não bloqueado)
+      const apiUrl = `https://dadosabertos.camara.leg.br/api/v2/proposicoes/${idProp}/relacionadas`;
+      let idPrlp = null;
 
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const html = await resp.text();
-
-      // Parseia o HTML para encontrar PRLP com número correto
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-
-      let urlPdf = null;
-
-      // Procura todas as linhas de tabela com PRLP
-      const rows = doc.querySelectorAll('tr');
-      // Coleta todos os PRLPs com número e link
-      const prlps = [];
-      rows.forEach(row => {
-        const txt = row.textContent.toUpperCase();
-        if (!txt.includes('PRLP')) return;
-        const mNum = txt.match(/PRLP\s*[Nnº°.\s]*(\d+)/);
-        const num = mNum ? parseInt(mNum[1]) : 0;
-        const link = row.querySelector('a[href*="codteor"]');
-        if (link) {
-          let href = link.href || link.getAttribute('href');
-          if (!href.startsWith('http')) href = 'https://www.camara.leg.br' + href;
-          prlps.push({num, href});
+      try {
+        const rApi = await fetch(apiUrl, {headers: {'Accept': 'application/json'}});
+        if (rApi.ok) {
+          const jApi = await rApi.json();
+          const relacionadas = jApi.dados || [];
+          // Procura PRLP com o número correto
+          const prlps = relacionadas.filter(p =>
+            p.siglaTipo === 'PRLP' || (p.descricaoTipo||'').toUpperCase().includes('PRLP')
+          );
+          // Ordena por numero desc e pega o maior (ou o que bate com numeroPrlp)
+          prlps.sort((a,b) => (b.numero||0) - (a.numero||0));
+          const alvo = prlps.find(p => String(p.numero) === String(numeroPrlp)) || prlps[0];
+          if (alvo) idPrlp = alvo.id;
         }
-      });
+      } catch(e) { console.warn('API relacionadas falhou:', e); }
 
-      if (prlps.length > 0) {
-        // Ordena por número decrescente e pega o maior (último)
-        prlps.sort((a, b) => b.num - a.num);
-        const alvo = prlps.find(p => String(p.num) === String(numeroPrlp)) || prlps[0];
-        urlPdf = alvo.href + (alvo.href.includes('?') ? '&' : '?') + 'tipo=PDF';
-      }
-
-      if (urlPdf) {
-        window.open(urlPdf, '_blank');
-        btn.outerHTML = `<a href="${urlPdf}" target="_blank" rel="noopener"
+      if (idPrlp) {
+        const url = `https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao=${idPrlp}`;
+        window.open(url, '_blank');
+        btn.outerHTML = `<a href="${url}" target="_blank" rel="noopener"
           class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;">
-          <i class="fas fa-file-pdf me-1"></i>Ver PDF</a>`;
+          <i class="fas fa-file-pdf me-1"></i>Ver PRLP ${numeroPrlp}</a>`;
       } else {
-        // Fallback: abre a página de pareceres para o usuário navegar
-        window.open(urlPag, '_blank');
+        // Fallback: abre a página de pareceres
+        const urlFallback = `https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao=${idProp}`;
+        window.open(urlFallback, '_blank');
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-external-link-alt me-1"></i>Ver Pareceres';
       }
     } catch(e) {
-      // Se der CORS, abre a página diretamente
-      const urlPag = `https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao=${idProp}`;
-      window.open(urlPag, '_blank');
+      const urlFallback = `https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao=${idProp}`;
+      window.open(urlFallback, '_blank');
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-external-link-alt me-1"></i>Ver Pareceres';
     }
