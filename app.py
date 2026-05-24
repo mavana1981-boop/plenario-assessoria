@@ -2890,36 +2890,76 @@ def resumo_ementa_impl(data):
     if not groq_key and not gemini_key:
         return jsonify({'resumo': ementa[:200]})
 
-    # Para REQ: busca ementa do PL referenciado
+    # Para REQ ou qualquer proposição que mencione outro PL na ementa:
+    # busca dados do PL referenciado para enriquecer o resumo
     contexto_pl = ''
     proj_base = projeto.split(' ao ')[0].strip()
     siglas_req = ('REQ', 'RQS', 'RQU', 'REC')
-    if any(proj_base.upper().startswith(s) for s in siglas_req):
-        m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', ementa, re.IGNORECASE)
-        if not m_pl:
-            m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL)\s+([\d.]+)[/\-](\d{4})', projeto, re.IGNORECASE)
-        if m_pl:
-            sigla_ref = m_pl.group(1).upper()
-            num_ref   = m_pl.group(2).replace('.', '')
-            ano_ref   = m_pl.group(3)
-            try:
-                r_api = requests.get(
-                    f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
-                    headers={'Accept': 'application/json'}, timeout=8
-                )
-                if r_api.ok:
-                    dados = r_api.json().get('dados', [])
-                    if dados:
-                        contexto_pl = f"\nO {sigla_ref} {num_ref}/{ano_ref} trata de: {dados[0].get('ementa', '')}"
-            except Exception:
-                pass
+    eh_req = any(proj_base.upper().startswith(s) for s in siglas_req)
 
-    prompt = f"""Você é um assessor legislativo. Gere um resumo MUITO CURTO (máximo 3 linhas, máximo 180 caracteres) do que esta proposição trata na prática.
+    # Busca referência ao PL na ementa ou no projeto
+    m_pl = None
+    num_ref = ano_ref = sigla_ref = ''
+
+    # Padrão com ano: "PL nº 4.215/2023" ou "PL 4215, de 2023"
+    for txt_busca in [ementa, projeto]:
+        m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL|PLC)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', txt_busca, re.IGNORECASE)
+        if m_pl: break
+        m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL|PLC)\s+([\d.]+)[/\-](\d{4})', txt_busca, re.IGNORECASE)
+        if m_pl: break
+
+    # Padrão sem ano: "PL nº 4.215" ou "Projeto de Lei nº 4.215"
+    if not m_pl:
+        for txt_busca in [ementa, projeto]:
+            m_pl2 = re.search(r'\b(?:Projeto de Lei|PL|PEC|PLP|MPV|PDL)\s+n[º°.]?\s*([\d.]+)\b', txt_busca, re.IGNORECASE)
+            if m_pl2:
+                num_ref = m_pl2.group(1).replace('.', '').replace(',', '')
+                sigla_ref = 'PL'
+                ano_ref = ''
+                break
+
+    if m_pl:
+        sigla_ref = m_pl.group(1).upper()
+        num_ref   = m_pl.group(2).replace('.', '')
+        ano_ref   = m_pl.group(3)
+
+    if num_ref and (eh_req or sigla_ref):
+        try:
+            # Busca com ano se disponível, senão busca só pelo número
+            if ano_ref:
+                url_api = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla_ref or 'PL'}&numero={num_ref}&ano={ano_ref}&itens=1"
+            else:
+                url_api = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?numero={num_ref}&itens=1&ordem=DESC&ordenarPor=ano"
+            r_api = requests.get(url_api, headers={'Accept': 'application/json'}, timeout=8)
+            if r_api.ok:
+                dados = r_api.json().get('dados', [])
+                if dados:
+                    ementa_pl  = dados[0].get('ementa', '')
+                    sigla_real = dados[0].get('siglaTipo', sigla_ref)
+                    num_real   = dados[0].get('numero', num_ref)
+                    ano_real   = dados[0].get('ano', ano_ref)
+                    if ementa_pl:
+                        contexto_pl = f"\nO {sigla_real} {num_real}/{ano_real} (referenciado) trata de: {ementa_pl}"
+                        logger.info(f"Contexto PL encontrado: {sigla_real} {num_real}/{ano_real}")
+        except Exception as e:
+            logger.warning(f"Erro buscar PL referenciado: {e}")
+
+    if contexto_pl:
+        prompt = f"""Você é um assessor legislativo. O item abaixo é um requerimento que trata de outro projeto de lei.
+Gere um resumo MUITO CURTO (máximo 3 linhas, máximo 180 caracteres) explicando o que o PROJETO REFERENCIADO trata na prática.
+Comece com o tipo de requerimento (ex: "Urgência para o PL que..."). Seja direto e claro.
+
+Proposição: {projeto}
+Ementa do requerimento: {ementa}{contexto_pl}
+
+Responda APENAS com o resumo, sem introdução, sem aspas, sem markdown."""
+    else:
+        prompt = f"""Você é um assessor legislativo. Gere um resumo MUITO CURTO (máximo 3 linhas, máximo 180 caracteres) do que esta proposição trata na prática.
 Seja direto e claro. Não repita o número da proposição. Use linguagem simples.
 
 Proposição: {projeto}
 Autor: {autor}
-Ementa: {ementa}{contexto_pl}
+Ementa: {ementa}
 
 Responda APENAS com o resumo, sem introdução, sem aspas, sem markdown."""
 
