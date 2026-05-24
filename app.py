@@ -1333,7 +1333,6 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                 candidatos_unicos.append((label, url))
         candidatos = candidatos_unicos
 
-        # ESTRATÉGIA PRIORITÁRIA: busca via página de pareceres (dados mais atualizados)
         numero_ultimo_prlp = None
         url_ultimo_prlp = None
         try:
@@ -2606,19 +2605,25 @@ def buscar_url_prlp():
         logger.warning(f"Erro buscar_url_prlp estrategia2: {e}")
 
     return jsonify({'url_pdf': None})
+
+@app.route('/verificar_doc/<int:id_prop>')
 @login_required
 def verificar_doc(id_prop):
     """Retorna tipo, número, data e URL do último PRLP/Substitutivo de plenário."""
-    doc = buscar_texto_prlp_ou_sbt(id_prop)
-    if doc:
-        return jsonify({
-            'tipo':      doc.get('tipo'),
-            'numero':    doc.get('numero'),
-            'data':      doc.get('data'),
-            'tem_texto': bool(doc.get('texto')),
-            'url_pdf':   doc.get('url_pdf', '')
-        })
-    return jsonify({'tipo': None, 'data': None, 'numero': None, 'url_pdf': ''})
+    try:
+        doc = buscar_texto_prlp_ou_sbt(id_prop)
+        if doc:
+            return jsonify({
+                'tipo':      doc.get('tipo'),
+                'numero':    doc.get('numero'),
+                'data':      doc.get('data'),
+                'tem_texto': bool(doc.get('texto')),
+                'url_pdf':   doc.get('url_pdf', '')
+            })
+        return jsonify({'tipo': None, 'data': None, 'numero': None, 'url_pdf': ''})
+    except Exception as e:
+        logger.error(f"Erro verificar_doc {id_prop}: {e}", exc_info=True)
+        return jsonify({'tipo': None, 'data': None, 'numero': None, 'url_pdf': '', 'erro': str(e)})
 
 @app.route('/debug_docs/<path:codigo>')
 @login_required
