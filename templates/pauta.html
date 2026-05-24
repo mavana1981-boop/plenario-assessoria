@@ -1050,12 +1050,22 @@
       if (j.tipo) {
         const numStr  = j.numero ? ` nº ${j.numero}` : '';
         const dataStr = j.data   ? ` — ${j.data}` : '';
-        const btnVerPdf = j.url_pdf
-          ? ` <a href="${j.url_pdf}" target="_blank" rel="noopener"
+
+        // Monta URL do PDF correta a partir do número do PRLP
+        // Tenta buscar a URL exata via página de pareceres (no browser do usuário)
+        let urlPdf = j.url_pdf || '';
+
+        const btnVerPdf = urlPdf
+          ? ` <a href="${urlPdf}" target="_blank" rel="noopener"
                 class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;">
                 <i class="fas fa-file-pdf me-1"></i>Ver PDF
               </a>`
-          : '';
+          : (j.numero ? ` <button class="btn btn-sm btn-outline-primary py-0 px-2 ms-1"
+                style="font-size:0.75rem;"
+                onclick="buscarUrlPrlp(this, '${idPrincipal}', '${j.numero}')">
+                <i class="fas fa-file-pdf me-1"></i>Ver PDF
+              </button>` : '');
+
         html = `<i class="fas fa-check-circle text-success me-1"></i>` +
                `Último documento: <strong>${j.tipo}${numStr}</strong>${dataStr} ` +
                `<span class="text-success">(texto disponível para análise)</span>${btnVerPdf}`;
@@ -1081,7 +1091,35 @@
     }
   }
 
-  async function gerarQuadroDTQ(btn) {
+  // Busca URL do PRLP correto via página de pareceres (roda no browser do usuário)
+  async function buscarUrlPrlp(btn, idProp, numeroPrlp) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    try {
+      // Busca a página de pareceres pelo proxy do nosso backend
+      const r = await fetch('/buscar_url_prlp', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id_proposicao: idProp, numero_prlp: numeroPrlp})
+      });
+      const j = await r.json();
+      if (j.url_pdf) {
+        window.open(j.url_pdf, '_blank');
+        // Substitui o botão por link direto
+        btn.outerHTML = `<a href="${j.url_pdf}" target="_blank" rel="noopener"
+          class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;">
+          <i class="fas fa-file-pdf me-1"></i>Ver PDF</a>`;
+      } else {
+        alert('Não foi possível localizar o PDF do PRLP nº ' + numeroPrlp + '. Tente acessar manualmente a página de pareceres da proposição.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-file-pdf me-1"></i>Ver PDF';
+      }
+    } catch(e) {
+      alert('Erro: ' + e.message);
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-file-pdf me-1"></i>Ver PDF';
+    }
+  }
     const projeto   = btn.dataset.projeto;
     const numero    = btn.dataset.numero;
     const autoria   = btn.dataset.autoria || '';
