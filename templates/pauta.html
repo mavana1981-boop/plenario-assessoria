@@ -1050,9 +1050,15 @@
       if (j.tipo) {
         const numStr  = j.numero ? ` nº ${j.numero}` : '';
         const dataStr = j.data   ? ` — ${j.data}` : '';
+        const btnVerPdf = j.url_pdf
+          ? ` <a href="${j.url_pdf}" target="_blank" rel="noopener"
+                class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;">
+                <i class="fas fa-file-pdf me-1"></i>Ver PDF
+              </a>`
+          : '';
         html = `<i class="fas fa-check-circle text-success me-1"></i>` +
                `Último documento: <strong>${j.tipo}${numStr}</strong>${dataStr} ` +
-               `<span class="text-success">(texto disponível para análise)</span>`;
+               `<span class="text-success">(texto disponível para análise)</span>${btnVerPdf}`;
       } else {
         html = `<i class="fas fa-info-circle text-warning me-1"></i>` +
                `Nenhum PRLP ou Substitutivo encontrado. A análise usará a ementa.`;
