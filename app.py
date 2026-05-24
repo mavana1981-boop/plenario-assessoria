@@ -1333,23 +1333,55 @@ def buscar_texto_prlp_ou_sbt(id_proposicao):
                 candidatos_unicos.append((label, url))
         candidatos = candidatos_unicos
 
-        # ESTRATÉGIA PRIORITÁRIA: busca via API de tramitações (dados mais atualizados)
-        # Conta PRLPs de plenário para saber o número do último
+        # ESTRATÉGIA PRIORITÁRIA: busca via página de pareceres (dados mais atualizados)
         numero_ultimo_prlp = None
+        url_ultimo_prlp = None
         try:
             url_pareceres = f"https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao={id_proposicao}"
             r_par = requests.get(url_pareceres, headers=headers, timeout=12)
             logger.info(f"Página pareceres: status={r_par.status_code}, tamanho={len(r_par.text)}")
             if r_par.ok:
-                html_par = r_par.text
-                # Busca todos os PRLP listados — pega o maior número
-                todos_prlp = re.findall(r'PRLP\s*[Nn]?[º°.\s]*(\d+)', html_par, re.IGNORECASE)
-                logger.info(f"PRLPs encontrados na página de pareceres: {todos_prlp}")
-                if todos_prlp:
-                    numero_ultimo_prlp = str(max(int(n) for n in todos_prlp))
-                    logger.info(f"Último PRLP: {numero_ultimo_prlp}")
+                from bs4 import BeautifulSoup as _BS
+                soup_par = _BS(r_par.text, 'html.parser')
+                # Coleta todos os PRLPs com seus números e links
+                prlps_encontrados = []
+                for row in soup_par.find_all('tr'):
+                    row_txt = row.get_text(' ', strip=True).upper()
+                    if 'PRLP' not in row_txt:
+                        continue
+                    # Extrai número do PRLP
+                    m_num = re.search(r'PRLP\s*[Nn]?[º°.\s]*(\d+)', row_txt, re.IGNORECASE)
+                    if not m_num:
+                        continue
+                    num = int(m_num.group(1))
+                    # Pega o link do PDF
+                    for a in row.find_all('a', href=True):
+                        href = a['href']
+                        if 'codteor' in href.lower():
+                            url_doc = href if href.startswith('http') else f"https://www.camara.leg.br{href}"
+                            prlps_encontrados.append((num, url_doc))
+                            break
+
+                if prlps_encontrados:
+                    # Pega o PRLP com maior número
+                    prlps_encontrados.sort(key=lambda x: x[0], reverse=True)
+                    numero_ultimo_prlp = str(prlps_encontrados[0][0])
+                    url_ultimo_prlp    = prlps_encontrados[0][1]
+                    logger.info(f"Último PRLP via pareceres: nº {numero_ultimo_prlp} → {url_ultimo_prlp}")
+                else:
+                    # Fallback: extrai só números
+                    todos_prlp = re.findall(r'PRLP\s*[Nn]?[º°.\s]*(\d+)', r_par.text, re.IGNORECASE)
+                    if todos_prlp:
+                        numero_ultimo_prlp = str(max(int(n) for n in todos_prlp))
+                    logger.info(f"PRLPs encontrados (fallback): {todos_prlp} → último: {numero_ultimo_prlp}")
         except Exception as e:
             logger.warning(f"Erro ao scrappear pareceres: {e}")
+
+        # Se já temos a URL do último PRLP, coloca no topo dos candidatos
+        if url_ultimo_prlp:
+            candidatos = [(f'prlp-{numero_ultimo_prlp}', url_ultimo_prlp)] + [
+                (l, u) for l, u in candidatos if u != url_ultimo_prlp
+            ]
 
         palavras_prlp_sbt = [
             'PRLP', 'PARECER PRELIMINAR', 'SUBSTITUTIVO',
