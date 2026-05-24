@@ -1094,66 +1094,33 @@
   async function buscarUrlPrlp(btn, idProp, numeroPrlp) {
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-
     const urlFallback = `https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao=${idProp}`;
-
     try {
-      // Passo 1: busca proposições relacionadas para achar o ID do PRLP
       const rRel = await fetch(
         `https://dadosabertos.camara.leg.br/api/v2/proposicoes/${idProp}/relacionadas`,
         {headers: {'Accept': 'application/json'}}
       );
-      if (!rRel.ok) throw new Error('relacionadas falhou');
+      if (!rRel.ok) throw new Error('relacionadas ' + rRel.status);
       const jRel = await rRel.json();
-      const prlps = (jRel.dados || []).filter(p =>
-        (p.siglaTipo||'').toUpperCase() === 'PRLP'
-      ).sort((a,b) => (b.numero||0)-(a.numero||0));
-
+      const prlps = (jRel.dados || [])
+        .filter(p => (p.siglaTipo||'').toUpperCase() === 'PRLP')
+        .sort((a,b) => (b.numero||0)-(a.numero||0));
       const alvo = prlps.find(p => String(p.numero) === String(numeroPrlp)) || prlps[0];
-      if (!alvo) throw new Error('PRLP não encontrado nas relacionadas');
-
-      const idPrlp = alvo.id;
-
-      // Passo 2: busca os textos do PRLP para obter o codteor
-      const rTex = await fetch(
-        `https://dadosabertos.camara.leg.br/api/v2/proposicoes/${idPrlp}/textos`,
-        {headers: {'Accept': 'application/json'}}
-      );
-      if (rTex.ok) {
-        const jTex = await rTex.json();
-        const textos = jTex.dados || [];
-        if (textos.length > 0) {
-          // Pega o mais recente (último)
-          const ultimo = textos[textos.length - 1];
-          const urlTex = ultimo.uri || ultimo.url || '';
-          // Extrai codteor da URL
-          const mCt = urlTex.match(/codteor=(\d+)/);
-          if (mCt) {
-            const urlPdf = `https://www.camara.leg.br/prop_mostrarintegra?codteor=${mCt[1]}&tipo=PDF`;            window.open(urlPdf, '_blank');
-            btn.outerHTML = `<a href="${urlPdf}" target="_blank" rel="noopener"
-              class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;">
-              <i class="fas fa-file-pdf me-1"></i>Ver PRLP ${alvo.numero}</a>`;
-            return;
-          }
-        }
-      }
-
-      // Passo 3: fallback — abre ficha de tramitação do PRLP
-      const urlFicha = `https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao=${idPrlp}`;
-      window.open(urlFicha, '_blank');
-      btn.outerHTML = `<a href="${urlFicha}" target="_blank" rel="noopener"
+      if (!alvo) throw new Error('PRLP não encontrado');
+      const url = `https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao=${alvo.id}`;
+      window.open(url, '_blank');
+      btn.outerHTML = `<a href="${url}" target="_blank" rel="noopener"
         class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;">
-        <i class="fas fa-external-link-alt me-1"></i>Ver PRLP ${alvo.numero}</a>`;
-
+        <i class="fas fa-file-alt me-1"></i>Ver PRLP ${alvo.numero}</a>`;
     } catch(e) {
-      console.warn('buscarUrlPrlp erro:', e);
+      console.warn('buscarUrlPrlp:', e);
       window.open(urlFallback, '_blank');
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-external-link-alt me-1"></i>Ver Pareceres';
     }
   }
 
-  async function gerarQuadroDTQ(btn) {
+    async function gerarQuadroDTQ(btn) {
     const projeto   = btn.dataset.projeto;
     const numero    = btn.dataset.numero;
     const autoria   = btn.dataset.autoria || '';
