@@ -610,23 +610,9 @@
         });
       });
 
-      // Enriquece ementas nos cabeçalhos dos itens com complemento IA
-      (async () => {
-        const ementaEls = document.querySelectorAll('[data-ementa-id]');
-        for (const el of ementaEls) {
-          const idP    = el.dataset.ementaId;
-          const proj   = el.dataset.projeto || '';
-          const ementa = el.dataset.ementa  || '';
-          const autor  = el.dataset.autor   || '';
-          if (!ementa || ementa.length < 10) continue;
-          const enriquecida = await enriquecerEmenta(idP, proj, ementa, autor);
-          if (enriquecida && enriquecida !== ementa) {
-            el.textContent = enriquecida;
-          }
-        }
-      })();
-      // Cache de resumos IA
-    const resumoCache = {};
+      // Cache de resumos IA (global para uso em orientações e iconográfico)
+      window.resumoCache = window.resumoCache || {};
+      const resumoCache = window.resumoCache;
 
     async function carregarResumoIA(el) {
       const id     = el.dataset.id;
@@ -1598,7 +1584,7 @@ function renderizarTabela() {
   ITENS_ORI.forEach((item) => {
     const tr = document.createElement('tr');
     const resumoEl = document.getElementById('resumo-ia-' + item.id_principal);
-    const resumo = (resumoEl && resumoEl.textContent.trim()) || resumoCache[item.id_principal] || '';
+    const resumo = (resumoEl && resumoEl.textContent.trim()) || (window.resumoCache && window.resumoCache[item.id_principal]) || '';
     const ementaHtml = `<span style="color:#333">${item.ementa || ''}</span>` +
       (resumo ? `<br><span style="color:#1A6B3A;font-weight:500">Resumo: ${resumo}</span>` : '');
     tr.innerHTML = `
@@ -1804,7 +1790,7 @@ async function exportarOrientacoesPDF() {
     const oriAtual = _orientacoes[id] !== undefined ? _orientacoes[id] : (item.orientacao||'');
     const cfg = oriCfg(oriAtual);
     const resumoEl = document.getElementById('resumo-ia-' + id);
-    const resumo   = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || '';
+    const resumo = (resumoEl && resumoEl.textContent.trim()) || (window.resumoCache && window.resumoCache[String(item.id_principal)]) || item.resumo_ia || '';
     const descricao = (resumo || item.ementa || '').substring(0, 180);
     const imgSrc   = _imagens[id];
     const marcador = _marcadores[id]; // texto do marcador ou undefined
