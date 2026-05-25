@@ -1975,6 +1975,8 @@ async function exportarOrientacoesPDF() {
   const _prioridades = {};
   const _imagens     = {}; // dataURL por id
   const _imgBusy     = {}; // flag carregando
+  let _cardScale = {}; // escala individual por id (1.0 = padrão)
+  const IMG_H_BASE = 100; // altura padrão de imagem em px
 
   const C = {cream:"#f4ede1",ink:"#1e3550",inkSoft:"#34547a",forest:"#3d8b4a",leaf:"#7ab450",ruby:"#c0392b",amber:"#f4c542"};
 
@@ -2021,6 +2023,8 @@ async function exportarOrientacoesPDF() {
   // Renderiza um card no preview
   function renderCard(item, container) {
     const id  = String(item.id_principal);
+    const scale = _cardScale[id] || 1.0;
+    const imgH = Math.round(IMG_H_BASE * scale);
     // Orientação: local override > da pauta geral
     const oriAtual = _orientacoes[id] !== undefined ? _orientacoes[id] : (item.orientacao||'');
     const cfg = oriCfg(oriAtual);
@@ -2044,6 +2048,10 @@ async function exportarOrientacoesPDF() {
 
         <!-- Controles inline (barra inferior) -->
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;padding-top:2px;">
+
+          <!-- Zoom do card -->
+          <button class="icon-zoom-btn" data-id="${id}" data-fator="1.2" title="Aumentar" style="border:1px solid #ccc;border-radius:4px;padding:0px 7px;font-size:14px;background:#f8f8f8;cursor:pointer;line-height:1.6;">＋</button>
+          <button class="icon-zoom-btn" data-id="${id}" data-fator="0.83" title="Diminuir" style="border:1px solid #ccc;border-radius:4px;padding:0px 7px;font-size:14px;background:#f8f8f8;cursor:pointer;line-height:1.6;">－</button>
 
           <!-- Select de orientação -->
           <select class="icon-ori-select" data-id="${id}"
@@ -2070,10 +2078,10 @@ async function exportarOrientacoesPDF() {
         </div>
 
         ${imgSrc ? `
-        <div style="width:100%;height:110px;border-radius:6px;overflow:hidden;margin:4px 0 6px;background:#fff;display:flex;align-items:center;justify-content:center;">
-          <img src="${imgSrc}" style="max-width:100%;max-height:110px;object-fit:contain;">
+        <div style="width:100%;height:${imgH}px;border-radius:6px;overflow:hidden;margin:4px 0 6px;background:#fff;display:flex;align-items:center;justify-content:center;">
+          <img src="${imgSrc}" style="max-width:100%;max-height:${imgH}px;object-fit:contain;">
         </div>` : `
-        <div class="icon-img-placeholder" data-id="${id}" style="width:100%;height:44px;border-radius:6px;margin:4px 0 6px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:11px;">
+        <div class="icon-img-placeholder" data-id="${id}" style="width:100%;height:${Math.round(imgH*0.5)}px;border-radius:6px;margin:4px 0 6px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:11px;">
           ${_imgBusy[id] ? '⏳ Buscando imagem…' : ''}
         </div>`}
 
@@ -2090,6 +2098,15 @@ async function exportarOrientacoesPDF() {
         </div>
         <div style="height:4px;background:linear-gradient(90deg,${C.leaf} 0%,${C.forest} 100%);margin-left:-12px;margin-right:-12px;"></div>
       </div>`;
+
+    // Listeners de zoom
+    container.querySelectorAll('.icon-zoom-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        const fator = parseFloat(b.dataset.fator);
+        _cardScale[id] = Math.min(3.0, Math.max(0.4, (_cardScale[id]||1.0) * fator));
+        renderCard(item, container);
+      });
+    });
 
     // Listener: select de orientação
     container.querySelector('.icon-ori-select')?.addEventListener('change', function() {
@@ -2189,7 +2206,7 @@ async function exportarOrientacoesPDF() {
       const cfg=oriCfg(it.orientacao);
       const shadow=it.prioridade?`0 0 0 2.5px ${C.amber},0 6px 14px rgba(0,0,0,.10)`:'0 3px 10px rgba(0,0,0,.06)';
       const prio=it.marcador?`<div style="position:absolute;top:6px;right:6px;background:${C.amber};color:#fff;font-size:8px;font-weight:900;padding:2px 6px;border-radius:4px;">★ ${e(it.marcador)}</div>`:'';
-      const img=it.imagem?`<div style="width:100%;height:110px;border-radius:6px;overflow:hidden;margin:4px 0 6px;background:#fff;display:flex;align-items:center;justify-content:center;"><img src="${it.imagem}" style="max-width:100%;max-height:110px;object-fit:contain;"></div>`:'';
+      const img=it.imagem?`<div style="width:100%;height:${Math.round(IMG_H_BASE*(it.scale||1))}px;border-radius:6px;overflow:hidden;margin:4px 0 6px;background:#fff;display:flex;align-items:center;justify-content:center;"><img src="${it.imagem}" style="max-width:100%;max-height:${Math.round(IMG_H_BASE*(it.scale||1))}px;object-fit:contain;"></div>`:'';
       return`<div style="background:#fff;border-radius:10px;padding:11px 12px 0;position:relative;box-shadow:${shadow};overflow:hidden;page-break-inside:avoid;">
         <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${cfg.bg};"></div>
         ${prio}
@@ -2253,6 +2270,7 @@ async function exportarOrientacoesPDF() {
         prioridade: !!marcador,
         marcador: marcador,
         imagem: _imagens[id]||null,
+        scale: _cardScale[id]||1.0,
       };
     });
 
@@ -2276,182 +2294,5 @@ async function exportarOrientacoesPDF() {
   });
 })();
 </script>
-    const body = document.getElementById('iconografica-body');
-    if (!body) return;
-    const itens = window.ITENS_DATA || [];
-    body.innerHTML = `
-      <p class="text-muted small mb-3">Marque itens prioritários e adicione imagens opcionais para cada proposição antes de gerar.</p>
-      <div class="list-group">
-        ${itens.map(item => {
-          const id = String(item.id_principal);
-          const resumoEl = document.getElementById('resumo-ia-' + id);
-          const resumo = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || '';
-          const desc = (resumo || item.ementa || '').substring(0, 100);
-          const temImg = !!_imagens[id];
-          return `
-          <div class="list-group-item py-2 px-3">
-            <div class="d-flex align-items-center gap-3">
-              <span class="badge bg-secondary">${item.ordem}</span>
-              <div class="flex-grow-1">
-                <div class="fw-bold small">${item.projeto || ''}</div>
-                <div class="text-muted" style="font-size:0.75rem;">${desc}${desc.length>=100?'…':''}</div>
-              </div>
-              <div class="d-flex align-items-center gap-3 flex-shrink-0">
-                <div class="form-check mb-0">
-                  <input class="form-check-input icon-prio" type="checkbox"
-                    id="iprio-${id}" data-id="${id}" ${_prioridades[id]?'checked':''}>
-                  <label class="form-check-label small fw-bold text-warning" for="iprio-${id}">★ Prioritária</label>
-                </div>
-                <label class="btn btn-outline-secondary btn-sm py-0 px-2 mb-0" style="font-size:0.72rem;cursor:pointer;">
-                  <i class="fas fa-image me-1"></i>${temImg?'<span class="text-success">✅</span>':'Imagem'}
-                  <input type="file" accept="image/*" class="d-none icon-img" data-id="${id}">
-                </label>
-              </div>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>`;
-
-    body.querySelectorAll('.icon-prio').forEach(cb => {
-      cb.addEventListener('change', () => { _prioridades[cb.dataset.id] = cb.checked; });
-    });
-    body.querySelectorAll('.icon-img').forEach(inp => {
-      inp.addEventListener('change', () => {
-        const file = inp.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = ev => {
-          _imagens[inp.dataset.id] = ev.target.result;
-          const lbl = inp.closest('label');
-          if (lbl) lbl.innerHTML = `<i class="fas fa-image me-1"></i><span class="text-success">✅</span><input type="file" accept="image/*" class="d-none icon-img" data-id="${inp.dataset.id}">`;
-          // Re-adiciona listener no novo input
-          lbl.querySelector('.icon-img').addEventListener('change', function() {
-            const f2 = this.files[0]; if (!f2) return;
-            const r2 = new FileReader();
-            r2.onload = e2 => { _imagens[this.dataset.id] = e2.target.result; };
-            r2.readAsDataURL(f2);
-          });
-        };
-        reader.readAsDataURL(file);
-      });
-    });
-
-    new bootstrap.Modal(document.getElementById('modalIconografica')).show();
-  }
-
-  const C = {cream:"#f4ede1",ink:"#1e3550",inkSoft:"#34547a",forest:"#3d8b4a",leaf:"#7ab450",ruby:"#c0392b",amber:"#f4c542"};
-
-  function oriCfg(o) {
-    o = (o||'').toUpperCase();
-    if(o==='SIM')        return{bg:'#2e7d32',icon:'check'};
-    if(o==='NÃO')        return{bg:'#c0392b',icon:'cross'};
-    if(o==='OBSTRUÇÃO')  return{bg:'#c0392b',icon:'lock'};
-    if(o==='NEGOCIAÇÃO') return{bg:'#e6a817',icon:'check'};
-    if(o==='LIBERADO')   return{bg:'#5e7184',icon:'check'};
-    if(o==='ABSTENÇÃO')  return{bg:'#9e9e9e',icon:'check'};
-    return{bg:'#9e9e9e',icon:'check'};
-  }
-
-  function svgIco(t,c){
-    if(t==='check')return`<svg width="46" height="46" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M20 33 L29 42 L45 24" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-    if(t==='cross')return`<svg width="46" height="46" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M22 22 L42 42 M42 22 L22 42" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round"/></svg>`;
-    if(t==='lock') return`<svg width="46" height="46" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M24 30 v-4 a8 8 0 0 1 16 0" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/><rect x="22" y="30" width="20" height="16" rx="2" fill="#fff"/></svg>`;
-    return'';
-  }
-
-  function e(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-
-  function buildHTML(data) {
-    const mid=Math.ceil(data.items.length/2);
-    const left=data.items.slice(0,mid), right=data.items.slice(mid);
-    const card=it=>{
-      const cfg=oriCfg(it.orientacao);
-      const shadow=it.prioridade?`0 0 0 2.5px ${C.amber},0 6px 14px rgba(0,0,0,.10)`:'0 3px 10px rgba(0,0,0,.06)';
-      const prio=it.prioridade?`<div style="position:absolute;top:6px;right:6px;background:${C.amber};color:#fff;font-size:8px;font-weight:900;letter-spacing:.8px;padding:2px 6px;border-radius:4px;">★ PRIORIDADE</div>`:'';
-      const img=it.imagem?`<div style="width:100%;height:84px;border-radius:6px;overflow:hidden;margin:4px 0 6px;"><img src="${it.imagem}" style="width:100%;height:100%;object-fit:cover;"/></div>`:'';
-      return`<div style="background:#fff;border-radius:10px;padding:11px 12px 0;position:relative;box-shadow:${shadow};overflow:hidden;page-break-inside:avoid;">
-        <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${cfg.bg};"></div>
-        ${prio}
-        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;padding-left:2px;">
-          <div style="width:22px;height:22px;border-radius:50%;background:${C.inkSoft};color:#fff;font-size:11.5px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">${e(it.num)}</div>
-          <div style="font-family:'Barlow Condensed',sans-serif;font-size:15px;font-weight:800;color:${C.ink};line-height:1.1;">${e(it.codigo)}</div>
-        </div>
-        ${img}
-        <div style="font-size:9px;color:${C.inkSoft};line-height:1.5;padding-left:2px;">
-          <div><strong>Autor:</strong> ${e(it.autor)}</div>
-          <div><strong>Relator:</strong> ${e(it.relator)}</div>
-        </div>
-        <div style="display:flex;align-items:flex-end;gap:8px;margin-top:6px;padding-left:2px;padding-bottom:8px;">
-          <div style="flex:1;font-size:10px;color:#2c3e50;line-height:1.4;">${e(it.descricao)}</div>
-          <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
-            ${svgIco(cfg.icon,cfg.bg)}
-            <div style="font-size:8px;font-weight:900;color:${cfg.bg};margin-top:2px;letter-spacing:.5px;">${e(it.orientacao||'—')}</div>
-          </div>
-        </div>
-        <div style="height:4px;background:linear-gradient(90deg,${C.leaf} 0%,${C.forest} 100%);margin-left:-12px;margin-right:-12px;"></div>
-      </div>`;
-    };
-    const logos=`<div style="display:flex;justify-content:center;align-items:center;gap:26px;margin-top:12px;">
-      ${data.logo_min ?`<img src="${data.logo_min}"  style="height:38px;object-fit:contain;">`:`<div style="font-size:10px;font-weight:900;color:${C.forest};">LIDERANÇA DA MINORIA</div>`}
-      ${data.logo_opo ?`<img src="${data.logo_opo}" style="height:38px;object-fit:contain;">`:`<div style="font-size:10px;font-weight:900;color:${C.ruby};">OPOSIÇÃO</div>`}
-    </div>`;
-    return`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pauta Iconográfica</title>
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700;800;900&family=Barlow+Condensed:wght@600;700;800;900&display=swap" rel="stylesheet">
-<style>@page{size:A4;margin:0}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}body{margin:0;padding:0;background:${C.cream};font-family:'Barlow',sans-serif;color:${C.ink}}.page{width:794px;min-height:1123px;margin:0 auto;background:${C.cream};padding-bottom:30px;position:relative}.pattern{position:absolute;inset:0;opacity:.04;pointer-events:none;background-image:radial-gradient(${C.ink} 1px,transparent 1px);background-size:16px 16px}.col{display:flex;flex-direction:column;gap:14px}</style></head><body>
-<div class="page"><div class="pattern"></div>
-<div style="padding:24px 28px 10px;text-align:center;">
-  <div style="font-family:'Barlow Condensed',sans-serif;font-size:26px;font-weight:800;color:${C.ink};line-height:1.15;letter-spacing:.5px;">
-    Pauta Iconográfica — Plenário da Câmara<br/><span style="font-size:16px;font-weight:600;">${e(data.data)}</span>
-  </div>${logos}
-</div>
-<div style="padding:12px 22px 0;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-  <div class="col">${left.map(card).join('')}</div>
-  <div class="col">${right.map(card).join('')}</div>
-</div></div></body></html>`;
-  }
-
-  async function b64(url){try{const r=await fetch(url);const blob=await r.blob();return await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(blob);});}catch{return null;}}
-
-  async function gerarIconografica() {
-    const btn = document.getElementById('btn-gerar-iconografica');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando…'; }
-
-    const [logo_min, logo_opo] = await Promise.all([b64('/static/logo_minoria.png'), b64('/static/logo_oposicao.png')]);
-    const dataEvento = (document.querySelector('[data-evento-data]') || {}).dataset?.eventoData || '';
-
-    const itens = (window.ITENS_DATA || []).map(item => {
-      const id = String(item.id_principal);
-      const resumoEl = document.getElementById('resumo-ia-' + id);
-      const resumo = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || '';
-      return {
-        num: String(item.ordem||''), codigo: item.projeto||'',
-        autor: (item.autor||'N/D').substring(0,60),
-        relator: (item.relator||'N/D').substring(0,60),
-        descricao: (resumo||(item.ementa||'').substring(0,150)),
-        orientacao: (item.orientacao||'').toUpperCase(),
-        prioridade: !!_prioridades[id],
-        imagem: _imagens[id] || null,
-      };
-    });
-
-    itens.sort((a,b) => (b.prioridade?1:0)-(a.prioridade?1:0));
-
-    bootstrap.Modal.getInstance(document.getElementById('modalIconografica'))?.hide();
-
-    const w = window.open('','_blank');
-    if (!w) { alert('Permita pop-ups para gerar a pauta iconográfica.'); return; }
-    w.document.write(buildHTML({data: dataEvento, items: itens, logo_min, logo_opo}));
-    w.document.close();
-    w.focus();
-    setTimeout(() => w.print(), 800);
-
-    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-print me-1"></i>Gerar e Imprimir'; }
-  }
-
-  document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('btn-iconografica')?.addEventListener('click', abrirModalIconografica);
-    document.getElementById('btn-gerar-iconografica')?.addEventListener('click', gerarIconografica);
-  });
-})();
-</script></body>
+</body>
 </html>
