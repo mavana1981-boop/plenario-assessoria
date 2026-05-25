@@ -571,6 +571,22 @@
 
           const originalHtml = btn.innerHTML;
           btn.disabled = true;
+          btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando docs...';
+
+          // Lista documentos e pede seleção antes de salvar
+          let docs = [];
+          try {
+            const rDocs = await fetch('/listar_documentos/' + idPrincipal);
+            if (rDocs.ok) { const jDocs = await rDocs.json(); docs = jDocs.documentos || []; }
+          } catch(e) {}
+
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+
+          // Abre modal para selecionar documento base
+          const docSel = await selecionarDocEAnalisar(ordem, null, idPrincipal, '', '', '', '', docs, true);
+
+          btn.disabled = true;
           btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Salvando...';
 
           try {
@@ -801,43 +817,136 @@
 
     // Botão Gerar Análise — usa ementa da proposição via Groq
     async function gerarAnalise(ordem, btn) {
-      const overlay      = document.getElementById("overlay-" + ordem);
       const ementa       = btn.dataset.ementa || '';
       const projeto      = btn.dataset.projeto || '';
       const autor        = btn.dataset.autor || '';
       const relator      = btn.dataset.relator || '';
       const id_principal = btn.dataset.idPrincipal || '';
 
+      // Primeiro lista documentos disponíveis
       btn.disabled = true;
-      btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando...';
-      overlay.style.display = "flex";
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando documentos...';
 
+      let docs = [];
       try {
-        const r = await fetch('/analisar_ia', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projeto, ementa, autor, relator, id_principal })
-        });
-        if (!r.ok) { alert('Erro do servidor: ' + await r.text()); return; }
-        const j = await r.json();
-        if (j.resumo) {
-          if (!quillInstances[ordem]) {
-            const quill = new Quill(`#quill-editor-${ordem}`, {
-              theme: 'snow',
-              modules: { toolbar: [['bold','italic','underline'],[{'list':'ordered'},{'list':'bullet'}],['clean']] }
-            });
-            quillInstances[ordem] = quill;
-          }
-          quillInstances[ordem].clipboard.dangerouslyPasteHTML(j.resumo);
-        } else {
-          alert('Erro da IA: ' + (j.error || 'Resposta vazia'));
+        const rDocs = await fetch('/listar_documentos/' + id_principal);
+        if (rDocs.ok) { const jDocs = await rDocs.json(); docs = jDocs.documentos || []; }
+      } catch(e) {}
+
+      btn.disabled = false;
+      btn.innerHTML = '<img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">Gerar Análise';
+
+      // Abre modal de seleção de documento
+      await selecionarDocEAnalisar(ordem, btn, id_principal, projeto, ementa, autor, relator, docs, false);
+    }
+
+    async function selecionarDocEAnalisar(ordem, btnOrig, id_principal, projeto, ementa, autor, relator, docs, aoSalvar) {
+      return new Promise((resolve) => {
+        document.getElementById('modal-sel-analise')?.remove();
+        const modalEl = document.createElement('div');
+        modalEl.id = 'modal-sel-analise';
+        modalEl.className = 'modal fade';
+        modalEl.setAttribute('tabindex','-1');
+
+        const mDialog  = document.createElement('div'); mDialog.className = 'modal-dialog';
+        const mContent = document.createElement('div'); mContent.className = 'modal-content';
+        const mHeader  = document.createElement('div'); mHeader.className = 'modal-header bg-primary text-white';
+        const mTitle   = document.createElement('h6');  mTitle.className = 'modal-title';
+        mTitle.textContent = aoSalvar ? 'Qual documento embasa esta análise?' : 'Selecione o documento para análise IA';
+        const mClose = document.createElement('button'); mClose.type='button'; mClose.className='btn-close btn-close-white'; mClose.setAttribute('data-bs-dismiss','modal');
+        mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
+
+        const mBody = document.createElement('div'); mBody.className = 'modal-body';
+        const mInfo = document.createElement('p'); mInfo.className = 'small text-muted mb-2';
+        mInfo.textContent = docs.length > 0
+          ? 'A IA usará o documento selecionado como base. A linha "Análise baseada em" será atualizada.'
+          : 'Nenhum documento encontrado — a análise usará a ementa.';
+        mBody.appendChild(mInfo);
+
+        if (docs.length > 0) {
+          docs.forEach((d, i) => {
+            const wrap = document.createElement('div'); wrap.className = 'form-check mb-1 d-flex align-items-start gap-2';
+            const inp = document.createElement('input'); inp.className='form-check-input mt-1'; inp.type='radio'; inp.name='doc_analise'; inp.id='dan_'+i; inp.value=String(i);
+            if (i === 0) inp.checked = true;
+            const lbl = document.createElement('label'); lbl.className='form-check-label small flex-grow-1'; lbl.setAttribute('for','dan_'+i); lbl.textContent=d.label;
+            const btnVer = document.createElement('button'); btnVer.type='button'; btnVer.className='btn btn-outline-secondary btn-sm py-0 px-1'; btnVer.style.fontSize='0.7rem'; btnVer.textContent='👁 Ver';
+            btnVer.addEventListener('click', () => verTextoDoc(d.url, d.label));
+            wrap.appendChild(inp); wrap.appendChild(lbl); wrap.appendChild(btnVer);
+            mBody.appendChild(wrap);
+          });
         }
-      } catch(e) {
-        alert('Erro ao conectar com a IA: ' + e.message);
-      } finally {
-        overlay.style.display = "none";
-        btn.disabled = false;
-        btn.innerHTML = '<img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">Gerar Análise';
+
+        const mFooter = document.createElement('div'); mFooter.className = 'modal-footer';
+        const btnCancelar = document.createElement('button'); btnCancelar.type='button'; btnCancelar.className='btn btn-secondary btn-sm'; btnCancelar.setAttribute('data-bs-dismiss','modal'); btnCancelar.textContent='Cancelar';
+        const btnOk = document.createElement('button'); btnOk.type='button'; btnOk.className='btn btn-primary btn-sm';
+        btnOk.innerHTML = aoSalvar ? '<i class="fas fa-save me-1"></i>Salvar com este documento' : '<i class="fas fa-robot me-1"></i>Analisar';
+        mFooter.appendChild(btnCancelar); mFooter.appendChild(btnOk);
+
+        mContent.appendChild(mHeader); mContent.appendChild(mBody); mContent.appendChild(mFooter);
+        mDialog.appendChild(mContent); modalEl.appendChild(mDialog);
+        document.body.appendChild(modalEl);
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+
+        btnOk.addEventListener('click', async () => {
+          const sel = mBody.querySelector('input[name="doc_analise"]:checked');
+          const docSel = sel && docs.length > 0 ? docs[parseInt(sel.value)] : null;
+          modal.hide();
+
+          if (aoSalvar) {
+            // Apenas atualiza a linha "baseada em" no Quill e resolve
+            if (docSel) atualizarBaseadaEm(ordem, docSel.label);
+            resolve(docSel);
+            return;
+          }
+
+          // Gera análise IA com o documento selecionado
+          const overlay = document.getElementById("overlay-" + ordem);
+          if (btnOrig) { btnOrig.disabled=true; btnOrig.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Gerando...'; }
+          if (overlay) overlay.style.display = "flex";
+
+          try {
+            const body = { projeto, ementa, autor, relator, id_principal };
+            if (docSel) { body.url_documento = docSel.url; body.label_documento = docSel.label; }
+            const r = await fetch('/analisar_ia', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+            if (!r.ok) { alert('Erro do servidor: ' + await r.text()); return; }
+            const j = await r.json();
+            if (j.resumo) {
+              if (!quillInstances[ordem]) {
+                const quill = new Quill(`#quill-editor-${ordem}`, { theme:'snow', modules:{toolbar:[['bold','italic','underline'],[{'list':'ordered'},{'list':'bullet'}],['clean']]} });
+                quillInstances[ordem] = quill;
+              }
+              quillInstances[ordem].clipboard.dangerouslyPasteHTML(j.resumo);
+              // Atualiza linha "baseada em"
+              const labelDoc = docSel ? docSel.label : 'texto original da proposição';
+              atualizarBaseadaEm(ordem, labelDoc);
+            } else {
+              alert('Erro da IA: ' + (j.error || 'Resposta vazia'));
+            }
+          } catch(e) {
+            alert('Erro ao conectar com a IA: ' + e.message);
+          } finally {
+            if (overlay) overlay.style.display = "none";
+            if (btnOrig) { btnOrig.disabled=false; btnOrig.innerHTML='<img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">Gerar Análise'; }
+            resolve(docSel);
+          }
+        });
+
+        modalEl.addEventListener('hidden.bs.modal', () => resolve(null));
+      });
+    }
+
+    function atualizarBaseadaEm(ordem, label) {
+      // Procura linha "baseada em" no Quill e atualiza, ou insere no topo
+      const quill = quillInstances[ordem];
+      if (!quill) return;
+      const html = quill.root.innerHTML;
+      const labelClean = label.replace(/📋|📄|👁/g,'').trim();
+      const novaLinha = `<p><em style="color:red;">Análise baseada em: ${labelClean}</em></p>`;
+      if (html.includes('Análise baseada em')) {
+        quill.root.innerHTML = html.replace(/<p><em[^>]*>Análise baseada em:.*?<\/em><\/p>/i, novaLinha);
+      } else {
+        quill.root.innerHTML = novaLinha + html;
       }
     }
   </script>
