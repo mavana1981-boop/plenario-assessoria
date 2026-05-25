@@ -2344,8 +2344,23 @@ def gerar_quadro_dtq():
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     groq_key   = os.environ.get('GROQ_API_KEY', '')
 
-    # Extrai texto limpo da análise já feita
-    analise_texto = re.sub(r'<[^>]+>', ' ', analise_html).strip()
+    # Detecta se é destaque de emenda
+    descricao_upper = descricao.upper()
+    eh_emenda = any(p in descricao_upper for p in ['EMENDA', 'EMD', 'SUBEMENDA'])
+
+    if eh_emenda:
+        regra_sim_nao = """REGRA FUNDAMENTAL para destaques de EMENDA:
+- O destaque quer VOTAR A EMENDA EM SEPARADO para aprová-la
+- Voto SIM = APROVA a emenda → ALTERA o texto do relator (acata a emenda)
+- Voto NÃO = REJEITA a emenda → MANTÉM o texto do relator"""
+        sim_label_default = "Aprova a emenda / Altera o texto do relator"
+        nao_label_default = "Rejeita a emenda / Mantém o texto do relator"
+    else:
+        regra_sim_nao = """REGRA FUNDAMENTAL dos destaques de votação em separado:
+- Voto SIM = MANTÉM o texto do relator (aprovado como está)
+- Voto NÃO = ALTERA ou SUPRIME o texto do relator"""
+        sim_label_default = "Mantém o texto do relator"
+        nao_label_default = "Altera o texto do relator"
 
     prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
 
@@ -2354,9 +2369,7 @@ def gerar_quadro_dtq():
 **Descrição:** {descricao}
 **Análise já realizada:** {analise_texto}
 
-REGRA FUNDAMENTAL dos destaques de votação em separado:
-- Voto SIM = MANTÉM o texto do relator (aprovado como está)
-- Voto NÃO = ALTERA ou SUPRIME o texto do relator
+{regra_sim_nao}
 
 Com base na descrição e análise acima, gere APENAS um JSON válido (sem markdown, sem explicações):
 
@@ -2364,9 +2377,9 @@ Com base na descrição e análise acima, gere APENAS um JSON válido (sem markd
   "titulo": "{projeto} – [título curto da proposição, máx 60 chars]",
   "dtq": "{numero} - [autoria resumida]",
   "descricao": "[descrição resumida do destaque, máx 120 chars]",
-  "sim_label": "Mantém o texto do relator",
+  "sim_label": "{sim_label_default}",
   "sim_conteudo": "[O que significa votar SIM — efeito prático em 1-2 frases curtas]",
-  "nao_label": "Altera o texto do relator",
+  "nao_label": "{nao_label_default}",
   "nao_conteudo": "[O que significa votar NÃO — efeito prático em 1-2 frases curtas]",
   "explicacao": "[Explicação completa do dispositivo destacado e impacto, 3-5 frases]"
 }}
