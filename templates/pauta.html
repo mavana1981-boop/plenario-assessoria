@@ -1124,7 +1124,12 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       const docs = j.documentos || [];
-      if (docs.length === 0) { alert('Nenhum documento encontrado.'); btn.disabled=false; btn.innerHTML='<i class="fas fa-folder-open me-1"></i>Ver documentos'; return; }
+      if (docs.length === 0) {
+        alert('Nenhum documento encontrado.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-folder-open me-1"></i>Ver documentos';
+        return;
+      }
 
       document.getElementById('modal-docs-parecer')?.remove();
       const modalEl = document.createElement('div');
@@ -1132,40 +1137,60 @@
       modalEl.className = 'modal fade';
       modalEl.setAttribute('tabindex', '-1');
 
-      const mDialog  = document.createElement('div');  mDialog.className = 'modal-dialog';
-      const mContent = document.createElement('div');  mContent.className = 'modal-content';
-      const mHeader  = document.createElement('div');  mHeader.className = 'modal-header bg-primary text-white';
-      const mTitle   = document.createElement('h6');   mTitle.className = 'modal-title';
-      mTitle.textContent = 'Documentos — Pareceres e Substitutivos';
-      const mClose   = document.createElement('button'); mClose.type='button'; mClose.className='btn-close btn-close-white'; mClose.setAttribute('data-bs-dismiss','modal');
+      const mDialog  = document.createElement('div'); mDialog.className = 'modal-dialog';
+      const mContent = document.createElement('div'); mContent.className = 'modal-content';
+      const mHeader  = document.createElement('div'); mHeader.className = 'modal-header bg-primary text-white';
+      const mTitle   = document.createElement('h6');  mTitle.className = 'modal-title';
+      mTitle.textContent = 'Pareceres e Substitutivos disponíveis';
+      const mClose = document.createElement('button');
+      mClose.type = 'button'; mClose.className = 'btn-close btn-close-white';
+      mClose.setAttribute('data-bs-dismiss', 'modal');
       mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
 
       const mBody = document.createElement('div'); mBody.className = 'modal-body';
       const mInfo = document.createElement('p'); mInfo.className = 'small text-muted mb-2';
-      mInfo.textContent = docs.length + ' documento(s) encontrado(s). Clique para abrir o PDF.';
+      mInfo.textContent = docs.length + ' documento(s). Use 👁 Ver para visualizar o texto do PDF.';
       mBody.appendChild(mInfo);
+      mBody.appendChild(document.createElement('hr'));
 
-      const lista = document.createElement('div'); lista.className = 'list-group';
-      docs.forEach(doc => {
-        const item = document.createElement('a');
-        item.className = 'list-group-item list-group-item-action py-2';
-        item.href = doc.url + (doc.url.includes('?') ? '&' : '?') + 'tipo=PDF';
-        item.target = '_blank';
-        item.rel = 'noopener';
-        item.style.fontSize = '0.82rem';
-        item.innerHTML = '<i class="fas fa-file-pdf me-2 text-danger"></i>' + doc.label;
-        lista.appendChild(item);
+      // Lista de documentos com radio + botão Ver (igual ao dos destaques)
+      docs.forEach((d, i) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'form-check mb-1 d-flex align-items-start gap-2';
+
+        const inp = document.createElement('input');
+        inp.className = 'form-check-input mt-1';
+        inp.type = 'radio'; inp.name = 'doc_par'; inp.id = 'dpar_' + i;
+        inp.value = String(i);
+        if (i === 0) inp.checked = true;
+
+        const lbl = document.createElement('label');
+        lbl.className = 'form-check-label small flex-grow-1';
+        lbl.setAttribute('for', 'dpar_' + i);
+        lbl.textContent = d.label;
+
+        const btnVer = document.createElement('button');
+        btnVer.type = 'button';
+        btnVer.className = 'btn btn-outline-secondary btn-sm py-0 px-1';
+        btnVer.style.fontSize = '0.7rem';
+        btnVer.textContent = '👁 Ver';
+        btnVer.addEventListener('click', () => verTextoDoc(d.url, d.label));
+
+        wrap.appendChild(inp); wrap.appendChild(lbl); wrap.appendChild(btnVer);
+        mBody.appendChild(wrap);
       });
-      mBody.appendChild(lista);
 
       const mFooter = document.createElement('div'); mFooter.className = 'modal-footer';
-      const mBtn = document.createElement('button'); mBtn.type='button'; mBtn.className='btn btn-secondary btn-sm'; mBtn.setAttribute('data-bs-dismiss','modal'); mBtn.textContent='Fechar';
-      mFooter.appendChild(mBtn);
+      const btnFechar = document.createElement('button');
+      btnFechar.type = 'button'; btnFechar.className = 'btn btn-secondary btn-sm';
+      btnFechar.setAttribute('data-bs-dismiss', 'modal'); btnFechar.textContent = 'Fechar';
+      mFooter.appendChild(btnFechar);
 
       mContent.appendChild(mHeader); mContent.appendChild(mBody); mContent.appendChild(mFooter);
       mDialog.appendChild(mContent); modalEl.appendChild(mDialog);
       document.body.appendChild(modalEl);
       new bootstrap.Modal(modalEl).show();
+
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-folder-open me-1"></i>Ver documentos';
     } catch(e) {
