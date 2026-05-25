@@ -591,12 +591,17 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
         return _buscar_ordem_html(evento_id)
 
 def camara_url(href):
-    """Monta URL completa da Câmara garantindo a barra após o domínio."""
+    """Monta URL completa da Câmara garantindo o caminho correto."""
     if href.startswith('http'):
-        return href
-    if href.startswith('/'):
-        return f"https://www.camara.leg.br{href}"
-    return f"https://www.camara.leg.br/{href}"
+        url = href
+    elif href.startswith('/'):
+        url = f"https://www.camara.leg.br{href}"
+    else:
+        url = f"https://www.camara.leg.br/{href}"
+    # Garante /proposicoesWeb/ quando há prop_mostrarintegra sem ele
+    if 'prop_mostrarintegra' in url and '/proposicoesWeb/' not in url:
+        url = url.replace('camara.leg.br/prop_mostrarintegra', 'camara.leg.br/proposicoesWeb/prop_mostrarintegra')
+    return url
     """Fallback: tenta extrair ordem da página HTML de ordem do dia."""
     url = f"https://www.camara.leg.br/internet/ordemdodia/ordemDetalheReuniaoPle.asp?codReuniao={evento_id}"
     try:
