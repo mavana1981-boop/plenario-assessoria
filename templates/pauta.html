@@ -1047,27 +1047,20 @@
       const j = await r.json();
 
       let html = '';
+      const btnVerDocs = ` <button class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;"
+            onclick="verDocumentosUltimoParecer(this, '${idPrincipal}')">
+            <i class="fas fa-folder-open me-1"></i>Ver documentos
+          </button>`;
+
       if (j.tipo) {
         const numStr  = j.numero ? ` nº ${j.numero}` : '';
         const dataStr = j.data   ? ` — ${j.data}` : '';
-
-        // Monta URL do PDF correta a partir do número do PRLP
-        // Tenta buscar a URL exata via página de pareceres (no browser do usuário)
-        let urlPdf = j.url_pdf || '';
-
-        const btnVerPdf = j.numero
-          ? ` <button class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;"
-                onclick="verDocumentosUltimoParecer(this, '${idPrincipal}')">
-                <i class="fas fa-folder-open me-1"></i>Ver documentos
-              </button>`
-          : '';
-
         html = `<i class="fas fa-check-circle text-success me-1"></i>` +
                `Último documento: <strong>${j.tipo}${numStr}</strong>${dataStr} ` +
-               `<span class="text-success">(texto disponível para análise)</span>${btnVerPdf}`;
+               `<span class="text-success">(texto disponível para análise)</span>${btnVerDocs}`;
       } else {
         html = `<i class="fas fa-info-circle text-warning me-1"></i>` +
-               `Nenhum PRLP ou Substitutivo encontrado. A análise usará a ementa.`;
+               `Nenhum PRLP ou Substitutivo encontrado — use o texto original.${btnVerDocs}`;
       }
 
       if (resultadoDiv) {
