@@ -366,6 +366,20 @@
                   </div>
                 </div>
 
+                <!-- Campo: Análise baseada em -->
+                <div class="mb-2">
+                  <div class="input-group input-group-sm">
+                    <span class="input-group-text text-muted" style="font-size:0.75rem;white-space:nowrap;">
+                      <i class="fas fa-file-alt me-1"></i>Análise baseada em
+                    </span>
+                    <input type="text" class="form-control campo-baseada-em"
+                      id="baseada-em-{{ item.ordem }}"
+                      data-ordem="{{ item.ordem }}"
+                      placeholder="Ex: PRLP 7 — 21/05/2025"
+                      style="font-size:0.8rem;">
+                  </div>
+                </div>
+
                 <div class="input-group mb-2">
                   <input type="text" id="numero_pl_{{ item.ordem }}" class="form-control" placeholder="Ex: PL 4363/2025">
                   <button class="btn btn-outline-primary btn-gerar-analise" type="button"
@@ -571,23 +585,15 @@
 
           const originalHtml = btn.innerHTML;
           btn.disabled = true;
-          btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando docs...';
-
-          // Lista documentos e pede seleção antes de salvar
-          let docs = [];
-          try {
-            const rDocs = await fetch('/listar_documentos/' + idPrincipal);
-            if (rDocs.ok) { const jDocs = await rDocs.json(); docs = jDocs.documentos || []; }
-          } catch(e) {}
-
-          btn.disabled = false;
-          btn.innerHTML = originalHtml;
-
-          // Abre modal para selecionar documento base
-          const docSel = await selecionarDocEAnalisar(ordem, null, idPrincipal, '', '', '', '', docs, true);
-
-          btn.disabled = true;
           btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Salvando...';
+
+          // Lê campo "baseada em" e atualiza no Quill se preenchido
+          const campoBaseada = document.getElementById('baseada-em-' + ordem);
+          if (campoBaseada && campoBaseada.value.trim()) {
+            atualizarBaseadaEm(ordem, campoBaseada.value.trim());
+            // Re-lê o resumo já com a linha atualizada
+            dataToSend.resumo_materia = quillInstances[ordem] ? quillInstances[ordem].root.innerHTML : dataToSend.resumo_materia;
+          }
 
           try {
             const r = await fetch('/save_item', {
@@ -837,10 +843,10 @@
       btn.innerHTML = '<img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">Gerar Análise';
 
       // Abre modal de seleção de documento
-      await selecionarDocEAnalisar(ordem, btn, id_principal, projeto, ementa, autor, relator, docs, false);
+      await selecionarDocEAnalisar(ordem, btn, id_principal, projeto, ementa, autor, relator, docs);
     }
 
-    async function selecionarDocEAnalisar(ordem, btnOrig, id_principal, projeto, ementa, autor, relator, docs, aoSalvar) {
+    async function selecionarDocEAnalisar(ordem, btnOrig, id_principal, projeto, ementa, autor, relator, docs) {
       return new Promise((resolve) => {
         document.getElementById('modal-sel-analise')?.remove();
         const modalEl = document.createElement('div');
@@ -852,7 +858,7 @@
         const mContent = document.createElement('div'); mContent.className = 'modal-content';
         const mHeader  = document.createElement('div'); mHeader.className = 'modal-header bg-primary text-white';
         const mTitle   = document.createElement('h6');  mTitle.className = 'modal-title';
-        mTitle.textContent = aoSalvar ? 'Qual documento embasa esta análise?' : 'Selecione o documento para análise IA';
+        mTitle.textContent = 'Selecione o documento para análise IA';
         const mClose = document.createElement('button'); mClose.type='button'; mClose.className='btn-close btn-close-white'; mClose.setAttribute('data-bs-dismiss','modal');
         mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
 
@@ -879,7 +885,7 @@
         const mFooter = document.createElement('div'); mFooter.className = 'modal-footer';
         const btnCancelar = document.createElement('button'); btnCancelar.type='button'; btnCancelar.className='btn btn-secondary btn-sm'; btnCancelar.setAttribute('data-bs-dismiss','modal'); btnCancelar.textContent='Cancelar';
         const btnOk = document.createElement('button'); btnOk.type='button'; btnOk.className='btn btn-primary btn-sm';
-        btnOk.innerHTML = aoSalvar ? '<i class="fas fa-save me-1"></i>Salvar com este documento' : '<i class="fas fa-robot me-1"></i>Analisar';
+        btnOk.innerHTML = '<i class="fas fa-robot me-1"></i>Analisar';
         mFooter.appendChild(btnCancelar); mFooter.appendChild(btnOk);
 
         mContent.appendChild(mHeader); mContent.appendChild(mBody); mContent.appendChild(mFooter);
@@ -892,13 +898,6 @@
           const sel = mBody.querySelector('input[name="doc_analise"]:checked');
           const docSel = sel && docs.length > 0 ? docs[parseInt(sel.value)] : null;
           modal.hide();
-
-          if (aoSalvar) {
-            // Apenas atualiza a linha "baseada em" no Quill e resolve
-            if (docSel) atualizarBaseadaEm(ordem, docSel.label);
-            resolve(docSel);
-            return;
-          }
 
           // Gera análise IA com o documento selecionado
           const overlay = document.getElementById("overlay-" + ordem);
@@ -917,8 +916,10 @@
                 quillInstances[ordem] = quill;
               }
               quillInstances[ordem].clipboard.dangerouslyPasteHTML(j.resumo);
-              // Atualiza linha "baseada em"
-              const labelDoc = docSel ? docSel.label : 'texto original da proposição';
+              // Preenche campo "baseada em" com o doc usado
+              const labelDoc = docSel ? docSel.label.replace(/📋|📄|👁/g,'').trim() : 'texto original da proposição';
+              const campoBaseada = document.getElementById('baseada-em-' + ordem);
+              if (campoBaseada) campoBaseada.value = labelDoc;
               atualizarBaseadaEm(ordem, labelDoc);
             } else {
               alert('Erro da IA: ' + (j.error || 'Resposta vazia'));
