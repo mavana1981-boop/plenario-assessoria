@@ -1421,14 +1421,15 @@
       pd.body.innerHTML =
         '<div class="quadro">' +
           '<div class="header">' +
-            '<div class="header-titulo">' + (d.titulo||'') + '</div>' +
+            '<div class="header-titulo">' +
+              '<div style="font-size:15px;font-weight:900;letter-spacing:.5px;">' + numero + (autoria ? ' — ' + autoria : '') + '</div>' +
+              '<div style="font-size:12px;font-weight:400;margin-top:4px;opacity:.9;">' + descricao + '</div>' +
+            '</div>' +
             '<div class="header-logos">' +
               '<img src="' + origin + '/static/logo_oposicao.png" onerror="this.style.display=\'none\'">' +
               '<img src="' + origin + '/static/logo_minoria.png" onerror="this.style.display=\'none\'">' +
             '</div>' +
           '</div>' +
-          '<div class="dtq-bar">' + numero + (autoria ? ' - ' + autoria : '') + '</div>' +
-          '<div class="descricao">' + (d.descricao||'') + '</div>' +
           '<div class="votos">' +
             '<div class="voto-sim"><div class="voto-label-sim">Voto SIM: ' + (d.sim_label||'') + '</div><div class="voto-conteudo-sim">' + (d.sim_conteudo||'') + '</div></div>' +
             '<div class="voto-nao"><div class="voto-label-nao">Voto NÃO: ' + (d.nao_label||'') + '</div><div class="voto-conteudo-nao">' + (d.nao_conteudo||'') + '</div></div>' +
@@ -1449,7 +1450,7 @@
       btnEdit.style.background = '#2c3e6b';
       btnEdit.textContent = '✏️ Editar Quadro';
       btnEdit.onclick = function() {
-        pd.querySelectorAll('.header-titulo,.descricao,.voto-conteudo-sim,.voto-conteudo-nao,.explicacao-texto,.dtq-bar').forEach(el => {
+        pd.querySelectorAll('.header-titulo div,.voto-conteudo-sim,.voto-conteudo-nao,.explicacao-texto').forEach(el => {
           el.contentEditable = el.contentEditable === 'true' ? 'false' : 'true';
           el.style.outline = el.contentEditable === 'true' ? '2px dashed #f90' : '';
         });
