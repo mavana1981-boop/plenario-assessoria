@@ -2630,21 +2630,24 @@ Não use ### ou ** fora do HTML."""
             texto = r.json()['candidates'][0]['content']['parts'][0]['text']
             return jsonify({'resumo': texto, 'doc_usado': tipo_doc})
         except Exception as e:
-            logger.warning(f"Gemini falhou: {e}")
+            logger.warning(f"Gemini falhou em analisar_destaque: {e} — status: {getattr(getattr(e,'response',None),'status_code','?')}")
 
+    # Fallback Groq — reduz texto para evitar rate limit
     if groq_key:
         try:
+            prompt_groq = prompt.replace(texto_truncado or '', (texto_truncado or '')[:4000]) if texto_truncado else prompt
             r = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
                 json={"model": "llama-3.3-70b-versatile",
-                      "messages": [{"role": "user", "content": prompt}],
+                      "messages": [{"role": "user", "content": prompt_groq}],
                       "max_tokens": 512, "temperature": 0.3},
                 timeout=30
             )
             r.raise_for_status()
             return jsonify({'resumo': r.json()['choices'][0]['message']['content'], 'doc_usado': tipo_doc})
         except Exception as e:
+            logger.error(f"Groq também falhou: {e}")
             return jsonify({'error': str(e)}), 500
 
     return jsonify({'error': 'Nenhuma chave de IA configurada.'}), 500
