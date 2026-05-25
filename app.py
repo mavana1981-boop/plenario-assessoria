@@ -3108,27 +3108,40 @@ def resumo_ementa_impl(data):
                     if ementa_pl:
                         contexto_pl = f"\nO {sigla_real} {num_real}/{ano_real} (referenciado) trata de: {ementa_pl}"
                         logger.info(f"Contexto PL encontrado: {sigla_real} {num_real}/{ano_real}")
+            if not contexto_pl:
+                # API indisponível — usa a referência extraída da ementa para orientar a IA
+                ref_str = f"{sigla_ref} {num_ref}" + (f"/{ano_ref}" if ano_ref else "")
+                contexto_pl = f"\n(Referência ao {ref_str} — busque na ementa o contexto do projeto referenciado)"
         except Exception as e:
             logger.warning(f"Erro buscar PL referenciado: {e}")
+            if num_ref:
+                ref_str = f"{sigla_ref} {num_ref}" + (f"/{ano_ref}" if ano_ref else "")
+                contexto_pl = f"\n(Referência ao {ref_str})"
 
-    if contexto_pl:
-        prompt = f"""Você é um assessor legislativo. O item abaixo é um requerimento que trata de outro projeto de lei.
-Gere um resumo MUITO CURTO (máximo 3 linhas, máximo 180 caracteres) explicando o que o PROJETO REFERENCIADO trata na prática.
-Comece com o tipo de requerimento (ex: "Urgência para o PL que..."). Seja direto e claro.
+    if contexto_pl and eh_req:
+        prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
+Gere um resumo MUITO CURTO (máximo 2-3 linhas, máximo 180 caracteres) do que este REQUERIMENTO pede.
+- Se for urgência: comece com "Urgência para o PL que [explique o PL em poucas palavras]"
+- Se for adiamento/retirada: comece com "Adiamento/Retirada do PL que..."
+- Use a ementa do requerimento e o contexto do PL referenciado
+- Seja direto. Não repita número da proposição.
 
-Proposição: {projeto}
-Ementa do requerimento: {ementa}{contexto_pl}
+Requerimento: {projeto}
+Ementa: {ementa}{contexto_pl}
 
-Responda APENAS com o resumo, sem introdução, sem aspas, sem markdown."""
+Responda APENAS com o resumo, sem introdução, sem aspas."""
     else:
-        prompt = f"""Você é um assessor legislativo. Gere um resumo MUITO CURTO (máximo 3 linhas, máximo 180 caracteres) do que esta proposição trata na prática.
-Seja direto e claro. Não repita o número da proposição. Use linguagem simples.
+        prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
+Gere um resumo MUITO CURTO (máximo 2-3 linhas, máximo 180 caracteres) do que esta proposição trata na prática.
+- Seja direto e claro para parlamentares
+- Não repita o número da proposição
+- Use linguagem simples e objetiva
 
 Proposição: {projeto}
 Autor: {autor}
 Ementa: {ementa}
 
-Responda APENAS com o resumo, sem introdução, sem aspas, sem markdown."""
+Responda APENAS com o resumo, sem introdução, sem aspas."""
 
     # Tenta Gemini primeiro, depois Groq
     for key, url, body_fn in [
