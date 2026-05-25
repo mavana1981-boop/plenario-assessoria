@@ -380,8 +380,7 @@
                   </div>
                 </div>
 
-                <div class="input-group mb-2">
-                  <input type="text" id="numero_pl_{{ item.ordem }}" class="form-control" placeholder="Ex: PL 4363/2025">
+                <div class="mb-2">
                   <button class="btn btn-outline-primary btn-gerar-analise" type="button"
                     data-ordem="{{ item.ordem }}"
                     data-projeto="{{ item.projeto }}"
@@ -1311,6 +1310,82 @@
     }
   }
 
+  function gerarTabelaDestaques(projetoFiltro) {
+    // Coleta todos os destaques analisados na página
+    const destaques = [];
+    document.querySelectorAll('[id^="analise-destaque-"]').forEach(box => {
+      if (box.style.display === 'none' || !box.innerHTML.trim()) return;
+      const tr = box.closest('tr');
+      const btnOrigem = tr ? tr.querySelector('[data-numero]') : null;
+      const numero    = btnOrigem ? btnOrigem.dataset.numero    : '';
+      const descricao = btnOrigem ? btnOrigem.dataset.descricao : '';
+      const autoria   = btnOrigem ? btnOrigem.dataset.autoria   : '';
+      const projeto   = btnOrigem ? btnOrigem.dataset.projeto   : (projetoFiltro || '');
+      const analise   = box.querySelector('div') ? box.querySelector('div').innerText : box.innerText;
+      if (numero) destaques.push({ numero, descricao, autoria, projeto, analise });
+    });
+
+    // Se não encontrou pela div, coleta pelos botões de quadro
+    if (destaques.length === 0) {
+      document.querySelectorAll('[data-numero][onclick*="gerarQuadroDTQ"], .btn-dark[data-numero]').forEach(bq => {
+        destaques.push({
+          numero:    bq.dataset.numero    || '',
+          descricao: bq.dataset.descricao || '',
+          autoria:   bq.dataset.autoria   || '',
+          projeto:   bq.dataset.projeto   || '',
+          analise:   bq.dataset.analise   ? bq.dataset.analise.replace(/<[^>]+>/g,'').substring(0,200) : '',
+        });
+      });
+    }
+
+    const popup = window.open('', '_blank', 'width=1000,height=700,scrollbars=yes,resizable=yes');
+    const pd = popup.document;
+    pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Tabela de Destaques</title></head><body></body></html>'); pd.close();
+    const st = pd.createElement('style');
+    st.textContent = `body{font-family:Arial,sans-serif;padding:24px;background:#fff}
+      h2{color:#1a1a2e;border-bottom:3px solid #1a1a2e;padding-bottom:8px;margin-bottom:16px}
+      table{width:100%;border-collapse:collapse;font-size:12px}
+      th{background:#1a1a2e;color:#fff;padding:8px 10px;text-align:left}
+      td{border:1px solid #ccc;padding:8px 10px;vertical-align:top}
+      tr:nth-child(even){background:#f5f7ff}
+      .num{font-weight:bold;color:#2c3e6b;white-space:nowrap}
+      .analise{font-size:11px;color:#444;max-width:400px}
+      .btn-print{margin-top:16px;padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px}
+      @media print{.btn-print{display:none}}`;
+    pd.head.appendChild(st);
+
+    const h2 = pd.createElement('h2');
+    h2.textContent = `Tabela de Destaques — ${projetoFiltro || 'Todos'}`;
+    pd.body.appendChild(h2);
+
+    if (destaques.length === 0) {
+      const p = pd.createElement('p'); p.textContent = 'Nenhum destaque analisado encontrado.';
+      pd.body.appendChild(p);
+    } else {
+      const tbl = pd.createElement('table');
+      const thead = pd.createElement('thead');
+      thead.innerHTML = '<tr><th>#</th><th>Número</th><th>Autoria</th><th>Descrição</th><th>Análise resumida</th></tr>';
+      tbl.appendChild(thead);
+      const tbody = pd.createElement('tbody');
+      destaques.forEach((d, i) => {
+        const tr = pd.createElement('tr');
+        tr.innerHTML = `<td>${i+1}</td>
+          <td class="num">${d.numero}</td>
+          <td>${d.autoria||'—'}</td>
+          <td>${d.descricao||'—'}</td>
+          <td class="analise">${(d.analise||'').substring(0,250)}${d.analise && d.analise.length>250?'…':''}</td>`;
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      pd.body.appendChild(tbl);
+    }
+
+    const btnPr = pd.createElement('button'); btnPr.className = 'btn-print';
+    btnPr.textContent = '🖨️ Imprimir / Salvar PDF';
+    btnPr.onclick = () => popup.print();
+    pd.body.appendChild(btnPr);
+  }
+
   async function gerarQuadroDTQ(btn) {
     const projeto   = btn.dataset.projeto;
     const numero    = btn.dataset.numero;
@@ -1366,6 +1441,21 @@
       btnPrint.textContent = '🖨️ Imprimir / Salvar PDF';
       btnPrint.onclick = function() { popup.print(); };
       pd.body.appendChild(btnPrint);
+
+      // Botão editar quadro — torna campos contenteditable
+      const btnEdit = pd.createElement('button');
+      btnEdit.className = 'btn-imprimir';
+      btnEdit.style.marginLeft = '8px';
+      btnEdit.style.background = '#2c3e6b';
+      btnEdit.textContent = '✏️ Editar Quadro';
+      btnEdit.onclick = function() {
+        pd.querySelectorAll('.header-titulo,.descricao,.voto-conteudo-sim,.voto-conteudo-nao,.explicacao-texto,.dtq-bar').forEach(el => {
+          el.contentEditable = el.contentEditable === 'true' ? 'false' : 'true';
+          el.style.outline = el.contentEditable === 'true' ? '2px dashed #f90' : '';
+        });
+        btnEdit.textContent = btnEdit.textContent.includes('Editar') ? '✅ Concluir edição' : '✏️ Editar Quadro';
+      };
+      pd.body.appendChild(btnEdit);
 
     } catch(e) {
       alert('Erro: ' + e.message);
@@ -1629,9 +1719,11 @@
             const dRes = document.createElement('div');
             dRes.innerHTML = j2.resumo;
             inner.appendChild(dRes);
-            // Botão criar quadro
+            // Botão criar quadro + editar análise + tabela global
             const dBtn = document.createElement('div');
-            dBtn.className = 'mt-2';
+            dBtn.className = 'mt-2 d-flex gap-2 flex-wrap';
+
+            // Botão Criar Quadro DTQ
             const bq = document.createElement('button');
             bq.className = 'btn btn-sm btn-dark';
             bq.textContent = '🖼️ Criar Quadro do DTQ';
@@ -1644,6 +1736,36 @@
             bq.dataset.labelDoc  = doc.label;
             bq.onclick = function() { gerarQuadroDTQ(this); };
             dBtn.appendChild(bq);
+
+            // Botão Editar Análise
+            const bEdit = document.createElement('button');
+            bEdit.className = 'btn btn-sm btn-outline-secondary';
+            bEdit.textContent = '✏️ Editar Análise';
+            bEdit.onclick = function() {
+              const dRes2 = inner.querySelector('div');
+              if (!dRes2) return;
+              const ta = document.createElement('textarea');
+              ta.className = 'form-control mt-1'; ta.rows = 8; ta.style.fontSize = '0.8rem';
+              ta.value = dRes2.innerHTML;
+              const bSave = document.createElement('button');
+              bSave.className = 'btn btn-sm btn-success mt-1'; bSave.textContent = '💾 Salvar edição';
+              bSave.onclick = () => {
+                dRes2.innerHTML = ta.value;
+                bq.dataset.analise = ta.value;
+                ta.remove(); bSave.remove(); bEdit.textContent = '✏️ Editar Análise';
+              };
+              inner.appendChild(ta); inner.appendChild(bSave);
+              bEdit.textContent = '↩️ Cancelar';
+            };
+            dBtn.appendChild(bEdit);
+
+            // Botão Tabela de Destaques
+            const bTab = document.createElement('button');
+            bTab.className = 'btn btn-sm btn-outline-primary';
+            bTab.textContent = '📋 Tabela de Destaques';
+            bTab.onclick = function() { gerarTabelaDestaques(projeto); };
+            dBtn.appendChild(bTab);
+
             inner.appendChild(dBtn);
             box.style.display = 'block';
           } else {
