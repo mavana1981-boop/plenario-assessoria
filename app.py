@@ -1728,7 +1728,7 @@ Seja detalhado e técnico. Máximo 500 palavras. Não use ### ou ** no texto, ap
     if gemini_key:
         try:
             r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={gemini_key}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
                 headers={"Content-Type": "application/json"},
                 json={
                     "contents": [{"parts": [{"text": prompt}]}],
@@ -2324,7 +2324,7 @@ Com base na descrição e análise acima, gere APENAS um JSON válido (sem markd
 Responda APENAS com o JSON, sem ```json, sem comentários."""
 
     for key, model, url_ai in [
-        (gemini_key, None, f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={gemini_key}"),
+        (gemini_key, None, f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}"),
         (groq_key,   "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1/chat/completions")
     ]:
         if not key:
@@ -2570,7 +2570,7 @@ Não use ### ou ** fora do HTML."""
     if gemini_key:
         try:
             r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={gemini_key}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
                 headers={"Content-Type": "application/json"},
                 json={"contents": [{"parts": [{"text": prompt}]}],
                       "generationConfig": {"maxOutputTokens": 512, "temperature": 0.3}},
@@ -2987,7 +2987,7 @@ Proposição: {resumo[:300]}"""
 
     for key, url, body_fn in [
         (gemini_key,
-         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={gemini_key}",
+         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
          lambda: {"contents":[{"parts":[{"text":prompt_kw}]}],"generationConfig":{"maxOutputTokens":20,"temperature":0.1}}),
         (groq_key,
          "https://api.groq.com/openai/v1/chat/completions",
@@ -3146,7 +3146,7 @@ Responda APENAS com o resumo, sem introdução, sem aspas."""
     # Tenta Gemini primeiro, depois Groq
     for key, url, body_fn in [
         (gemini_key,
-         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={gemini_key}",
+         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
          lambda: {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 100, "temperature": 0.2}}),
         (groq_key,
          "https://api.groq.com/openai/v1/chat/completions",
