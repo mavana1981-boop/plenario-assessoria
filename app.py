@@ -2133,8 +2133,25 @@ def buscar_documentos_disponiveis(id_proposicao):
                     })
                     vistos.add(url_doc)
                     break
+        # Fallback: se scraping falhou (403 etc), adiciona link da ficha de tramitação
+        if not any(d['tipo'] == 'Avulso' for d in docs):
+            docs.append({
+                'label': '📄 Texto da Proposição (ficha de tramitação)',
+                'url':   url_tram,
+                'filename': '',
+                'tipo': 'Avulso',
+                'data': '',
+            })
     except Exception as e:
         logger.warning(f"Erro ao buscar avulso: {e}")
+        url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}"
+        docs.append({
+            'label': '📄 Texto da Proposição (ficha de tramitação)',
+            'url':   url_tram,
+            'filename': '',
+            'tipo': 'Avulso',
+            'data': '',
+        })
 
     # 2. Busca todos os documentos da página de pareceres/substitutivos
     try:
