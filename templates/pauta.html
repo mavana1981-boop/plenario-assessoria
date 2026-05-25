@@ -389,7 +389,7 @@
                     data-relator="{{ item.relator }}"
                     data-id-principal="{{ item.id_principal }}"
                     onclick="gerarAnalise('{{ item.ordem }}', this)">
-                    <img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">
+                    <img src="/static/logo_gemini.svg" alt="Gemini" style="width:16px;height:16px;vertical-align:middle;" class="me-2">
                     Gerar Análise
                   </button>
                 </div>
@@ -839,7 +839,7 @@
       } catch(e) {}
 
       btn.disabled = false;
-      btn.innerHTML = '<img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">Gerar Análise';
+      btn.innerHTML = '<img src="/static/logo_gemini.svg" alt="Gemini" style="width:16px;height:16px;vertical-align:middle;" class="me-2">Gerar Análise';
 
       // Abre modal de seleção de documento
       await selecionarDocEAnalisar(ordem, btn, id_principal, projeto, ementa, autor, relator, docs);
@@ -927,7 +927,7 @@
             alert('Erro ao conectar com a IA: ' + e.message);
           } finally {
             if (overlay) overlay.style.display = "none";
-            if (btnOrig) { btnOrig.disabled=false; btnOrig.innerHTML='<img src="/static/logo_gpt.png" alt="GPT" class="icon-gpt me-2">Gerar Análise'; }
+            if (btnOrig) { btnOrig.disabled=false; btnOrig.innerHTML='<img src="/static/logo_gemini.svg" alt="Gemini" style="width:16px;height:16px;vertical-align:middle;" class="me-2">Gerar Análise'; }
             resolve(docSel);
           }
         });
