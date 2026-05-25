@@ -1670,36 +1670,86 @@ def analisar_ia():
     autor        = data.get('autor', '')
     relator      = data.get('relator', '')
     id_principal = data.get('id_principal', '')
+    url_doc_sel  = data.get('url_documento', '')
+    label_doc    = data.get('label_documento', '')
 
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     groq_key   = os.environ.get('GROQ_API_KEY', '')
 
-    # Busca texto completo do último PRLP ou Substitutivo de plenário
+    # ── Tratamento especial para REQ de Urgência ──────────────────────────
+    # Analisa o PL referenciado, não o requerimento em si
+    siglas_req = ('REQ', 'RQS', 'RQU', 'REC')
+    proj_base  = projeto.split(' ao ')[0].strip()
+    eh_req     = any(proj_base.upper().startswith(s) for s in siglas_req)
+
+    if eh_req:
+        # Extrai referência ao PL na ementa ou projeto
+        id_pl_ref = None
+        projeto_pl = projeto
+        ementa_pl  = ementa
+        autor_pl   = autor
+        relator_pl = relator
+
+        m_pl = None
+        for txt in [ementa, projeto]:
+            m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL|PLC)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', txt, re.IGNORECASE)
+            if m_pl: break
+            m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL|PLC)\s+([\d.]+)[/\-](\d{4})', txt, re.IGNORECASE)
+            if m_pl: break
+
+        if m_pl:
+            sigla_ref = m_pl.group(1).upper()
+            num_ref   = m_pl.group(2).replace('.', '')
+            ano_ref   = m_pl.group(3)
+            try:
+                r_api = requests.get(
+                    f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
+                    headers={'Accept': 'application/json'}, timeout=8
+                )
+                if r_api.ok:
+                    dados = r_api.json().get('dados', [])
+                    if dados:
+                        id_pl_ref  = str(dados[0].get('id', ''))
+                        ementa_pl  = dados[0].get('ementa', ementa)
+                        projeto_pl = f"{sigla_ref} {num_ref}/{ano_ref}"
+                        logger.info(f"REQ → analisando {projeto_pl} (id={id_pl_ref})")
+            except Exception as e:
+                logger.warning(f"Erro buscar PL do REQ: {e}")
+
+        # Usa dados do PL referenciado para a análise
+        projeto      = projeto_pl
+        ementa       = ementa_pl
+        id_principal = id_pl_ref or id_principal
+        nota_req     = f"<p><em>Este requerimento solicita <strong>urgência</strong> para o {projeto_pl}.</em></p><br>"
+    else:
+        nota_req = ''
+
+    # ── Busca último documento disponível ────────────────────────────────
     doc_plenario = None
     parecer_info = None
-    if id_principal:
+
+    # Se usuário selecionou um documento específico, usa ele
+    if url_doc_sel:
+        texto_sel = extrair_texto_documento(url_doc_sel) or ''
+        if texto_sel and not texto_sel.startswith('[PDF escaneado'):
+            doc_plenario = {'tipo': label_doc or 'Documento selecionado', 'numero': '', 'data': '', 'texto': texto_sel[:8000], 'url_pdf': url_doc_sel}
+    
+    if not doc_plenario and id_principal:
         doc_plenario = buscar_texto_prlp_ou_sbt(id_principal)
         if not doc_plenario:
             parecer_info = buscar_ultimo_parecer(id_principal)
 
-    # Monta contexto do documento para o prompt
+    # Monta contexto
     if doc_plenario and doc_plenario.get('texto'):
-        contexto_doc = f"""
-Documento de referência: {doc_plenario['tipo']} de {doc_plenario['data']}
-
-TEXTO COMPLETO DO DOCUMENTO:
-{doc_plenario['texto']}
-
----
-Faça a análise com base no texto acima, não na ementa original."""
         num_str   = f" nº {doc_plenario['numero']}" if doc_plenario.get('numero') else ''
-        ref_linha = f"{doc_plenario['tipo']}{num_str} de {doc_plenario.get('data','')}"
+        ref_linha = f"{doc_plenario['tipo']}{num_str}" + (f" de {doc_plenario['data']}" if doc_plenario.get('data') else '')
+        contexto_doc = f"\nDocumento de referência: {ref_linha}\n\nTEXTO:\n{doc_plenario['texto']}\n\n---\nFaça a análise com base no texto acima."
     elif parecer_info:
-        contexto_doc = f"\nDocumento de referência: {parecer_info['tipo']} de {parecer_info.get('data','')}"
-        ref_linha = f"{parecer_info['tipo']} de {parecer_info.get('data','')}"
+        ref_linha    = f"{parecer_info['tipo']} de {parecer_info.get('data','')}"
+        contexto_doc = f"\nDocumento de referência: {ref_linha}"
     else:
+        ref_linha    = 'texto original da proposição'
         contexto_doc = ''
-        ref_linha = 'texto original da proposição'
 
     prompt = f"""Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil.
 
@@ -1712,7 +1762,7 @@ Faça a análise com base no texto acima, não na ementa original."""
 Gere uma nota técnica em HTML com EXATAMENTE este formato:
 
 <p><strong>Nota Técnica: Análise do {projeto}</strong></p>
-<p><em style="color:red;">Análise baseada em: {ref_linha}</em></p>
+{nota_req}<p><em style="color:red;">Análise baseada em: {ref_linha}</em></p>
 <br>
 <p><strong>Objetivo da Proposição</strong><br>[texto detalhado]</p>
 <br>
