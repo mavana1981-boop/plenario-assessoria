@@ -2368,6 +2368,9 @@ def gerar_quadro_dtq():
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     groq_key   = os.environ.get('GROQ_API_KEY', '')
 
+    # Extrai texto limpo da análise já feita
+    analise_texto = re.sub(r'<[^>]+>', ' ', analise_html).strip()
+
     # Detecta se é destaque de emenda
     descricao_upper = descricao.upper()
     eh_emenda = any(p in descricao_upper for p in ['EMENDA', 'EMD', 'SUBEMENDA'])
