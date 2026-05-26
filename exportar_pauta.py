@@ -257,44 +257,78 @@ def exportar_pauta(evento_id):
             sSubtitle))
         story.append(HRFlowable(width="100%", thickness=1.5, color=C_VERDE, spaceAfter=8))
 
+        # ── Estilos da tabela resumo ──
+        sThead = ParagraphStyle("sThead", parent=SS["Normal"],
+            fontName="Helvetica-Bold", fontSize=9, leading=11,
+            alignment=TA_CENTER, textColor=C_AZUL_TABELA)
+        sNum = ParagraphStyle("sNum", parent=SS["Normal"],
+            fontSize=9, leading=11, alignment=TA_CENTER)
+        sEmenta = ParagraphStyle("sEmenta", parent=SS["Normal"],
+            fontSize=8.5, leading=12, alignment=TA_CENTER, wordWrap="CJK")
+        sOri_tab = ParagraphStyle("sOri_tab", parent=SS["Normal"],
+            fontName="Helvetica-Bold", fontSize=9, leading=11,
+            alignment=TA_CENTER)
+        sProjTitulo = ParagraphStyle("sProjTitulo", parent=SS["Normal"],
+            fontName="Helvetica-Bold", fontSize=9.5, leading=12,
+            alignment=TA_CENTER)
+        sProjResumo = ParagraphStyle("sProjResumo", parent=SS["Normal"],
+            fontName="Helvetica-Oblique", fontSize=7.5, leading=10,
+            textColor=C_VERDE, alignment=TA_CENTER)
+
         # ── Tabela resumo ──
         story.append(Paragraph("Itens da Pauta", sBold))
         story.append(Spacer(1, 4))
 
         thead = [
-            Paragraph("<b>#</b>", sNormal),
-            Paragraph("<b>Proposição</b>", sNormal),
-            Paragraph("<b>Ementa</b>", sNormal),
-            Paragraph("<b>Orientação</b>", sNormal),
+            Paragraph("<b>#</b>", sThead),
+            Paragraph("<b>Proposição</b>", sThead),
+            Paragraph("<b>Ementa</b>", sThead),
+            Paragraph("<b>Orientação</b>", sThead),
         ]
         tdata = [thead]
         for it in itens:
             cor_t, cor_bg = cor_tipo(it.get("projeto",""))
             ori = (it.get("orientacao","") or "").strip().upper()
             cor_ori, _ = CORES_ORI.get(ori, (C_CINZA, C_CINZA_LT))
+
+            # Coluna proposição: título em negrito colorido + resumo IA menor em verde
+            proj_titulo = it.get("projeto","—")
+            resumo_ia_tab = _strip_html(it.get("resumo_ia","") or "")
+            from reportlab.platypus import KeepInFrame
+            cell_proj = []
+            cell_proj.append(Paragraph(proj_titulo,
+                ParagraphStyle("ptt"+str(it.get("ordem",0)),
+                    parent=sProjTitulo, textColor=cor_t)))
+            if resumo_ia_tab:
+                cell_proj.append(Spacer(1, 2))
+                cell_proj.append(Paragraph(resumo_ia_tab, sProjResumo))
+
             tdata.append([
-                Paragraph(str(it.get("ordem","—")), sNormal),
-                Paragraph(
-                    it.get("projeto","—") + (("\n" + it.get("resumo_ia","")) if it.get("resumo_ia") else ""),
-                    ParagraphStyle("pt"+str(it.get("ordem",0)), parent=sNormal, fontName="Helvetica-Bold", textColor=cor_t)),
-                Paragraph(_strip_html(it.get("ementa","—") or "—"), sNormal),
+                Paragraph(str(it.get("ordem","—")), sNum),
+                cell_proj,
+                Paragraph(_strip_html(it.get("ementa","—") or "—"), sEmenta),
                 Paragraph(ori or "—",
-                    ParagraphStyle("po"+str(it.get("ordem",0)), parent=sNormal, fontName="Helvetica-Bold", textColor=cor_ori)),
+                    ParagraphStyle("ot"+str(it.get("ordem",0)),
+                        parent=sOri_tab, textColor=cor_ori)),
             ])
 
-        tbl = Table(tdata, colWidths=[1.2*cm, 4.2*cm, 9.0*cm, 2.4*cm], repeatRows=1)
+        tbl = Table(tdata, colWidths=[1.0*cm, 4.0*cm, 9.2*cm, 2.4*cm], repeatRows=1)
         tbl_style = [
-            ("BACKGROUND", (0,0), (-1,0), colors.white),
-            ("TEXTCOLOR",  (0,0), (-1,0), C_AZUL_TABELA),
-            ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
-            ("LINEBELOW",  (0,0), (-1,0), 1.5, C_AZUL_TABELA),
-            ("FONTSIZE",   (0,0), (-1,-1), 8.5),
-            ("GRID",       (0,0), (-1,-1), 0.3, colors.HexColor("#cccccc")),
-            ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, C_CINZA_LT]),
-            ("VALIGN",     (0,0), (-1,-1), "TOP"),
-            ("TOPPADDING", (0,0), (-1,-1), 4),
-            ("BOTTOMPADDING",(0,0),(-1,-1), 4),
-            ("LEFTPADDING", (0,0), (-1,-1), 5),
+            # Cabeçalho
+            ("BACKGROUND",    (0,0), (-1,0), colors.white),
+            ("LINEBELOW",     (0,0), (-1,0), 1.5, C_AZUL_TABELA),
+            # Grid
+            ("GRID",          (0,0), (-1,-1), 0.3, colors.HexColor("#cccccc")),
+            ("ROWBACKGROUNDS",(0,1), (-1,-1), [colors.white, C_CINZA_LT]),
+            # Alinhamento vertical MIDDLE para todas as células
+            ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
+            # Centralização horizontal (via Paragraph com TA_CENTER)
+            ("ALIGN",         (0,0), (-1,-1), "CENTER"),
+            # Padding
+            ("TOPPADDING",    (0,0), (-1,-1), 5),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+            ("LEFTPADDING",   (0,0), (-1,-1), 4),
+            ("RIGHTPADDING",  (0,0), (-1,-1), 4),
         ]
         tbl.setStyle(TableStyle(tbl_style))
         story.append(tbl)
