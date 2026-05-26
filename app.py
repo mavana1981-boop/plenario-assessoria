@@ -3256,6 +3256,41 @@ def debug_ordem(evento_id):
         resultado['tb'] = traceback.format_exc()[-500:]
     return jsonify(resultado)
 
+@app.route('/debug_pdf_texto/<int:evento_id>')
+@login_required
+def debug_pdf_texto(evento_id):
+    """Mostra o texto bruto extraído do PDF de pauta."""
+    try:
+        from bs4 import BeautifulSoup
+        import pdfplumber
+        url = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=12)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        pdf_url = None
+        for a in soup.find_all('a', href=True):
+            txt = a.get_text(strip=True).lower()
+            href = a['href']
+            if 'codteor' in href and txt == 'pauta':
+                pdf_url = camara_url(href)
+                pdf_url += ('&' if '?' in pdf_url else '?') + 'tipo=PDF'
+                break
+        if not pdf_url:
+            return jsonify({'erro': 'PDF não encontrado'})
+        rp = requests.get(pdf_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
+        with pdfplumber.open(BytesIO(rp.content)) as pdf:
+            texto = '\n'.join(p.extract_text() or '' for p in pdf.pages)
+        # Filtra só linhas relevantes (com número no início ou tipo de proposição)
+        linhas = texto.split('\n')
+        relevantes = []
+        for i, l in enumerate(linhas):
+            l2 = l.strip()
+            if re.match(r'^\d{1,2}\.', l2) or re.search(r'PROJETO|REQUERIMENTO|PROPOSTA|MEDIDA|PL |PEC |PLP |REQ ', l2, re.I):
+                relevantes.append({'i': i, 'txt': l2[:200]})
+        return jsonify({'total_linhas': len(linhas), 'relevantes': relevantes, 'primeiras_100': linhas[:100]})
+    except Exception as e:
+        import traceback
+        return jsonify({'erro': str(e), 'tb': traceback.format_exc()[-1000:]})
+
 @app.route('/debug_pauta_full/<int:evento_id>')
 @login_required
 def debug_pauta_full(evento_id):
