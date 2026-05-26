@@ -72,8 +72,14 @@ def data_ptbr(dt_str):
         return "DATA DESCONHECIDA"
 
 def _hex(color):
-    """Retorna hex sem prefixo, ex: '1a6b3a'"""
-    return '%02x%02x%02x' % (int(color.red*255), int(color.green*255), int(color.blue*255))
+    """Retorna string hex pura ex: '1a6b3a' para uso em tags XML do ReportLab"""
+    try:
+        r = int(round(color.red * 255))
+        g = int(round(color.green * 255))
+        b = int(round(color.blue * 255))
+        return '%02x%02x%02x' % (r, g, b)
+    except Exception:
+        return '000000'
 
 def _strip_html(s):
     txt = re.sub(r"<[^>]+>", " ", str(s or ""))
@@ -271,9 +277,11 @@ def exportar_pauta(evento_id):
             cor_ori, _ = CORES_ORI.get(ori, (C_CINZA, C_CINZA_LT))
             tdata.append([
                 Paragraph(str(it.get("ordem","—")), sNormal),
-                Paragraph(f'<font color="#{cor_t}"><b>{it.get("projeto","—")}</b></font>', sNormal),
+                Paragraph(it.get("projeto","—"),
+                    ParagraphStyle("pt"+str(i), parent=sNormal, fontName="Helvetica-Bold", textColor=cor_t)),
                 Paragraph(_strip_html(it.get("ementa","—"))[:160] + "…", sNormal),
-                Paragraph(f'<font color="#{cor_ori}"><b>{ori or "—"}</b></font>', sNormal),
+                Paragraph(ori or "—",
+                    ParagraphStyle("po"+str(i), parent=sNormal, fontName="Helvetica-Bold", textColor=cor_ori)),
             ])
 
         tbl = Table(tdata, colWidths=[1.2*cm, 4.2*cm, 9.0*cm, 2.4*cm], repeatRows=1)
@@ -306,7 +314,7 @@ def exportar_pauta(evento_id):
 
             # Cabeçalho do item: fundo colorido por tipo
             hdr_data = [[
-                Paragraph(f'<font color="white"><b>Item {it.get("ordem","—")} — {projeto}</b></font>',
+                Paragraph(f'<b>Item {it.get("ordem","—")} — {projeto}</b>',
                            ParagraphStyle("hdr", parent=SS["Normal"],
                                fontName="Helvetica-Bold", fontSize=11, leading=14,
                                textColor=colors.white)),
@@ -317,8 +325,7 @@ def exportar_pauta(evento_id):
                 ("TOPPADDING", (0,0), (-1,-1), 6),
                 ("BOTTOMPADDING",(0,0),(-1,-1), 6),
                 ("LEFTPADDING", (0,0), (-1,-1), 8),
-                ("ROUNDEDCORNERS", [4,4,0,0]),
-            ]))
+                ]))
             bloco.append(hdr_tbl)
 
             # Info autor/relator/situação — fundo claro
@@ -356,7 +363,8 @@ def exportar_pauta(evento_id):
             if ori:
                 bloco.append(Spacer(1, 5))
                 ori_tbl = Table([[
-                    Paragraph(f'<font color="#{cor_ori}"><b>ORIENTAÇÃO: {ori}</b></font>', sOri)
+                    Paragraph(f"ORIENTAÇÃO: {ori}",
+                        ParagraphStyle("sOri2", parent=sOri, textColor=cor_ori))
                 ]], colWidths=[doc.width])
                 ori_tbl.setStyle(TableStyle([
                     ("BACKGROUND", (0,0), (-1,-1), cor_ori_bg),
