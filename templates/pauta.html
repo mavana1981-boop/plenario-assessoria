@@ -195,7 +195,8 @@
           <div class="item-header" data-bs-toggle="collapse" data-bs-target="#col-{{ item.ordem }}-{{ item.id_principal }}" aria-expanded="false">
             <div>
               <i class="fas fa-file-alt text-primary me-2"></i>
-              Item {{ item.ordem }} — <strong>{{ item.projeto }}</strong> — <strong>Autor:</strong> {{ item.autor }}
+              Item {{ item.ordem }} — <strong>{{ item.projeto }}</strong> — <strong>Autor:</strong>
+              <span class="span-autor" id="autor-{{ item.id_principal }}" data-id="{{ item.id_principal }}">{{ item.autor }}</span>
               <span class="badge secao-badge 
                 {{ 'bg-primary' if item.status in ['Proposta em Análise', 'Propostas em Análise'] else 
                    'bg-info' if item.status in ['Proposta Prevista', 'Propostas Previstas'] else 
@@ -206,7 +207,8 @@
               </span>
               <div class="item-info mt-1">
                 <strong>Situação:</strong> {{ item.situacao | default('N/D') }} &nbsp;&nbsp;
-                <strong>Relator:</strong> {{ item.relator }}
+                <strong>Relator:</strong>
+                <span class="span-relator" id="relator-{{ item.id_principal }}" data-id="{{ item.id_principal }}">{{ item.relator }}</span>
               </div>
               <div class="item-info mt-1 text-muted fst-italic"
                    style="font-size:0.82rem; width:100%; white-space:normal; word-break:break-word;"
@@ -679,6 +681,69 @@
         }
       }
     }
+    // Enriquece autor e relator com partido via API da Câmara (no browser)
+    async function enriquecerPartidos() {
+      const itens = window.ITENS_DATA || [];
+      for (const item of itens) {
+        const id = item.id_principal;
+        const spanAutor   = document.getElementById('autor-' + id);
+        const spanRelator = document.getElementById('relator-' + id);
+
+        // Só busca se não tem partido já
+        const temPartido = txt => /\([A-Z]{2,}-[A-Z]{2}\)/.test(txt || '');
+
+        if (spanAutor && !temPartido(spanAutor.textContent)) {
+          try {
+            const r = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${id}/autores`,
+              {headers: {'Accept': 'application/json'}});
+            if (r.ok) {
+              const dados = (await r.json()).dados || [];
+              const autores = dados.map(a => {
+                const p = a.siglaPartido || ''; const uf = a.siglaUf || '';
+                const suf = p && uf ? `(${p}-${uf})` : p ? `(${p})` : '';
+                return suf ? `${a.nome} ${suf}` : a.nome;
+              }).filter(Boolean);
+              if (autores.length > 0) {
+                spanAutor.textContent = autores.length > 3
+                  ? autores.slice(0,3).join(', ') + ' e outros.'
+                  : autores.join(', ');
+              }
+            }
+          } catch(e) {}
+        }
+
+        if (spanRelator && !temPartido(spanRelator.textContent)) {
+          try {
+            const r = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${id}/tramitacoes?itens=10&ordem=DESC`,
+              {headers: {'Accept': 'application/json'}});
+            if (r.ok) {
+              const trams = (await r.json()).dados || [];
+              for (const t of trams) {
+                const desp = (t.despacho || '').toLowerCase();
+                if (desp.includes('relator')) {
+                  const mNome = t.despacho.match(/Dep\.\s+([A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+)+)/);
+                  if (mNome) {
+                    const nome = mNome[1];
+                    const rDep = await fetch(`https://dadosabertos.camara.leg.br/api/v2/deputados?nome=${encodeURIComponent(nome)}&itens=1`,
+                      {headers: {'Accept': 'application/json'}});
+                    if (rDep.ok) {
+                      const deps = (await rDep.json()).dados || [];
+                      if (deps[0]) {
+                        const p = deps[0].siglaPartido || ''; const uf = deps[0].siglaUf || '';
+                        const suf = p && uf ? `(${p}-${uf})` : '';
+                        spanRelator.textContent = suf ? `${nome} ${suf}` : nome;
+                      }
+                    }
+                  }
+                  break;
+                }
+              }
+            }
+          } catch(e) {}
+        }
+      }
+    }
+    setTimeout(enriquecerPartidos, 1500);
     setTimeout(carregarTodosResumos, 1000);
       document.addEventListener('change', async (e) => {
         const sel = e.target.closest('.select-responsavel');
