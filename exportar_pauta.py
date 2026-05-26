@@ -88,28 +88,35 @@ def _strip_html(s):
 # ── Cabeçalho / Rodapé ─────────────────────────────────────────────────────
 def _header_footer(canvas, doc, logos, header_text):
     w, h = A4
-    logo_min, logo_opo = logos
+    logo_min, logo_opo, logo_novo, logo_pl = logos
     canvas.saveState()
 
     # ── Cabeçalho ──
     cab_h = 1.8*cm
-    # fundo branco cabeçalho
     canvas.setFillColor(colors.white)
     canvas.rect(0, h - cab_h, w, cab_h, fill=1, stroke=0)
-    # linha verde
     canvas.setStrokeColor(C_VERDE)
     canvas.setLineWidth(1.5)
     canvas.line(0, h - cab_h, w, h - cab_h)
-    # logos lado a lado à esquerda
-    lw, lh = 2.0*cm, 1.2*cm
-    y_logo = h - cab_h + (cab_h - lh)/2
-    for path, xpos in [(logo_min, 0.8*cm), (logo_opo, 0.8*cm + lw + 0.2*cm)]:
+
+    # 4 logos lado a lado — tamanho fixo rigoroso (sem preserveAspectRatio)
+    lw, lh = 1.8*cm, 1.1*cm
+    gap = 0.15*cm
+    x_start = 0.5*cm
+    y_logo = h - cab_h + (cab_h - lh) / 2
+    for path, xpos in [
+        (logo_min,  x_start),
+        (logo_opo,  x_start + (lw + gap)),
+        (logo_novo, x_start + (lw + gap) * 2),
+        (logo_pl,   x_start + (lw + gap) * 3),
+    ]:
         if path and os.path.exists(path):
             try:
                 canvas.drawImage(path, xpos, y_logo, width=lw, height=lh,
-                                 preserveAspectRatio=True, mask='auto')
+                                 preserveAspectRatio=False, mask='auto')
             except Exception:
                 pass
+
     # texto central
     canvas.setFillColor(C_AZUL)
     canvas.setFont("Helvetica-Bold", 9)
@@ -123,16 +130,22 @@ def _header_footer(canvas, doc, logos, header_text):
     canvas.setStrokeColor(C_VERDE)
     canvas.setLineWidth(1)
     canvas.line(0, rod_h, w, rod_h)
-    # mesmos logos no rodapé
-    y_rod = (rod_h - lh)/2
-    for path, xpos in [(logo_min, 0.8*cm), (logo_opo, 0.8*cm + lw + 0.2*cm)]:
+
+    lw_r, lh_r = 1.6*cm, 1.0*cm
+    y_rod = (rod_h - lh_r) / 2
+    for path, xpos in [
+        (logo_min,  0.4*cm),
+        (logo_opo,  0.4*cm + (lw_r + gap)),
+        (logo_novo, 0.4*cm + (lw_r + gap) * 2),
+        (logo_pl,   0.4*cm + (lw_r + gap) * 3),
+    ]:
         if path and os.path.exists(path):
             try:
-                canvas.drawImage(path, xpos, y_rod, width=lw, height=lh,
-                                 preserveAspectRatio=True, mask='auto')
+                canvas.drawImage(path, xpos, y_rod, width=lw_r, height=lh_r,
+                                 preserveAspectRatio=False, mask='auto')
             except Exception:
                 pass
-    # texto rodapé
+
     canvas.setFillColor(C_CINZA)
     canvas.setFont("Helvetica", 7.5)
     canvas.drawCentredString(w/2, 0.55*cm,
@@ -203,8 +216,10 @@ def exportar_pauta(evento_id):
             return "Nenhum item encontrado para esta pauta.", 200
 
         static_path = os.path.join(current_app.root_path, "static")
-        logo_min = os.path.join(static_path, "logo_minoria.png")
-        logo_opo = os.path.join(static_path, "logo_oposicao.png")
+        logo_min  = os.path.join(static_path, "logo_minoria.png")
+        logo_opo  = os.path.join(static_path, "logo_oposicao.png")
+        logo_novo = os.path.join(static_path, "logo_novo.png")
+        logo_pl   = os.path.join(static_path, "logo_pl.png")
 
         # ── Estilos ──
         SS = getSampleStyleSheet()
@@ -244,7 +259,7 @@ def exportar_pauta(evento_id):
                       doc.width, doc.height - 0.3*cm, id="normal")
         doc.addPageTemplates([PageTemplate(
             id="main", frames=[frame],
-            onPage=lambda c, d: _header_footer(c, d, (logo_min, logo_opo), header_text)
+            onPage=lambda c, d: _header_footer(c, d, (logo_min, logo_opo, logo_novo, logo_pl), header_text)
         )])
 
         story = []
