@@ -168,12 +168,14 @@
         data-bs-toggle="modal" data-bs-target="#modalMensagens">
         <i class="fab fa-whatsapp me-2"></i>Mensagens Plenário
       </button>
-      <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-monitorar"
-        onclick="toggleMonitoramento()"
-        style="background:linear-gradient(135deg,#6c757d,#495057);">
-        <i class="fas fa-satellite-dish me-2"></i><span id="btn-monitorar-label">Monitorar</span>
-      </button>
-      <small id="monitor-status-txt" class="text-muted ms-1" style="font-size:0.75rem;"></small>
+      <span class="d-inline-flex align-items-center gap-1 mb-3 ms-2">
+        <button class="btn btn-sm text-white" id="btn-monitorar"
+          onclick="toggleMonitoramento()"
+          style="background:linear-gradient(135deg,#6c757d,#495057);">
+          <i class="fas fa-satellite-dish me-2"></i><span id="btn-monitorar-label">Monitorar</span>
+        </button>
+        <small id="monitor-status-txt" class="text-muted" style="font-size:0.72rem;white-space:nowrap;"></small>
+      </span>
       {% endif %}
       <button class="btn btn-sm mb-3 ms-2 text-white"
         style="background:linear-gradient(135deg,#B8860B,#DAA520);"
