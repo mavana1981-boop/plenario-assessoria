@@ -2121,6 +2121,8 @@ const ORI_CORES  = {
 
 function grupoDoUsuario() {
   const un = "{{ current_user.username }}".toUpperCase();
+  // Usuários com acesso a todas as orientações
+  if (un === 'LUISA.MARRECO') return 'todos';
   if (USER_CATEGORIA === 'restrito') {
     if (un === 'PL')   return 'PL';
     if (un === 'NOVO') return 'NOVO';
