@@ -2695,249 +2695,241 @@ async function exportarOrientacoesPDF() {
 <script>
 (function() {
   // ── Agente de Monitoramento da Pauta ──────────────────────────────────────
-  // Polling no browser (não passa pelo Railway) da API da Câmara
-  // Dispara popup quando item muda para "Em Análise" ou "Em Votação"
+  // Faz polling via rota interna /monitor_status que tenta múltiplas fontes.
+  // Dispara popup apenas uma vez por status novo detectado.
 
-  const EVENTO_ID_MON = window.EVENTO_ID;
-  const INTERVALO_MS  = 45000; // 45 segundos
-  const TERMOS_ALERTA = ['em análise', 'em votacao', 'em votação', 'em discussão', 'em apreciação'];
+  const EVENTO_ID_MON  = window.EVENTO_ID;
+  const INTERVALO_MS   = 45000;
 
-  let _monitorando    = false;
-  let _timerMonitor   = null;
-  let _statusAnterior = {}; // { chave: situacao_anterior }
-  let _alertasDisparados = new Set(); // "chave|situacao" — nunca repete
-  let _primeiraVerif  = true;
+  let _ativo           = false;
+  let _timer           = null;
+  let _baseline        = null;   // snapshot do primeiro fetch
+  let _jaAlertados     = new Set(); // "termo" — dispara só uma vez
 
+  // ── API pública ──────────────────────────────────────────────────────────
   window.toggleMonitoramento = function() {
-    _monitorando ? pararMonitoramento() : iniciarMonitoramento();
+    _ativo ? parar() : iniciar();
   };
 
-  function iniciarMonitoramento() {
-    _monitorando   = true;
-    _primeiraVerif = true;
-    _statusAnterior = {};
-    _alertasDisparados.clear();
-    atualizarBotao(true);
-    verificarStatus();
-    _timerMonitor = setInterval(verificarStatus, INTERVALO_MS);
+  function iniciar() {
+    _ativo    = true;
+    _baseline = null;
+    _jaAlertados.clear();
+    setBotao(true);
+    checar();
+    _timer = setInterval(checar, INTERVALO_MS);
   }
 
-  function pararMonitoramento() {
-    _monitorando = false;
-    clearInterval(_timerMonitor);
-    _timerMonitor = null;
-    atualizarBotao(false);
+  function parar() {
+    _ativo = false;
+    clearInterval(_timer);
+    _timer = null;
+    setBotao(false);
   }
 
-  function atualizarBotao(ativo) {
+  function setBotao(ativo) {
     const btn   = document.getElementById('btn-monitorar');
     const label = document.getElementById('btn-monitorar-label');
-    if (!btn) return;
-    btn.style.background = ativo
+    const txt   = document.getElementById('monitor-status-txt');
+    if (btn)   btn.style.background = ativo
       ? 'linear-gradient(135deg,#C0392B,#922B21)'
       : 'linear-gradient(135deg,#6c757d,#495057)';
-    if (label) label.textContent = ativo ? 'Monitorando…' : 'Monitorar';
-    if (!ativo) {
-      const st = document.getElementById('monitor-status-txt');
-      if (st) st.textContent = '';
-    }
+    if (label) label.textContent = ativo ? 'Monitorando...' : 'Monitorar';
+    if (!ativo && txt) txt.textContent = '';
   }
 
-  function atualizarStatusTxt(txt) {
+  function setStatus(txt) {
     const el = document.getElementById('monitor-status-txt');
     if (el) el.textContent = txt;
   }
 
-  async function verificarStatus() {
-    if (!_monitorando) return;
-    console.log('[Monitor] Verificando...', new Date().toLocaleTimeString('pt-BR'));
-    await verificarViaHTML();
+  // ── Polling ───────────────────────────────────────────────────────────────
+  async function checar() {
+    if (!_ativo) return;
+    const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    setStatus('⏳ verificando...');
+    try {
+      // 1. Tenta API de votações direto no browser (sem passar pelo Railway)
+      const rVot = await fetch(
+        'https://dadosabertos.camara.leg.br/api/v2/votacoes?idEvento=' + EVENTO_ID_MON + '&itens=10&ordem=DESC',
+        {headers: {'Accept':'application/json'}, cache: 'no-store'}
+      );
+      if (rVot.ok) {
+        const jVot = await rVot.json();
+        const votacoes = jVot.dados || [];
+        console.log('[Monitor] API votações OK:', votacoes.length, 'votações');
+        if (votacoes.length > 0) {
+          processarVotacoes(votacoes);
+          setStatus('✓ ' + agora + ' (API votações)');
+          return;
+        }
+      }
+    } catch(e) {
+      console.log('[Monitor] API votações bloqueada:', e.message);
+    }
+
+    try {
+      // 2. Tenta página HTML do evento direto no browser
+      const rHtml = await fetch(
+        'https://www.camara.leg.br/evento-legislativo/' + EVENTO_ID_MON,
+        {cache: 'no-store'}
+      );
+      if (rHtml.ok) {
+        const html = await rHtml.text();
+        const parser = new DOMParser();
+        const doc2 = parser.parseFromString(html, 'text/html');
+        doc2.querySelectorAll('script,style').forEach(el => el.remove());
+        const texto = (doc2.body?.textContent || '').replace(/\s+/g,' ').trim().toLowerCase();
+        console.log('[Monitor] HTML OK:', texto.length, 'chars');
+        processarTexto(texto);
+        setStatus('✓ ' + agora + ' (HTML)');
+        return;
+      }
+    } catch(e) {
+      console.log('[Monitor] HTML bloqueado:', e.message);
+    }
+
+    try {
+      // 3. Fallback: rota interna /monitor_status
+      const rInt = await fetch('/monitor_status/' + EVENTO_ID_MON, {
+        cache: 'no-store', credentials: 'same-origin'
+      });
+      if (rInt.ok) {
+        const dados = await rInt.json();
+        console.log('[Monitor] Rota interna OK. fontes:', dados.fontes_status);
+        const texto = (dados.texto || '').toLowerCase();
+        if (texto.length > 10) processarTexto(texto);
+        (dados.itens || []).forEach(it => {
+          const sit = (it.situacao || '').toLowerCase();
+          if (sit) verificarTermo(sit, it.proposicao || 'Plenário');
+        });
+        setStatus('✓ ' + agora + ' (interno)');
+        return;
+      }
+    } catch(e) {
+      console.log('[Monitor] Rota interna falhou:', e.message);
+    }
+
+    setStatus('⚠️ ' + agora + ' sem dados');
   }
 
-  async function verificarViaHTML() {
-    try {
-      atualizarStatusTxt('⏳ verificando...');
+  // ── Processamento ─────────────────────────────────────────────────────────
+  const TERMOS = [
+    { t: 'em análise',      l: 'Em Análise',     e: '🔴' },
+    { t: 'em votação',      l: 'Em Votação',      e: '🗳️' },
+    { t: 'votação nominal', l: 'Votação Nominal', e: '🗳️' },
+    { t: 'em discussão',    l: 'Em Discussão',    e: '💬' },
+    { t: 'em apreciação',   l: 'Em Apreciação',   e: '🔵' },
+    { t: 'aprovado',        l: 'Aprovado',        e: '✅' },
+    { t: 'rejeitado',       l: 'Rejeitado',       e: '❌' },
+    { t: 'retirado de pauta', l: 'Retirado de Pauta', e: '↩️' },
+  ];
 
-      const r = await fetch(`/monitor_status/${EVENTO_ID_MON}`, {
-        cache: 'no-store',
-        credentials: 'same-origin'
-      });
-
-      if (!r.ok) {
-        atualizarStatusTxt(`⚠️ HTTP ${r.status}`);
-        return;
-      }
-
-      const dados = await r.json();
-      const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-
-      // Combina texto + itens para detecção
-      const textoTotal = [
-        dados.texto || '',
-        ...(dados.itens || []).map(i => `${i.proposicao} ${i.situacao}`)
-      ].join(' ').toLowerCase().trim();
-
-      if (!textoTotal || textoTotal.length < 10) {
-        atualizarStatusTxt(`⚠️ ${agora} sem dados`);
-        return;
-      }
-
-      atualizarStatusTxt(`✓ ${agora}`);
-      console.log('[Monitor] fontes_status:', dados.fontes_status);
-      console.log('[Monitor] fonte:', dados.fonte, '| itens:', dados.itens?.length, '| texto chars:', textoTotal.length);
-      console.log('[Monitor] alertas disparados:', [..._alertasDisparados]);
-      console.log('[Monitor] snapshot anterior chars:', (_statusAnterior['__snapshot__']||'').length);
-
-      // Primeira verificação: salva baseline por termo
-      if (_primeiraVerif) {
-        const termosBase = ['em análise','em votação','votação nominal','em discussão','em apreciação','aprovado','rejeitado'];
-        termosBase.forEach(t => {
-          if (textoTotal.includes(t)) {
-            _statusAnterior[`baseline|${t}`] = true;
-            console.log(`[Monitor] Baseline: "${t}" já presente — não vai alertar`);
-          }
-        });
-        // Salva status inicial dos itens da API
-        for (const item of (dados.itens || [])) {
-          const sit = (item.situacao||'').toLowerCase().trim();
-          const chave = (item.proposicao||'').replace(/\s+/g,'').toUpperCase();
-          if (chave && sit) _statusAnterior[chave] = sit;
-        }
-        _primeiraVerif = false;
-        console.log('[Monitor] Baseline salvo.');
-        return;
-      }
-
-      const snapAnterior = _statusAnterior['__snapshot__'] || '';
-
-      // Detecta novos status nos itens da API
-      for (const item of (dados.itens || [])) {
-        const sit = (item.situacao || '').toLowerCase().trim();
-        const prop = (item.proposicao || '').trim();
-        const chave = prop.replace(/\s+/g,'').toUpperCase();
-        if (!sit || !chave) continue;
-
-        const chaveAlerta = `${chave}|${sit}`;
-        if (_alertasDisparados.has(chaveAlerta)) continue; // já disparou
-
-        const anterior = _statusAnterior[chave];
-        _statusAnterior[chave] = sit;
-
-        if (anterior !== undefined && anterior !== sit) {
-          // Mudou de status — dispara alerta uma única vez
-          _alertasDisparados.add(chaveAlerta);
-          const itensNossos = window.ITENS_DATA || [];
-          const nums = prop.match(/\d{3,}/g) || [];
-          const itemCasado = itensNossos.find(it =>
-            (it.projeto||'').match(/\d{3,}/g)?.some(n => nums.includes(n))
-          );
-          const emoji   = sit.includes('aprova') ? '✅' : sit.includes('rejeit') ? '❌' : '🔴';
-          const titulo  = itemCasado ? `${emoji} ${itemCasado.projeto}` : `${emoji} ${prop}`;
-          const detalhe = itemCasado ? (itemCasado.ementa||'').substring(0,120) : sit;
-          dispararAlerta(titulo, detalhe, item.situacao);
-        }
-      }
-
-      // Detecta mudanças no texto HTML — apenas termos novos desde o baseline
-      const termosStatus = [
-        { termo: 'em análise',      label: 'Em Análise',     emoji: '🔴' },
-        { termo: 'em votação',      label: 'Em Votação',      emoji: '🗳️' },
-        { termo: 'votação nominal', label: 'Votação Nominal', emoji: '🗳️' },
-        { termo: 'em discussão',    label: 'Em Discussão',    emoji: '💬' },
-        { termo: 'em apreciação',   label: 'Em Apreciação',   emoji: '🔵' },
-        { termo: 'aprovado',        label: 'Aprovado',        emoji: '✅' },
-        { termo: 'rejeitado',       label: 'Rejeitado',       emoji: '❌' },
-      ];
-
-      // Detecta mudanças no texto HTML — apenas termos novos que não estavam no baseline
-      const termosStatus = [
-        { termo: 'em análise',      label: 'Em Análise',     emoji: '🔴' },
-        { termo: 'em votação',      label: 'Em Votação',      emoji: '🗳️' },
-        { termo: 'votação nominal', label: 'Votação Nominal', emoji: '🗳️' },
-        { termo: 'em discussão',    label: 'Em Discussão',    emoji: '💬' },
-        { termo: 'em apreciação',   label: 'Em Apreciação',   emoji: '🔵' },
-        { termo: 'aprovado',        label: 'Aprovado',        emoji: '✅' },
-        { termo: 'rejeitado',       label: 'Rejeitado',       emoji: '❌' },
-      ];
-
-      for (const { termo, label, emoji } of termosStatus) {
-        const chaveAlerta = `texto|${termo}`;
-        const estaNoTexto = textoTotal.includes(termo);
-        const estavaNaBaseline = !!_statusAnterior[`baseline|${termo}`];
-
-        console.log(`[Monitor] "${termo}": agora=${estaNoTexto} baseline=${estavaNaBaseline} jaDisparou=${_alertasDisparados.has(chaveAlerta)}`);
-
-        if (estaNoTexto && !estavaNaBaseline && !_alertasDisparados.has(chaveAlerta)) {
-          console.log('[Monitor] Novo status detectado:', label);
-          _alertasDisparados.add(chaveAlerta);
-          const idx = textoTotal.indexOf(termo);
-          const contexto = textoTotal.substring(Math.max(0,idx-150), idx+200);
-          const itensNossos = window.ITENS_DATA || [];
-          let itemCasado = null;
-          for (const it of itensNossos) {
-            const nums = (it.projeto||'').match(/\d{3,}/g) || [];
-            if (nums.some(n => contexto.includes(n))) { itemCasado = it; break; }
-          }
-          const titulo  = itemCasado ? `${emoji} ${itemCasado.projeto}` : `${emoji} Plenário`;
-          const detalhe = itemCasado ? (itemCasado.ementa||'').substring(0,120) : contexto.substring(0,120);
-          dispararAlerta(titulo, detalhe, label);
-          break;
-        }
-      }
-
-      // Atualiza snapshot (só para log, não para comparação)
-      _statusAnterior['__snapshot__'] = textoTotal;
-
-    } catch(err) {
-      atualizarStatusTxt(`❌ ${err.message.substring(0,30)}`);
-      console.warn('[Monitor] Erro:', err);
+  function processarTexto(texto) {
+    if (_baseline === null) {
+      // Primeira vez — salva quais termos já existem
+      _baseline = new Set(TERMOS.filter(({t}) => texto.includes(t)).map(({t}) => t));
+      console.log('[Monitor] Baseline termos:', [..._baseline]);
+      return;
+    }
+    for (const {t, l, e} of TERMOS) {
+      if (_baseline.has(t)) continue; // já existia no início
+      if (!texto.includes(t)) continue;
+      verificarTermo(t, null, l, e, texto);
     }
   }
 
-  function dispararAlerta(titulo, ementa, situacao) {
-    const el_titulo   = document.getElementById('monitor-alerta-titulo');
-    const el_corpo    = document.getElementById('monitor-alerta-corpo');
-    const el_detalhe  = document.getElementById('monitor-alerta-detalhe');
-    const el_horario  = document.getElementById('monitor-alerta-horario');
-    const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+  function processarVotacoes(votacoes) {
+    for (const v of votacoes) {
+      const prop = v.proposicaoObjeto || v.descricao || '';
+      const sit  = v.dataHoraRegistro ? 'Em Votação' : '';
+      const apr  = v.aprovado;
+      if (!prop) continue;
 
-    if (el_titulo)  el_titulo.textContent  = `🔴 ${situacao || 'Em Análise'}`;
-    if (el_corpo)   el_corpo.textContent   = titulo;
-    if (el_detalhe) el_detalhe.textContent = (ementa || '').substring(0, 140);
-    if (el_horario) el_horario.textContent = `Detectado às ${agora}`;
+      if (_baseline === null) {
+        // Primeira chamada — salva estado inicial
+        _baseline = new Set();
+        return;
+      }
 
-    // Som de notificação (3 bips)
+      const chave = prop + '|' + sit;
+      if (sit && !_jaAlertados.has(chave)) {
+        _jaAlertados.add(chave);
+        const e = apr === true ? '✅' : apr === false ? '❌' : '🗳️';
+        const l = apr === true ? 'Aprovado' : apr === false ? 'Rejeitado' : 'Em Votação';
+        alertar(e + ' ' + prop, '', l);
+      }
+    }
+  }
+
+  function verificarTermo(termo, propCtx, label, emoji, textoFull) {
+    const chave = termo;
+    if (_jaAlertados.has(chave)) return;
+    _jaAlertados.add(chave);
+
+    label = label || termo;
+    emoji = emoji || '🔴';
+
+    // Tenta casar com item da pauta pelo número
+    const itensNossos = window.ITENS_DATA || [];
+    let itemCasado = null;
+    if (textoFull) {
+      const idx = textoFull.indexOf(termo);
+      const contexto = textoFull.substring(Math.max(0,idx-200), idx+300);
+      for (const it of itensNossos) {
+        const nums = (it.projeto||'').match(/\d{3,}/g) || [];
+        if (nums.some(n => contexto.includes(n))) { itemCasado = it; break; }
+      }
+    }
+    if (!itemCasado && propCtx) {
+      const nums = propCtx.match(/\d{3,}/g) || [];
+      itemCasado = itensNossos.find(it =>
+        (it.projeto||'').match(/\d{3,}/g)?.some(n => nums.includes(n))
+      );
+    }
+
+    const titulo  = itemCasado ? emoji + ' ' + itemCasado.projeto : emoji + ' Plenário';
+    const detalhe = itemCasado ? (itemCasado.ementa||'').substring(0,120) : (propCtx || '');
+    alertar(titulo, detalhe, label);
+  }
+
+  // ── Alerta ────────────────────────────────────────────────────────────────
+  function alertar(titulo, detalhe, situacao) {
+    console.log('[Monitor] ALERTA:', titulo, '|', situacao);
+    const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
+    const s = id => document.getElementById(id);
+    if (s('monitor-alerta-titulo'))  s('monitor-alerta-titulo').textContent  = situacao || 'Mudança';
+    if (s('monitor-alerta-corpo'))   s('monitor-alerta-corpo').textContent   = titulo;
+    if (s('monitor-alerta-detalhe')) s('monitor-alerta-detalhe').textContent = detalhe || '';
+    if (s('monitor-alerta-horario')) s('monitor-alerta-horario').textContent = 'Detectado às ' + agora;
+
+    // Som
     try {
-      const ctx  = new (window.AudioContext || window.webkitAudioContext)();
-      [0, 0.2, 0.4].forEach(t => {
-        const osc  = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.25, 0.5].forEach(t => {
+        const osc = ctx.createOscillator(), g = ctx.createGain();
+        osc.connect(g); g.connect(ctx.destination);
         osc.frequency.value = 880;
-        gain.gain.setValueAtTime(0.3, ctx.currentTime + t);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.18);
+        g.gain.setValueAtTime(0.3, ctx.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.2);
         osc.start(ctx.currentTime + t);
-        osc.stop(ctx.currentTime + t + 0.2);
+        osc.stop(ctx.currentTime + t + 0.22);
       });
     } catch(_) {}
 
-    // Notificação nativa do browser (se permitido)
+    // Notificação nativa
     if (Notification.permission === 'granted') {
-      new Notification('🔔 Pauta — ' + titulo, {
-        body: `${situacao} — ${(ementa||'').substring(0,80)}`,
-        icon: '/static/logo_minoria.png'
-      });
+      new Notification('🔔 ' + titulo, {body: situacao, icon: '/static/logo_minoria.png'});
     } else if (Notification.permission !== 'denied') {
-      Notification.requestPermission().then(p => {
-        if (p === 'granted') new Notification('🔔 ' + titulo, { body: situacao });
-      });
+      Notification.requestPermission();
     }
 
-    // Abre modal
-    const modal = bootstrap.Modal.getOrCreateInstance(
-      document.getElementById('modalMonitorAlerta')
-    );
-    modal.show();
+    // Modal
+    try {
+      bootstrap.Modal.getOrCreateInstance(
+        document.getElementById('modalMonitorAlerta')
+      ).show();
+    } catch(_) {}
   }
 
 })();
