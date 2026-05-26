@@ -1949,6 +1949,14 @@
     }
   }
 
+  async function limparResumosIA(eventoId) {
+    if (!confirm('Remover resumos IA salvos? Serão regenerados ao recarregar.')) return;
+    const r = await fetch(`/limpar_resumos_ia/${eventoId}`, {method:'POST', credentials:'same-origin'});
+    const j = await r.json();
+    alert(j.message || j.error);
+    if (j.message) location.reload();
+  }
+
   async function limparCacheEvento(eventoId) {
     if (!confirm('Limpar cache desta pauta? Os títulos de REQ serão reprocessados ao atualizar.')) return;
     const r = await fetch(`/limpar_cache/${eventoId}`, {
