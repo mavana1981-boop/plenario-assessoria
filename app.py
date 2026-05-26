@@ -3332,10 +3332,10 @@ def resumo_ementa_impl(data):
 
     if contexto_pl and eh_req:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo MUITO CURTO (máximo 2-3 linhas, máximo 180 caracteres) do que este REQUERIMENTO pede.
+Gere um resumo PRÓPRIO (máximo 2-3 linhas, máximo 180 caracteres) do que este REQUERIMENTO pede.
+NÃO copie a ementa. Escreva com suas próprias palavras.
 - Se for urgência: comece com "Urgência para o PL que [explique o PL em poucas palavras]"
 - Se for adiamento/retirada: comece com "Adiamento/Retirada do PL que..."
-- Use a ementa do requerimento e o contexto do PL referenciado
 - Seja direto. Não repita número da proposição.
 
 Requerimento: {projeto}
@@ -3344,10 +3344,10 @@ Ementa: {ementa}{contexto_pl}
 Responda APENAS com o resumo, sem introdução, sem aspas."""
     else:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo MUITO CURTO (máximo 2-3 linhas, máximo 180 caracteres) do que esta proposição trata na prática.
-- Seja direto e claro para parlamentares
+Gere um resumo PRÓPRIO (máximo 2-3 linhas, máximo 180 caracteres) do que esta proposição trata na prática.
+NÃO copie a ementa. Escreva com suas próprias palavras, de forma simples e direta.
+- Explique o efeito prático para o cidadão ou para o parlamento
 - Não repita o número da proposição
-- Use linguagem simples e objetiva
 
 Proposição: {projeto}
 Autor: {autor}
@@ -3359,10 +3359,10 @@ Responda APENAS com o resumo, sem introdução, sem aspas."""
     for key, url, body_fn in [
         (gemini_key,
          f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
-         lambda: {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 100, "temperature": 0.2}}),
+         lambda: {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 100, "temperature": 0.4}}),
         (groq_key,
          "https://api.groq.com/openai/v1/chat/completions",
-         lambda: {"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "max_tokens": 100, "temperature": 0.2}),
+         lambda: {"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "max_tokens": 100, "temperature": 0.4}),
     ]:
         if not key:
             continue
@@ -3376,6 +3376,14 @@ Responda APENAS com o resumo, sem introdução, sem aspas."""
                     texto = r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
                 else:
                     texto = r.json()['choices'][0]['message']['content'].strip()
+                # Rejeita se for igual ou muito similar à ementa
+                ementa_norm = re.sub(r'\s+', ' ', ementa.strip().lower())
+                texto_norm  = re.sub(r'\s+', ' ', texto.strip().lower())
+                if (texto_norm == ementa_norm or
+                    ementa_norm[:80] in texto_norm or
+                    texto_norm[:80] in ementa_norm):
+                    logger.warning(f"Resumo igual à ementa — descartando")
+                    return jsonify({'resumo': ''})
                 return jsonify({'resumo': texto})
         except Exception as e:
             logger.warning(f"Erro resumo_ementa: {e}")
