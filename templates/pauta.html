@@ -183,9 +183,16 @@
 
     {% if user_categoria == 'restrito' %}
     <!-- Visão restrita: apenas itens, situação, relator, ementa, resumo IA e orientações -->
-    <div class="alert alert-info mt-2 mb-3">
-      <i class="fas fa-info-circle me-2"></i>
-      Acesso restrito. Você pode visualizar os itens e registrar <strong>Orientações</strong>.
+    <div class="alert alert-info mt-2 mb-2 d-flex align-items-center gap-3">
+      <div>
+        <i class="fas fa-info-circle me-2"></i>
+        Acesso restrito. Registre a orientação do seu grupo clicando no botão:
+      </div>
+      <button class="btn btn-warning btn-sm fw-bold ms-auto"
+        data-bs-toggle="modal" data-bs-target="#modalOrientacoes"
+        onclick="carregarOrientacoes()">
+        <i class="fas fa-vote-yea me-1"></i>Registrar Orientação
+      </button>
     </div>
     {% if itens %}
       {% for item in itens %}
@@ -204,13 +211,6 @@
                 {% endif %}
               </div>
               <div style="font-size:0.85rem;margin-top:2px;">{{ item.ementa }}</div>
-              <div id="resumo-ia-{{ item.id_principal }}"
-                   data-id="{{ item.id_principal }}"
-                   data-projeto="{{ item.projeto | replace('"','&quot;') }}"
-                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
-                   data-autor="{{ item.autor | replace('"','&quot;') }}"
-                   class="resumo-ia-ementa"
-                   style="font-size:0.80rem;color:#1A6B3A;font-weight:500;display:none;margin-top:2px;"></div>
             </div>
           </div>
         </div>
