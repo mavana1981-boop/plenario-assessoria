@@ -3233,6 +3233,87 @@ def debug_ordem(evento_id):
         resultado['tb'] = traceback.format_exc()[-500:]
     return jsonify(resultado)
 
+@app.route('/debug_pauta_full/<int:evento_id>')
+@login_required
+def debug_pauta_full(evento_id):
+    """Debug completo: ordem PDF, itens API, matching e problemas."""
+    try:
+        from scraper_camara import obter_itens_pauta as _oip
+        import traceback
+
+        out = {'evento_id': evento_id, 'problemas': [], 'pdf': {}, 'api': {}, 'matching': []}
+
+        # 1. Extrai ordem do PDF
+        try:
+            ordem = buscar_ordem_oficial(evento_id)
+            out['pdf']['ordem'] = ordem
+            out['pdf']['total'] = len(ordem)
+        except Exception as e:
+            out['pdf']['erro'] = str(e)
+            ordem = {}
+
+        # 2. Itens da API
+        try:
+            itens_raw = _oip(evento_id)
+            out['api']['total'] = len(itens_raw)
+            out['api']['itens'] = [{'codigo': it['codigo'], 'norm': _normalizar_codigo(it['codigo']),
+                                    'id': it.get('id_principal',''), 'ementa': it.get('ementa','')[:60]} for it in itens_raw]
+        except Exception as e:
+            out['api']['erro'] = str(e)
+            itens_raw = []
+
+        # 3. Matching
+        api_por_codigo = {_normalizar_codigo(it['codigo']): it for it in itens_raw}
+
+        for cod_pdf, pos in sorted(ordem.items(), key=lambda x: x[1]):
+            item_api = api_por_codigo.get(cod_pdf)
+            # Fuzzy match por número
+            m_num = re.search(r'(\d{4,})', cod_pdf)
+            fuzzy = None
+            if not item_api and m_num:
+                for cod_api, it_api in api_por_codigo.items():
+                    if m_num.group(1) in cod_api:
+                        fuzzy = cod_api
+                        item_api = it_api
+                        break
+            out['matching'].append({
+                'pos': pos, 'cod_pdf': cod_pdf,
+                'match_exato': api_por_codigo.get(cod_pdf) is not None,
+                'match_fuzzy': fuzzy,
+                'cod_api': item_api['codigo'] if item_api else None,
+                'id': item_api.get('id_principal','') if item_api else None,
+                'status': 'OK' if item_api else '❌ SEM MATCH'
+            })
+            if not item_api:
+                out['problemas'].append(f"Pos {pos}: '{cod_pdf}' sem match na API → vai aparecer como 'dados não disponíveis'")
+
+        # 4. Itens da API não encontrados no PDF
+        for it in itens_raw:
+            cod = _normalizar_codigo(it['codigo'])
+            if cod not in ordem:
+                m_num = re.search(r'(\d{4,})', cod)
+                no_pdf = any(m_num and m_num.group(1) in k for k in ordem) if m_num else False
+                out['problemas'].append(
+                    f"'{it['codigo']}' (norm={cod}) não está no PDF → " +
+                    (f"fuzzy match possível" if no_pdf else "vai para o FIM da lista")
+                )
+
+        # 5. REQ s/n
+        req_sn_pdf = [(k,v) for k,v in ordem.items() if k.startswith('REQSN')]
+        req_sn_api = [it for it in itens_raw
+                      if re.match(r'(REQ|RQS|RQU|REC)', it['codigo'].upper())
+                      and not re.search(r'\d{2,}', it['codigo'].split('/')[0])]
+        out['req_sn'] = {
+            'no_pdf': req_sn_pdf,
+            'na_api': [{'codigo': it['codigo'], 'ementa': it.get('ementa','')[:80]} for it in req_sn_api],
+            'match': list(zip([k for k,v in req_sn_pdf], [it['codigo'] for it in req_sn_api]))
+        }
+
+        return jsonify(out), 200, {'Content-Type': 'application/json; charset=utf-8'}
+
+    except Exception as e:
+        return jsonify({'erro': str(e), 'tb': traceback.format_exc()}), 500
+
 @app.route('/admin/limpar_todo_cache', methods=['POST'])
 @login_required
 def limpar_todo_cache():
