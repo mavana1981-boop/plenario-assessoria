@@ -2637,7 +2637,7 @@ def monitor_status(evento_id):
     Retorna status atual dos itens da pauta para o agente de monitoramento.
     Tenta múltiplas fontes: API votações, API pauta, página HTML.
     """
-    resultado = {'evento_id': evento_id, 'itens': [], 'texto': '', 'fonte': ''}
+    resultado = {'evento_id': evento_id, 'itens': [], 'texto': '', 'fonte': '', 'fontes_status': {}}
 
     headers_camara = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
@@ -2646,12 +2646,13 @@ def monitor_status(evento_id):
         'Referer': 'https://www.camara.leg.br/',
     }
 
-    # Fonte 1: API de votações (mais confiável para detectar votações em andamento)
+    # Fonte 1: API de votações
     try:
         r = requests.get(
             f'https://dadosabertos.camara.leg.br/api/v2/votacoes?idEvento={evento_id}&itens=10&ordem=DESC',
             headers={**headers_camara, 'Accept': 'application/json'}, timeout=8
         )
+        resultado['fontes_status']['api_votacoes'] = r.status_code
         if r.ok:
             votacoes = r.json().get('dados', [])
             for v in votacoes:
@@ -2664,31 +2665,33 @@ def monitor_status(evento_id):
                 })
             resultado['fonte'] = 'api_votacoes'
     except Exception as e:
-        logger.warning(f"monitor_status votações: {e}")
+        resultado['fontes_status']['api_votacoes'] = str(e)
 
-    # Fonte 2: Página HTML do evento (texto para detectar mudanças)
+    # Fonte 2: Página HTML do evento
     try:
         r2 = requests.get(
             f'https://www.camara.leg.br/evento-legislativo/{evento_id}',
             headers=headers_camara, timeout=12
         )
+        resultado['fontes_status']['html_evento'] = r2.status_code
         if r2.ok and len(r2.text) > 100:
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(r2.text, 'html.parser')
             for tag in soup(['script', 'style', 'noscript']):
                 tag.decompose()
             texto = ' '.join(soup.get_text(' ').split())
-            resultado['texto'] = texto[:5000]  # primeiros 5000 chars
+            resultado['texto'] = texto[:5000]
             resultado['fonte'] += '+html'
     except Exception as e:
-        logger.warning(f"monitor_status html: {e}")
+        resultado['fontes_status']['html_evento'] = str(e)
 
-    # Fonte 3: API de situação dos itens da pauta
+    # Fonte 3: API de pauta
     try:
         r3 = requests.get(
             f'https://dadosabertos.camara.leg.br/api/v2/eventos/{evento_id}/pauta',
             headers={**headers_camara, 'Accept': 'application/json'}, timeout=8
         )
+        resultado['fontes_status']['api_pauta'] = r3.status_code
         if r3.ok:
             pauta = r3.json().get('dados', [])
             for item in pauta:
