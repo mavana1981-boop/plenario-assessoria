@@ -2704,7 +2704,8 @@ async function exportarOrientacoesPDF() {
 
   let _monitorando    = false;
   let _timerMonitor   = null;
-  let _statusAnterior = {}; // { id_proposicao: situacao }
+  let _statusAnterior = {}; // { chave: situacao_anterior }
+  let _alertasDisparados = new Set(); // "chave|situacao" — nunca repete
   let _primeiraVerif  = true;
 
   window.toggleMonitoramento = function() {
@@ -2714,6 +2715,8 @@ async function exportarOrientacoesPDF() {
   function iniciarMonitoramento() {
     _monitorando   = true;
     _primeiraVerif = true;
+    _statusAnterior = {};
+    _alertasDisparados.clear();
     atualizarBotao(true);
     verificarStatus();
     _timerMonitor = setInterval(verificarStatus, INTERVALO_MS);
@@ -2794,30 +2797,33 @@ async function exportarOrientacoesPDF() {
 
       // Detecta novos status nos itens da API
       for (const item of (dados.itens || [])) {
-        const sit = (item.situacao || '').toLowerCase();
-        const prop = item.proposicao || '';
+        const sit = (item.situacao || '').toLowerCase().trim();
+        const prop = (item.proposicao || '').trim();
         const chave = prop.replace(/\s+/g,'').toUpperCase();
-        if (!sit) continue;
+        if (!sit || !chave) continue;
 
-        if (_statusAnterior[chave] !== sit) {
-          const anterior = _statusAnterior[chave];
-          _statusAnterior[chave] = sit;
-          if (anterior !== undefined) {
-            // Mudou de status — dispara alerta
-            const itensNossos = window.ITENS_DATA || [];
-            const nums = prop.match(/\d{3,}/g) || [];
-            let itemCasado = itensNossos.find(it =>
-              (it.projeto||'').match(/\d{3,}/g)?.some(n => nums.includes(n))
-            );
-            const emoji = sit.includes('aprova') ? '✅' : sit.includes('rejeit') ? '❌' : '🔴';
-            const titulo  = itemCasado ? `${emoji} ${itemCasado.projeto}` : `${emoji} ${prop}`;
-            const detalhe = itemCasado ? (itemCasado.ementa||'').substring(0,120) : sit;
-            dispararAlerta(titulo, detalhe, item.situacao);
-          }
+        const chaveAlerta = `${chave}|${sit}`;
+        if (_alertasDisparados.has(chaveAlerta)) continue; // já disparou
+
+        const anterior = _statusAnterior[chave];
+        _statusAnterior[chave] = sit;
+
+        if (anterior !== undefined && anterior !== sit) {
+          // Mudou de status — dispara alerta uma única vez
+          _alertasDisparados.add(chaveAlerta);
+          const itensNossos = window.ITENS_DATA || [];
+          const nums = prop.match(/\d{3,}/g) || [];
+          const itemCasado = itensNossos.find(it =>
+            (it.projeto||'').match(/\d{3,}/g)?.some(n => nums.includes(n))
+          );
+          const emoji   = sit.includes('aprova') ? '✅' : sit.includes('rejeit') ? '❌' : '🔴';
+          const titulo  = itemCasado ? `${emoji} ${itemCasado.projeto}` : `${emoji} ${prop}`;
+          const detalhe = itemCasado ? (itemCasado.ementa||'').substring(0,120) : sit;
+          dispararAlerta(titulo, detalhe, item.situacao);
         }
       }
 
-      // Detecta mudanças no texto HTML
+      // Detecta mudanças no texto HTML — apenas termos novos desde o baseline
       const termosStatus = [
         { termo: 'em análise',      label: 'Em Análise',     emoji: '🔴' },
         { termo: 'em votação',      label: 'Em Votação',      emoji: '🗳️' },
@@ -2828,13 +2834,18 @@ async function exportarOrientacoesPDF() {
         { termo: 'rejeitado',       label: 'Rejeitado',       emoji: '❌' },
       ];
 
+      const snapAnterior = _statusAnterior['__snapshot__'] || '';
+
       if (textoTotal !== snapAnterior) {
         for (const { termo, label, emoji } of termosStatus) {
+          const chaveAlerta = `texto|${termo}`;
+          if (_alertasDisparados.has(chaveAlerta)) continue;
           if (!snapAnterior.includes(termo) && textoTotal.includes(termo)) {
             console.log('[Monitor] Novo status no texto:', label);
-            const itensNossos = window.ITENS_DATA || [];
+            _alertasDisparados.add(chaveAlerta);
             const idx = textoTotal.indexOf(termo);
             const contexto = textoTotal.substring(Math.max(0,idx-150), idx+200);
+            const itensNossos = window.ITENS_DATA || [];
             let itemCasado = null;
             for (const it of itensNossos) {
               const nums = (it.projeto||'').match(/\d{3,}/g) || [];
@@ -2846,6 +2857,7 @@ async function exportarOrientacoesPDF() {
             break;
           }
         }
+        // Atualiza snapshot para próxima comparação
         _statusAnterior['__snapshot__'] = textoTotal;
       } else {
         console.log('[Monitor] Sem mudanças.');
