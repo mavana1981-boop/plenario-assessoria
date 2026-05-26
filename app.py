@@ -3126,15 +3126,32 @@ def limpar_cache(evento_id):
     c = conn.cursor()
     try:
         c.execute('DELETE FROM pauta_cache_db WHERE evento_id = ?', (evento_id,))
+        c.execute('DELETE FROM resumos_ia WHERE evento_id = ?', (evento_id,))
         conn.commit()
         pauta_cache.pop(str(evento_id), None)
-        pauta_cache.clear()  # limpa todo cache em memória para garantir
-        logger.info(f"✅ Cache limpo para evento {evento_id}")
+        pauta_cache.clear()
+        logger.info(f"✅ Cache e resumos IA limpos para evento {evento_id}")
         if request.method == 'GET':
             return redirect(url_for('view_pauta', evento_id=evento_id, force_reload='true'))
-        return jsonify({'message': f'Cache do evento {evento_id} limpo.'})
+        return jsonify({'message': f'Cache e resumos IA do evento {evento_id} limpos.'})
     except Exception as e:
         logger.error(f"Erro ao limpar cache: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route('/limpar_resumos_ia/<int:evento_id>', methods=['POST'])
+@login_required
+def limpar_resumos_ia(evento_id):
+    """Remove resumos IA salvos para forçar regeração."""
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute('DELETE FROM resumos_ia WHERE evento_id=?', (evento_id,))
+        n = c.rowcount
+        conn.commit()
+        return jsonify({'message': f'{n} resumos removidos. Recarregue a pauta.'})
+    except Exception as e:
         return jsonify({'error': str(e)}), 500
     finally:
         conn.close()
