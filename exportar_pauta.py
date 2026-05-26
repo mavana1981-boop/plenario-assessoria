@@ -1,5 +1,4 @@
-from flask import Blueprint, current_app, make_response, login_manager
-from flask_login import login_required
+from flask import Blueprint, current_app, make_response
 from io import BytesIO
 import os, re, requests
 from datetime import datetime
@@ -71,6 +70,10 @@ def data_ptbr(dt_str):
         return f"{dt.day:02d} DE {mes_pt.upper()} DE {dt.year}"
     except Exception:
         return "DATA DESCONHECIDA"
+
+def _hex(color):
+    """Retorna hex sem prefixo, ex: '1a6b3a'"""
+    return '%02x%02x%02x' % (int(color.red*255), int(color.green*255), int(color.blue*255))
 
 def _strip_html(s):
     txt = re.sub(r"<[^>]+>", " ", str(s or ""))
@@ -268,9 +271,9 @@ def exportar_pauta(evento_id):
             cor_ori, _ = CORES_ORI.get(ori, (C_CINZA, C_CINZA_LT))
             tdata.append([
                 Paragraph(str(it.get("ordem","—")), sNormal),
-                Paragraph(f'<font color="#{cor_t.hexval()[1:]}"><b>{it.get("projeto","—")}</b></font>', sNormal),
+                Paragraph(f'<font color="#{cor_t}"><b>{it.get("projeto","—")}</b></font>', sNormal),
                 Paragraph(_strip_html(it.get("ementa","—"))[:160] + "…", sNormal),
-                Paragraph(f'<font color="#{cor_ori.hexval()[1:]}"><b>{ori or "—"}</b></font>', sNormal),
+                Paragraph(f'<font color="#{cor_ori}"><b>{ori or "—"}</b></font>', sNormal),
             ])
 
         tbl = Table(tdata, colWidths=[1.2*cm, 4.2*cm, 9.0*cm, 2.4*cm], repeatRows=1)
@@ -353,7 +356,7 @@ def exportar_pauta(evento_id):
             if ori:
                 bloco.append(Spacer(1, 5))
                 ori_tbl = Table([[
-                    Paragraph(f'<font color="#{cor_ori.hexval()[1:]}"><b>ORIENTAÇÃO: {ori}</b></font>', sOri)
+                    Paragraph(f'<font color="#{cor_ori}"><b>ORIENTAÇÃO: {ori}</b></font>', sOri)
                 ]], colWidths=[doc.width])
                 ori_tbl.setStyle(TableStyle([
                     ("BACKGROUND", (0,0), (-1,-1), cor_ori_bg),
