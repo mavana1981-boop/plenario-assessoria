@@ -196,7 +196,7 @@
             <div>
               <i class="fas fa-file-alt text-primary me-2"></i>
               Item {{ item.ordem }} — <strong>{{ item.projeto }}</strong> — <strong>Autor:</strong>
-              <span class="span-autor" id="autor-{{ item.id_principal }}" data-id="{{ item.id_principal }}">{{ item.autor | truncar_autores }}</span>
+              <span class="span-autor" id="autor-{{ item.id_principal }}" data-id="{{ item.id_principal }}">{% set partes = item.autor.split(', ') %}{% if partes|length > 2 %}{{ partes[:2]|join(', ') }} e outros.{% else %}{{ item.autor }}{% endif %}</span>
               <span class="badge secao-badge 
                 {{ 'bg-primary' if item.status in ['Proposta em Análise', 'Propostas em Análise'] else 
                    'bg-info' if item.status in ['Proposta Prevista', 'Propostas Previstas'] else 
