@@ -174,7 +174,7 @@
           style="background:linear-gradient(135deg,#6c757d,#495057);">
           <i class="fas fa-satellite-dish me-2"></i><span id="btn-monitorar-label">Monitorar</span>
         </button>
-        <small id="monitor-status-txt" class="text-muted" style="font-size:0.72rem;white-space:nowrap;"></small>
+        <small id="monitor-status-txt" class="text-muted" style="font-size:0.72rem;white-space:nowrap;min-width:80px;display:inline-block;"></small>
       </span>
       {% endif %}
       <button class="btn btn-sm mb-3 ms-2 text-white"
@@ -2716,6 +2716,7 @@ async function exportarOrientacoesPDF() {
     _baseline = null;
     _jaAlertados.clear();
     setBotao(true);
+    setStatus('⏳ iniciando...');
     checar();
     _timer = setInterval(checar, INTERVALO_MS);
   }
