@@ -580,8 +580,8 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
 
         # REQ com número: "N. Requerimento nº X.XXX, de AAAA"
         for m in re.finditer(
-            r'^(\d+)\.\s+Requerimento\s+n[º°oa.]?\s*([\d.]+),\s*de\s+(\d{4})',
-            texto_total, re.MULTILINE
+            r'^(\d+)\.\s+Requerimento\s+n\.?[º°oa]?\.?\s*([\d.]+),\s*de\s+(\d{4})',
+            texto_total, re.MULTILINE | re.IGNORECASE
         ):
             num   = int(m.group(1))
             num_p = m.group(2).replace('.', '')
