@@ -2783,11 +2783,26 @@ async function exportarOrientacoesPDF() {
       }
 
       atualizarStatusTxt(`✓ ${agora}`);
-      console.log('[Monitor] OK — fonte:', dados.fonte, '| itens:', dados.itens?.length, '| texto:', textoTotal.length, 'chars');
+      console.log('[Monitor] fontes_status:', dados.fontes_status);
+      console.log('[Monitor] fonte:', dados.fonte, '| itens:', dados.itens?.length, '| texto chars:', textoTotal.length);
+      console.log('[Monitor] alertas disparados:', [..._alertasDisparados]);
+      console.log('[Monitor] snapshot anterior chars:', (_statusAnterior['__snapshot__']||'').length);
 
-      // Primeira verificação: salva baseline
+      // Primeira verificação: salva baseline por termo
       if (_primeiraVerif) {
-        _statusAnterior['__snapshot__'] = textoTotal;
+        const termosBase = ['em análise','em votação','votação nominal','em discussão','em apreciação','aprovado','rejeitado'];
+        termosBase.forEach(t => {
+          if (textoTotal.includes(t)) {
+            _statusAnterior[`baseline|${t}`] = true;
+            console.log(`[Monitor] Baseline: "${t}" já presente — não vai alertar`);
+          }
+        });
+        // Salva status inicial dos itens da API
+        for (const item of (dados.itens || [])) {
+          const sit = (item.situacao||'').toLowerCase().trim();
+          const chave = (item.proposicao||'').replace(/\s+/g,'').toUpperCase();
+          if (chave && sit) _statusAnterior[chave] = sit;
+        }
         _primeiraVerif = false;
         console.log('[Monitor] Baseline salvo.');
         return;
@@ -2834,34 +2849,44 @@ async function exportarOrientacoesPDF() {
         { termo: 'rejeitado',       label: 'Rejeitado',       emoji: '❌' },
       ];
 
-      const snapAnterior = _statusAnterior['__snapshot__'] || '';
+      // Detecta mudanças no texto HTML — apenas termos novos que não estavam no baseline
+      const termosStatus = [
+        { termo: 'em análise',      label: 'Em Análise',     emoji: '🔴' },
+        { termo: 'em votação',      label: 'Em Votação',      emoji: '🗳️' },
+        { termo: 'votação nominal', label: 'Votação Nominal', emoji: '🗳️' },
+        { termo: 'em discussão',    label: 'Em Discussão',    emoji: '💬' },
+        { termo: 'em apreciação',   label: 'Em Apreciação',   emoji: '🔵' },
+        { termo: 'aprovado',        label: 'Aprovado',        emoji: '✅' },
+        { termo: 'rejeitado',       label: 'Rejeitado',       emoji: '❌' },
+      ];
 
-      if (textoTotal !== snapAnterior) {
-        for (const { termo, label, emoji } of termosStatus) {
-          const chaveAlerta = `texto|${termo}`;
-          if (_alertasDisparados.has(chaveAlerta)) continue;
-          if (!snapAnterior.includes(termo) && textoTotal.includes(termo)) {
-            console.log('[Monitor] Novo status no texto:', label);
-            _alertasDisparados.add(chaveAlerta);
-            const idx = textoTotal.indexOf(termo);
-            const contexto = textoTotal.substring(Math.max(0,idx-150), idx+200);
-            const itensNossos = window.ITENS_DATA || [];
-            let itemCasado = null;
-            for (const it of itensNossos) {
-              const nums = (it.projeto||'').match(/\d{3,}/g) || [];
-              if (nums.some(n => contexto.includes(n))) { itemCasado = it; break; }
-            }
-            const titulo  = itemCasado ? `${emoji} ${itemCasado.projeto}` : `${emoji} Plenário`;
-            const detalhe = itemCasado ? (itemCasado.ementa||'').substring(0,120) : contexto.substring(0,120);
-            dispararAlerta(titulo, detalhe, label);
-            break;
+      for (const { termo, label, emoji } of termosStatus) {
+        const chaveAlerta = `texto|${termo}`;
+        const estaNoTexto = textoTotal.includes(termo);
+        const estavaNaBaseline = !!_statusAnterior[`baseline|${termo}`];
+
+        console.log(`[Monitor] "${termo}": agora=${estaNoTexto} baseline=${estavaNaBaseline} jaDisparou=${_alertasDisparados.has(chaveAlerta)}`);
+
+        if (estaNoTexto && !estavaNaBaseline && !_alertasDisparados.has(chaveAlerta)) {
+          console.log('[Monitor] Novo status detectado:', label);
+          _alertasDisparados.add(chaveAlerta);
+          const idx = textoTotal.indexOf(termo);
+          const contexto = textoTotal.substring(Math.max(0,idx-150), idx+200);
+          const itensNossos = window.ITENS_DATA || [];
+          let itemCasado = null;
+          for (const it of itensNossos) {
+            const nums = (it.projeto||'').match(/\d{3,}/g) || [];
+            if (nums.some(n => contexto.includes(n))) { itemCasado = it; break; }
           }
+          const titulo  = itemCasado ? `${emoji} ${itemCasado.projeto}` : `${emoji} Plenário`;
+          const detalhe = itemCasado ? (itemCasado.ementa||'').substring(0,120) : contexto.substring(0,120);
+          dispararAlerta(titulo, detalhe, label);
+          break;
         }
-        // Atualiza snapshot para próxima comparação
-        _statusAnterior['__snapshot__'] = textoTotal;
-      } else {
-        console.log('[Monitor] Sem mudanças.');
       }
+
+      // Atualiza snapshot (só para log, não para comparação)
+      _statusAnterior['__snapshot__'] = textoTotal;
 
     } catch(err) {
       atualizarStatusTxt(`❌ ${err.message.substring(0,30)}`);
