@@ -569,6 +569,8 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
         # Extrai REQ do texto bruto (formato com ponto, não centralizado)
         with pdfplumber.open(BytesIO(rp.content)) as pdf:
             texto_total = '\n'.join(p.extract_text() or '' for p in pdf.pages)
+
+        # REQ com número: "N. Requerimento nº X.XXX, de AAAA"
         for m in re.finditer(
             r'^(\d+)\.\s+Requerimento\s+n[º°oa.]?\s*([\d.]+),\s*de\s+(\d{4})',
             texto_total, re.MULTILINE
@@ -580,6 +582,20 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
             if chave not in ordem and num <= 30:
                 ordem[chave] = num
                 logger.info(f"  Item {num} (REQ texto): REQ {num_p}/{ano} → {chave}")
+
+        # REQ sem número (s/n): "N. Requerimento, de AAAA" ou "N. Requerimento s/n"
+        req_sn_count = 0
+        for m in re.finditer(
+            r'^(\d+)\.\s+Requerimento(?:\s+s/n|\s*,\s*de\s+\d{4})',
+            texto_total, re.MULTILINE | re.IGNORECASE
+        ):
+            num = int(m.group(1))
+            if num <= 30:
+                chave = f"REQSN{req_sn_count}"
+                req_sn_count += 1
+                if num not in ordem.values():
+                    ordem[chave] = num
+                    logger.info(f"  Item {num} (REQ s/n): chave={chave}")
 
         logger.info(f"Ordem extraída do PDF evento {evento_id}: {len(ordem)} itens — {dict(list(ordem.items())[:10])}")
         return ordem
@@ -687,8 +703,30 @@ def reordenar_por_ordem_oficial(itens, ordem_oficial):
         proj = item.get('projeto_original') or item.get('projeto', '')
         return _normalizar_codigo(proj.split(' ao ')[0].strip())
 
-    encontrados     = [(i, it, ordem_oficial[norm(it)]) for i, it in enumerate(itens) if norm(it) in ordem_oficial]
-    nao_encontrados = [(i, it) for i, it in enumerate(itens) if norm(it) not in ordem_oficial]
+    def eh_req_sn(item):
+        proj = (item.get('projeto_original') or item.get('projeto', '')).upper()
+        return any(proj.startswith(s) for s in ('REQ','RQS','RQU','REC')) and \
+               not re.search(r'\d{2,}', proj.split('/')[0])
+
+    # Casa REQ s/n da API com chaves REQSN do PDF (por ordem de aparição)
+    chaves_reqsn = sorted([k for k in ordem_oficial if k.startswith('REQSN')],
+                          key=lambda k: ordem_oficial[k])
+    req_sn_itens = [it for it in itens if eh_req_sn(it) and norm(it) not in ordem_oficial]
+    ordem_extra = {}
+    for i, (chave, item) in enumerate(zip(chaves_reqsn, req_sn_itens)):
+        ordem_extra[id(item)] = ordem_oficial[chave]
+        logger.info(f"REQ s/n match: {item.get('projeto','')} → posição {ordem_oficial[chave]}")
+
+    encontrados = []
+    nao_encontrados = []
+    for i, it in enumerate(itens):
+        n = norm(it)
+        if n in ordem_oficial:
+            encontrados.append((i, it, ordem_oficial[n]))
+        elif id(it) in ordem_extra:
+            encontrados.append((i, it, ordem_extra[id(it)]))
+        else:
+            nao_encontrados.append((i, it))
 
     cobertura = len(encontrados) / len(itens)
     logger.info(f"Cobertura PDF: {len(encontrados)}/{len(itens)} ({cobertura:.0%})")
@@ -697,21 +735,16 @@ def reordenar_por_ordem_oficial(itens, ordem_oficial):
         logger.warning("Cobertura insuficiente — mantendo ordem da API.")
         return itens
 
-    # Ordena pelos encontrados pela posição do PDF
     encontrados.sort(key=lambda x: x[2])
 
-    # Renumera sequencialmente para eliminar gaps (pauta reserva, etc.)
-    encontrados = [(api_i, it, seq+1) for seq, (api_i, it, _) in enumerate(encontrados)]
-
-    # Insere não encontrados pela posição relativa da API
     resultado = list(encontrados)
-    for api_idx, item in nao_encontrados:
+    for api_idx, item in sorted(nao_encontrados, key=lambda x: x[0]):
         pos = 0
         for j, (enc_idx, _, _) in enumerate(resultado):
             if enc_idx < api_idx:
                 pos = j + 1
         resultado.insert(pos, (api_idx, item, -1))
-        logger.info(f"Não encontrado: {item.get('projeto_original','')} → pos {pos+1}")
+        logger.info(f"Não encontrado no PDF: {item.get('projeto_original','')[:20]} → inserido em pos {pos+1}")
 
     itens_ord = [it for (_, it, _) in resultado]
     for i, it in enumerate(itens_ord, start=1):
