@@ -959,6 +959,8 @@ def truncar_autores(value, max_autores=2):
     if len(partes) <= max_autores:
         return ', '.join(partes)
     return ', '.join(partes[:max_autores]) + ' e outros.'
+
+@app.template_filter('datetimeformat')
 def datetimeformat(value, format='%d/%m/%Y %H:%M'):
     try:
         dt = datetime.fromisoformat(str(value))
