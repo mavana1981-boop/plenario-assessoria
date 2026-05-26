@@ -182,11 +182,43 @@
     </div>
 
     {% if user_categoria == 'restrito' %}
-    <div class="alert alert-info mt-2">
+    <!-- Visão restrita: apenas itens, situação, relator, ementa, resumo IA e orientações -->
+    <div class="alert alert-info mt-2 mb-3">
       <i class="fas fa-info-circle me-2"></i>
-      Seu acesso é restrito ao registro de <strong>Orientações</strong>.
-      Clique no botão acima para registrar a orientação do seu grupo.
+      Acesso restrito. Você pode visualizar os itens e registrar <strong>Orientações</strong>.
     </div>
+    {% if itens %}
+      {% for item in itens %}
+      <div class="card mb-2 shadow-sm">
+        <div class="card-body py-2 px-3">
+          <div class="d-flex align-items-start gap-2">
+            <span class="badge bg-secondary" style="min-width:28px;text-align:center;">{{ item.ordem }}</span>
+            <div style="flex:1;">
+              <strong>{{ item.projeto }}</strong>
+              <div class="text-muted" style="font-size:0.82rem;">
+                {% if item.relator and item.relator != 'Não atribuído' %}
+                  <span><strong>Relator:</strong> {{ item.relator }}</span> &nbsp;
+                {% endif %}
+                {% if item.situacao and item.situacao != 'N/D' %}
+                  <span><strong>Situação:</strong> {{ item.situacao }}</span>
+                {% endif %}
+              </div>
+              <div style="font-size:0.85rem;margin-top:2px;">{{ item.ementa }}</div>
+              <div id="resumo-ia-{{ item.id_principal }}"
+                   data-id="{{ item.id_principal }}"
+                   data-projeto="{{ item.projeto | replace('"','&quot;') }}"
+                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
+                   data-autor="{{ item.autor | replace('"','&quot;') }}"
+                   class="resumo-ia-ementa"
+                   style="font-size:0.80rem;color:#1A6B3A;font-weight:500;display:none;margin-top:2px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="alert alert-info">Nenhum item encontrado na pauta para este evento.</div>
+    {% endif %}
     {% else %}
     {% if itens %}
       {% for item in itens %}
