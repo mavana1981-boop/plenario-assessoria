@@ -1807,7 +1807,7 @@ Seja detalhado e técnico. Máximo 600 palavras. Não use ### ou ** no texto, ap
                 headers={"Content-Type": "application/json"},
                 json={
                     "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.3}, "thinkingConfig": {"thinkingBudget": 0}
+                    "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.3}
                 },
                 timeout=30
             )
@@ -2402,8 +2402,7 @@ Responda APENAS com o JSON, sem ```json, sem comentários."""
                 f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
                 headers={"Content-Type": "application/json"},
                 json={"contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"maxOutputTokens": 512, "temperature": 0.2},
-                      "thinkingConfig": {"thinkingBudget": 0}},
+                      "generationConfig": {"maxOutputTokens": 512, "temperature": 0.2}},
                 timeout=30
             )
             r.raise_for_status()
@@ -2639,7 +2638,7 @@ Não use ### ou ** fora do HTML."""
                 f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
                 headers={"Content-Type": "application/json"},
                 json={"contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"maxOutputTokens": 512, "temperature": 0.3}, "thinkingConfig": {"thinkingBudget": 0}},
+                      "generationConfig": {"maxOutputTokens": 512, "temperature": 0.3}},
                 timeout=30
             )
             r.raise_for_status()
@@ -3042,7 +3041,7 @@ Proposição: {resumo[:300]}"""
     for key, url, body_fn in [
         (gemini_key,
          f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
-         lambda: {"contents":[{"parts":[{"text":prompt_kw}]}],"generationConfig":{"maxOutputTokens":20,"temperature":0.1},"thinkingConfig":{"thinkingBudget":0}}),
+         lambda: {"contents":[{"parts":[{"text":prompt_kw}]}],"generationConfig":{"maxOutputTokens":20,"temperature":0.1}}),
         (groq_key,
          "https://api.groq.com/openai/v1/chat/completions",
          lambda: {"model":"llama-3.3-70b-versatile","messages":[{"role":"user","content":prompt_kw}],"max_tokens":20,"temperature":0.1}),
@@ -3201,7 +3200,7 @@ Responda APENAS com o resumo, sem introdução, sem aspas."""
     for key, url, body_fn in [
         (gemini_key,
          f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
-         lambda: {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 100, "temperature": 0.2}, "thinkingConfig": {"thinkingBudget": 0}}),
+         lambda: {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 100, "temperature": 0.2}}),
         (groq_key,
          "https://api.groq.com/openai/v1/chat/completions",
          lambda: {"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "max_tokens": 100, "temperature": 0.2}),
