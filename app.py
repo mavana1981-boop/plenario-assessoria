@@ -294,10 +294,14 @@ with app.app_context():
             'luisa.marreco': 'minoria', 'luiz.garibaldi': 'minoria',
             'assessor_plenario': 'minoria', 'marcelo.oliveira': 'minoria',
         }
-        # Atualiza categorias — sempre roda para corrigir registros existentes
+        # Atualiza categoria SOMENTE se ainda estiver como 'geral' (padrão inicial)
+        # Não sobrescreve categorias editadas manualmente pelo admin
         for _un, _cat in _cats.items():
             try:
-                c.execute(f'UPDATE users SET categoria={_p} WHERE username={_p}', (_cat, _un))
+                c.execute(
+                    f'UPDATE users SET categoria={_p} WHERE username={_p} AND categoria={_p}',
+                    (_cat, _un, 'geral')
+                )
             except Exception:
                 pass
 
