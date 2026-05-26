@@ -704,8 +704,8 @@
                 return suf ? `${a.nome} ${suf}` : a.nome;
               }).filter(Boolean);
               if (autores.length > 0) {
-                spanAutor.textContent = autores.length > 3
-                  ? autores.slice(0,3).join(', ') + ' e outros.'
+                spanAutor.textContent = autores.length > 2
+                  ? autores.slice(0,2).join(', ') + ' e outros.'
                   : autores.join(', ');
               }
             }
