@@ -263,17 +263,15 @@ def exportar_pauta(evento_id):
             alignment=TA_CENTER, textColor=C_AZUL_TABELA)
         sNum = ParagraphStyle("sNum", parent=SS["Normal"],
             fontSize=9, leading=11, alignment=TA_CENTER)
-        sEmenta = ParagraphStyle("sEmenta", parent=SS["Normal"],
-            fontSize=8.5, leading=12, alignment=TA_CENTER, wordWrap="CJK")
+        sObjeto = ParagraphStyle("sObjeto", parent=SS["Normal"],
+            fontSize=8.5, leading=12, alignment=TA_CENTER, wordWrap="CJK",
+            textColor=C_VERDE)
         sOri_tab = ParagraphStyle("sOri_tab", parent=SS["Normal"],
             fontName="Helvetica-Bold", fontSize=9, leading=11,
             alignment=TA_CENTER)
         sProjTitulo = ParagraphStyle("sProjTitulo", parent=SS["Normal"],
             fontName="Helvetica-Bold", fontSize=9.5, leading=12,
             alignment=TA_CENTER)
-        sProjResumo = ParagraphStyle("sProjResumo", parent=SS["Normal"],
-            fontName="Helvetica-Oblique", fontSize=7.5, leading=10,
-            textColor=C_VERDE, alignment=TA_CENTER)
 
         # ── Tabela resumo ──
         story.append(Paragraph("Itens da Pauta", sBold))
@@ -282,7 +280,7 @@ def exportar_pauta(evento_id):
         thead = [
             Paragraph("<b>#</b>", sThead),
             Paragraph("<b>Proposição</b>", sThead),
-            Paragraph("<b>Ementa</b>", sThead),
+            Paragraph("<b>Objeto</b>", sThead),
             Paragraph("<b>Orientação</b>", sThead),
         ]
         tdata = [thead]
@@ -291,22 +289,31 @@ def exportar_pauta(evento_id):
             ori = (it.get("orientacao","") or "").strip().upper()
             cor_ori, _ = CORES_ORI.get(ori, (C_CINZA, C_CINZA_LT))
 
-            # Coluna proposição: título em negrito colorido + resumo IA menor em verde
-            proj_titulo = it.get("projeto","—")
-            resumo_ia_tab = _strip_html(it.get("resumo_ia","") or "")
-            from reportlab.platypus import KeepInFrame
-            cell_proj = []
-            cell_proj.append(Paragraph(proj_titulo,
-                ParagraphStyle("ptt"+str(it.get("ordem",0)),
-                    parent=sProjTitulo, textColor=cor_t)))
-            if resumo_ia_tab:
+            # Coluna proposição: título negrito + ementa abaixo em itálico menor na mesma cor
+            proj_titulo  = it.get("projeto","—")
+            ementa_curta = _strip_html(it.get("ementa","") or "")
+
+            sProjEmenta = ParagraphStyle("pe"+str(it.get("ordem",0)),
+                parent=SS["Normal"],
+                fontName="Helvetica-Oblique", fontSize=7, leading=9,
+                textColor=cor_t, alignment=TA_CENTER, wordWrap="CJK")
+
+            cell_proj = [
+                Paragraph(proj_titulo,
+                    ParagraphStyle("ptt"+str(it.get("ordem",0)),
+                        parent=sProjTitulo, textColor=cor_t)),
+            ]
+            if ementa_curta:
                 cell_proj.append(Spacer(1, 2))
-                cell_proj.append(Paragraph(resumo_ia_tab, sProjResumo))
+                cell_proj.append(Paragraph(ementa_curta, sProjEmenta))
+
+            # Coluna objeto: resumo IA em verde sem itálico
+            resumo_ia_tab = _strip_html(it.get("resumo_ia","") or "")
 
             tdata.append([
                 Paragraph(str(it.get("ordem","—")), sNum),
                 cell_proj,
-                Paragraph(_strip_html(it.get("ementa","—") or "—"), sEmenta),
+                Paragraph(resumo_ia_tab or "—", sObjeto),
                 Paragraph(ori or "—",
                     ParagraphStyle("ot"+str(it.get("ordem",0)),
                         parent=sOri_tab, textColor=cor_ori)),
