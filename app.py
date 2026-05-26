@@ -583,7 +583,36 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                 ordem[chave] = num
                 logger.info(f"  Item {num} (REQ texto): REQ {num_p}/{ano} → {chave}")
 
-        # REQ sem número (s/n): "N. Requerimento, de AAAA" ou "N. Requerimento s/n"
+        # Fallback robusto: extrai ordem de qualquer linha "N. TIPO Nº X/ANO" no texto
+        # Cobre casos onde o número não está centralizado (PDF com layout diferente)
+        for m in re.finditer(
+            r'^(\d{1,2})\.\s+(' +
+            r'(?:PROJETO\s+DE\s+LEI(?:\s+COMPLEMENTAR)?|' +
+            r'PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O|' +
+            r'MEDIDA\s+PROVIS[OÓ]RIA|' +
+            r'PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO|' +
+            r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O|' +
+            r'Requerimento)' +
+            r'\s+[Nn][º°.]?\s*([\d.]+)(?:-[A-Z])?,?\s*[Dd][Ee]\s+(\d{4}))',
+            texto_total, re.MULTILINE | re.IGNORECASE
+        ):
+            num  = int(m.group(1))
+            tipo_txt = m.group(2).upper()
+            num_p = m.group(3).replace('.', '')
+            ano   = m.group(4)
+            if 'COMPLEMENTAR' in tipo_txt:  sigla = 'PLP'
+            elif 'EMENDA' in tipo_txt:      sigla = 'PEC'
+            elif 'PROVIS' in tipo_txt:      sigla = 'MPV'
+            elif 'DECRETO' in tipo_txt:     sigla = 'PDL'
+            elif 'RESOLU' in tipo_txt:      sigla = 'PRC'
+            elif 'REQUERIMENTO' in tipo_txt: sigla = 'REQ'
+            else:                           sigla = 'PL'
+            chave = _normalizar_codigo(f"{sigla} {num_p}/{ano}")
+            if chave not in ordem and num <= 30:
+                ordem[chave] = num
+                logger.info(f"  Item {num} (fallback texto): {sigla} {num_p}/{ano} → {chave}")
+
+        # REQ sem número (s/n)
         req_sn_count = 0
         for m in re.finditer(
             r'^(\d+)\.\s+Requerimento(?:\s+s/n|\s*,\s*de\s+\d{4})',
