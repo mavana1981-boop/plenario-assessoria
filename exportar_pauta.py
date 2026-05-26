@@ -328,23 +328,41 @@ def exportar_pauta(evento_id):
                 ]))
             bloco.append(hdr_tbl)
 
-            # Info autor/relator/situação — fundo claro
-            info_rows = [
-                [Paragraph(f"<b>Autor:</b> {it.get('autor','N/D')}", sNormal),
-                 Paragraph(f"<b>Relator:</b> {it.get('relator','N/D')}", sNormal)],
-            ]
-            if it.get("situacao") and it["situacao"] != "N/D":
+            # Info autor/relator/situação — fundo claro, autor truncado
+            def _trunc_autor(txt, max_chars=120):
+                if not txt: return 'N/D'
+                partes = txt.split(',')
+                out = []
+                for p in partes:
+                    if sum(len(x) for x in out) + len(p) > max_chars:
+                        out.append(' e outros.')
+                        break
+                    out.append(p)
+                return ','.join(out).strip()
+
+            autor_txt  = _trunc_autor(it.get('autor','N/D'))
+            relator_txt = (it.get('relator','') or 'N/D')[:80]
+            sit_txt    = it.get('situacao','') or ''
+
+            sInfo = ParagraphStyle("sInfo"+str(it.get('ordem',0)),
+                parent=sNormal, fontSize=8.5, leading=11, wordWrap='CJK')
+
+            info_rows = [[
+                Paragraph(f"<b>Autor:</b> {autor_txt}", sInfo),
+                Paragraph(f"<b>Relator:</b> {relator_txt}", sInfo),
+            ]]
+            if sit_txt and sit_txt != "N/D":
                 info_rows.append([
-                    Paragraph(f"<b>Situação:</b> {it['situacao']}", sNormal),
-                    Paragraph("", sNormal),
+                    Paragraph(f"<b>Situação:</b> {sit_txt}", sInfo),
+                    Paragraph("", sInfo),
                 ])
             info_tbl = Table(info_rows, colWidths=[doc.width/2, doc.width/2])
             info_tbl.setStyle(TableStyle([
-                ("BACKGROUND", (0,0), (-1,-1), cor_bg),
-                ("TOPPADDING", (0,0), (-1,-1), 4),
-                ("BOTTOMPADDING",(0,0),(-1,-1), 4),
-                ("LEFTPADDING", (0,0), (-1,-1), 8),
-                ("LINEBELOW", (0,-1), (-1,-1), 0.5, cor_t),
+                ("BACKGROUND",    (0,0), (-1,-1), cor_bg),
+                ("TOPPADDING",    (0,0), (-1,-1), 3),
+                ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+                ("LEFTPADDING",   (0,0), (-1,-1), 8),
+                ("LINEBELOW",     (0,-1), (-1,-1), 0.5, cor_t),
             ]))
             bloco.append(info_tbl)
 
