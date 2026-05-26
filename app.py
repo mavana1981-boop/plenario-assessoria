@@ -1751,7 +1751,31 @@ def analisar_ia():
         ref_linha    = 'texto original da proposição'
         contexto_doc = ''
 
-    prompt = f"""Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil.
+    # Detecta se autoria/relator é de partido de esquerda ou governo
+    PARTIDOS_ESQUERDA = {'PT', 'REDE', 'PSOL', 'PCdoB', 'PDT', 'SOLIDARIEDADE', 'GOVERNO'}
+    def tem_partido_esquerda(texto):
+        if not texto: return False
+        for p in PARTIDOS_ESQUERDA:
+            if re.search(rf'\b{re.escape(p)}\b', texto, re.IGNORECASE):
+                return True
+        return False
+
+    eh_esquerda = tem_partido_esquerda(autor) or tem_partido_esquerda(relator)
+
+    secao_criticas = ""
+    if eh_esquerda:
+        secao_criticas = """
+<br>
+<p><strong style="color:#8B0000;">⚠️ CRÍTICAS E PONTOS DE COMBATE</strong><br>
+<em style="color:#8B0000;">[Autoria ou relatoria de partido de esquerda/governo]</em></p>
+<ul>
+<li><strong>Críticas ao mérito:</strong> [principais críticas técnicas — contradições, falhas, impactos negativos]</li>
+<li><strong>Contradições com o discurso da esquerda:</strong> [onde o projeto contradiz posições históricas do PT/PSOL/PCdoB — privatizações, redução de direitos, favorecimento de setores privados]</li>
+<li><strong>Discurso de combate para o Plenário:</strong> [argumento direto e combativo para pronunciamento — inclua exemplos de declarações contraditórias de parlamentares da esquerda]</li>
+<li><strong>Questionamentos ao relator:</strong> [perguntas incisivas para fazer ao relator no plenário]</li>
+</ul>"""
+
+    prompt = f"""Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil, trabalhando para a Oposição e Minoria.
 
 **Proposição:** {projeto}
 **Autor(es):** {autor}
@@ -1771,8 +1795,9 @@ Gere uma nota técnica em HTML com EXATAMENTE este formato:
 <p><strong>Impacto Esperado</strong><br>[texto detalhado]</p>
 <br>
 <p><strong>Pontos de Atenção</strong><br><ul><li>[item]</li><li>[item]</li></ul></p>
+{secao_criticas}
 
-Seja detalhado e técnico. Máximo 500 palavras. Não use ### ou ** no texto, apenas HTML."""
+Seja detalhado e técnico. Máximo 600 palavras. Não use ### ou ** no texto, apenas HTML."""
 
     # Tenta Gemini primeiro, fallback para Groq
     if gemini_key:
@@ -1790,29 +1815,13 @@ Seja detalhado e técnico. Máximo 500 palavras. Não use ### ou ** no texto, ap
             texto = r.json()['candidates'][0]['content']['parts'][0]['text']
             return jsonify({'resumo': texto, 'fonte': 'gemini', 'parecer': parecer_info})
         except Exception as e:
-            logger.warning(f"Gemini falhou, usando Groq: {e}")
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status == 429:
+                logger.warning(f"Gemini 429 — limite atingido")
+                return jsonify({'error': 'Limite de requisições atingido. Aguarde alguns segundos e tente novamente.'}), 429
+            logger.warning(f"Gemini falhou: {e}")
 
-    # Fallback: Groq
-    if groq_key:
-        try:
-            r = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                json={
-                    "model": "llama-3.3-70b-versatile",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 1024,
-                    "temperature": 0.3
-                },
-                timeout=30
-            )
-            r.raise_for_status()
-            return jsonify({'resumo': r.json()['choices'][0]['message']['content'], 'fonte': 'groq', 'parecer': parecer_info})
-        except Exception as e:
-            logger.error(f"Groq também falhou: {e}")
-            return jsonify({'error': str(e)}), 500
-
-    return jsonify({'error': 'Nenhuma chave de IA configurada (GEMINI_API_KEY ou GROQ_API_KEY).'}), 500
+    return jsonify({'error': 'Falha ao gerar análise. Tente novamente.'}), 500
 
 @app.route('/infografico/<int:evento_id>')
 @login_required
@@ -2386,35 +2395,28 @@ Com base na descrição e análise acima, gere APENAS um JSON válido (sem markd
 
 Responda APENAS com o JSON, sem ```json, sem comentários."""
 
-    for key, model, url_ai in [
-        (gemini_key, None, f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}"),
-        (groq_key,   "llama-3.3-70b-versatile", "https://api.groq.com/openai/v1/chat/completions")
-    ]:
-        if not key:
-            continue
+    if gemini_key:
         try:
-            if 'generativelanguage' in url_ai:
-                r = requests.post(url_ai, headers={"Content-Type": "application/json"},
-                    json={"contents": [{"parts": [{"text": prompt}]}],
-                          "generationConfig": {"maxOutputTokens": 512, "temperature": 0.2}, "thinkingConfig": {"thinkingBudget": 0}}, timeout=30)
-                r.raise_for_status()
-                texto = r.json()['candidates'][0]['content']['parts'][0]['text']
-            else:
-                r = requests.post(url_ai,
-                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                    json={"model": model, "messages": [{"role": "user", "content": prompt}],
-                          "max_tokens": 512, "temperature": 0.2}, timeout=30)
-                r.raise_for_status()
-                texto = r.json()['choices'][0]['message']['content']
-
-            # Extrai JSON
+            r = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+                headers={"Content-Type": "application/json"},
+                json={"contents": [{"parts": [{"text": prompt}]}],
+                      "generationConfig": {"maxOutputTokens": 512, "temperature": 0.2},
+                      "thinkingConfig": {"thinkingBudget": 0}},
+                timeout=30
+            )
+            r.raise_for_status()
+            texto = r.json()['candidates'][0]['content']['parts'][0]['text']
             texto = re.sub(r'```(?:json)?|```', '', texto).strip()
             dados = json.loads(texto)
             return jsonify({'ok': True, 'dados': dados})
         except Exception as e:
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status == 429:
+                return jsonify({'ok': False, 'error': 'Limite de requisições atingido. Aguarde alguns segundos.'}), 429
             logger.warning(f"Erro ao gerar quadro DTQ: {e}")
 
-    return jsonify({'ok': False, 'error': 'Falha na IA'}), 500
+    return jsonify({'ok': False, 'error': 'Falha na IA — verifique a chave Gemini.'}), 500
 
 @app.route('/buscar_votos/<int:evento_id>')
 @login_required
@@ -2643,27 +2645,12 @@ Não use ### ou ** fora do HTML."""
             texto = r.json()['candidates'][0]['content']['parts'][0]['text']
             return jsonify({'resumo': texto, 'doc_usado': tipo_doc})
         except Exception as e:
-            logger.warning(f"Gemini falhou em analisar_destaque: {e} — status: {getattr(getattr(e,'response',None),'status_code','?')}")
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status == 429:
+                return jsonify({'error': 'Limite de requisições atingido. Aguarde alguns segundos e tente novamente.'}), 429
+            logger.warning(f"Gemini falhou em analisar_destaque: {e}")
 
-    # Fallback Groq — reduz texto para evitar rate limit
-    if groq_key:
-        try:
-            prompt_groq = prompt.replace(texto_truncado or '', (texto_truncado or '')[:4000]) if texto_truncado else prompt
-            r = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                json={"model": "llama-3.3-70b-versatile",
-                      "messages": [{"role": "user", "content": prompt_groq}],
-                      "max_tokens": 512, "temperature": 0.3},
-                timeout=30
-            )
-            r.raise_for_status()
-            return jsonify({'resumo': r.json()['choices'][0]['message']['content'], 'doc_usado': tipo_doc})
-        except Exception as e:
-            logger.error(f"Groq também falhou: {e}")
-            return jsonify({'error': str(e)}), 500
-
-    return jsonify({'error': 'Nenhuma chave de IA configurada.'}), 500
+    return jsonify({'error': 'Falha ao gerar análise. Tente novamente.'}), 500
 
 @app.route('/buscar_url_prlp', methods=['POST'])
 @login_required
