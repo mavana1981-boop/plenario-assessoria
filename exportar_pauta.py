@@ -85,6 +85,41 @@ def _strip_html(s):
     txt = re.sub(r"\s+", " ", txt)
     return txt.strip()
 
+def _html_para_paragrafos(html, estilo):
+    """
+    Converte HTML do editor Quill em lista de Paragraphs ReportLab.
+    Preserva quebras de linha, ícones/emojis e estrutura de listas.
+    Cada <p>, <li>, <br> vira um parágrafo separado.
+    """
+    from reportlab.platypus import Paragraph
+    import html as _html_mod
+
+    s = str(html or "")
+
+    # Normaliza quebras — garante que cada bloco vire linha separada
+    s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"</p>", "\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"</li>", "\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"<li[^>]*>", "• ", s, flags=re.IGNORECASE)
+    # Remove demais tags preservando conteúdo
+    s = re.sub(r"<[^>]+>", "", s)
+    # Decodifica entidades HTML
+    s = _html_mod.unescape(s)
+
+    # Divide em linhas, remove vazias consecutivas
+    linhas = [l.strip() for l in s.split("\n")]
+    paragrafos = []
+    for linha in linhas:
+        if linha:
+            paragrafos.append(Paragraph(linha, estilo))
+        else:
+            # Linha vazia = pequeno espaço entre blocos
+            from reportlab.platypus import Spacer
+            if paragrafos:  # não adiciona espaço no início
+                paragrafos.append(Spacer(1, 3))
+
+    return paragrafos if paragrafos else [Paragraph("", estilo)]
+
 # ── Cabeçalho / Rodapé ─────────────────────────────────────────────────────
 def _header_footer(canvas, doc, logos, header_text):
     w, h = A4
@@ -234,11 +269,11 @@ def exportar_pauta(evento_id):
             fontSize=9.5, leading=13, wordWrap="CJK")
         sBold = ParagraphStyle("sBold", parent=SS["Normal"],
             fontName="Helvetica-Bold", fontSize=10, leading=13)
-        # Nota técnica: fonte Courier para destacar
+        # Nota técnica: Helvetica legível, preta
         sNota = ParagraphStyle("sNota", parent=SS["Normal"],
-            fontName="Courier", fontSize=9, leading=13,
-            textColor=colors.HexColor("#1a1a2a"), wordWrap="CJK",
-            leftIndent=8, rightIndent=8)
+            fontName="Helvetica", fontSize=9, leading=14,
+            textColor=colors.black, wordWrap="CJK",
+            leftIndent=6, rightIndent=6)
         sOri = ParagraphStyle("sOri", parent=SS["Normal"],
             fontName="Helvetica-Bold", fontSize=13, leading=16,
             alignment=TA_CENTER)
@@ -449,7 +484,7 @@ def exportar_pauta(evento_id):
                 ]))
                 bloco.append(ori_tbl)
 
-            # Nota técnica — fonte Courier, fundo levemente cinza
+            # Nota técnica — Helvetica preta, preservando ícones e quebras de linha
             if resumo_materia:
                 bloco.append(Spacer(1, 5))
                 nota_hdr = Table([[Paragraph("<b>NOTA TÉCNICA</b>",
@@ -464,15 +499,22 @@ def exportar_pauta(evento_id):
                 ]))
                 bloco.append(nota_hdr)
 
-                nota_tbl = Table([[Paragraph(resumo_materia, sNota)]],
-                    colWidths=[doc.width])
+                # Converte HTML preservando ícones e quebras de linha
+                raw_html = it.get("resumo_materia", "") or ""
+                paras_nota = _html_para_paragrafos(raw_html, sNota)
+
+                # Monta tabela com todos os parágrafos
+                rows = [[p] for p in paras_nota]
+                nota_tbl = Table(rows, colWidths=[doc.width])
                 nota_tbl.setStyle(TableStyle([
                     ("BACKGROUND",(0,0),(-1,-1), colors.HexColor("#F8F8F8")),
-                    ("TOPPADDING",(0,0),(-1,-1), 6),
-                    ("BOTTOMPADDING",(0,0),(-1,-1), 6),
+                    ("TOPPADDING",(0,0),(-1,-1), 3),
+                    ("BOTTOMPADDING",(0,0),(-1,-1), 3),
                     ("LEFTPADDING",(0,0),(-1,-1), 8),
                     ("RIGHTPADDING",(0,0),(-1,-1), 8),
                     ("BOX",(0,0),(-1,-1), 0.5, C_CINZA),
+                    ("TOPPADDING",(0,0),(-1,0), 6),
+                    ("BOTTOMPADDING",(0,-1),(-1,-1), 6),
                 ]))
                 bloco.append(nota_tbl)
 
