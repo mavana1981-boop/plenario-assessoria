@@ -853,10 +853,37 @@ def fetch_pauta(evento_id, force_reload=False):
 
         if ordem_oficial:
             # PASSO 3a: PDF como base — cria item para cada código do PDF em ordem
+
+            # Pré-monta mapeamento REQ s/n: chaves REQSN → item da API correspondente
+            # Identifica REQ sem número na API (projeto não tem dígitos antes da /)
+            req_sn_api = []
+            for item in (itens_raw or []):
+                cod = item['codigo'].upper()
+                sigla = cod.split()[0] if cod.split() else ''
+                if sigla in ('REQ','RQS','RQU','REC'):
+                    # REQ sem número: não tem dígitos significativos no código
+                    if not re.search(r'\d{2,}', cod.split('/')[0]):
+                        req_sn_api.append(item)
+
+            # Ordena chaves REQSN pela posição no PDF
+            chaves_reqsn_pdf = sorted(
+                [k for k in ordem_oficial if k.startswith('REQSN')],
+                key=lambda k: ordem_oficial[k]
+            )
+            # Mapeia chave REQSN → item da API (por ordem de aparição)
+            reqsn_para_api = {}
+            for chave, item in zip(chaves_reqsn_pdf, req_sn_api):
+                reqsn_para_api[chave] = item
+                logger.info(f"REQ s/n match: {chave} → {item['codigo']} ('{item.get('ementa','')[:40]}')")
+
             codigos_pdf = sorted(ordem_oficial.keys(), key=lambda k: ordem_oficial[k])
 
             for cod_pdf in codigos_pdf:
-                item_api = api_por_codigo.get(cod_pdf)
+                # Para REQSN, usa o item da API mapeado
+                if cod_pdf.startswith('REQSN') and cod_pdf in reqsn_para_api:
+                    item_api = reqsn_para_api[cod_pdf]
+                else:
+                    item_api = api_por_codigo.get(cod_pdf)
 
                 if item_api:
                     id_p = item_api.get('id_principal')
@@ -926,13 +953,53 @@ def fetch_pauta(evento_id, force_reload=False):
                     })
 
             # Adiciona itens da API não encontrados no PDF ao final
+            # Tenta primeiro um matching fuzzy por número para evitar itens perdidos
+            numeros_no_pdf = {}
+            for chave_pdf, pos in ordem_oficial.items():
+                m_num = re.search(r'(\d{4,})', chave_pdf)
+                if m_num:
+                    numeros_no_pdf[m_num.group(1)] = (chave_pdf, pos)
+
             for item in (itens_raw or []):
                 id_p = item.get('id_principal')
                 if not id_p or id_p in vistos_ids:
                     continue
                 cod = _normalizar_codigo(item['codigo'])
                 if cod in ordem_oficial:
-                    continue  # já foi processado
+                    continue
+
+                # Tenta matching fuzzy: extrai número do código da API e busca no PDF
+                m_num = re.search(r'(\d{4,})', cod)
+                if m_num and m_num.group(1) in numeros_no_pdf:
+                    chave_pdf_match, pos_match = numeros_no_pdf[m_num.group(1)]
+                    logger.info(f"Fuzzy match: {item['codigo']} → {chave_pdf_match} pos={pos_match}")
+                    # Substitui o item "dados não disponíveis" que foi criado para essa chave
+                    for idx_it, it_existente in enumerate(itens):
+                        if it_existente.get('projeto_original','').replace(' ','') == chave_pdf_match:
+                            # Substitui com dados completos da API
+                            vistos_ids.add(id_p)
+                            key = f"PROP_{id_p}"
+                            itens[idx_it] = {
+                                'ordem':            it_existente['ordem'],
+                                'id_principal':     id_p,
+                                'projeto':          extrair_ref_pl(item['codigo'], item['ementa']),
+                                'projeto_original': item['codigo'],
+                                'ementa':           item['ementa'],
+                                'autor':            item.get('autores', 'N/D'),
+                                'relator':          item.get('relator', 'Não atribuído'),
+                                'situacao':         item.get('situacao', 'N/D'),
+                                'secao':            item.get('secao', 'N/D'),
+                                'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
+                                'orientacao':       notas.get(key, {}).get('orientacao', ''),
+                                'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
+                                'saved_by':         notas.get(key, {}).get('saved_by', ''),
+                                'saved_at':         notas.get(key, {}).get('saved_at', ''),
+                                'destaques_emendas': []
+                            }
+                            logger.info(f"  Substituído dados mínimos por dados completos: {item['codigo']}")
+                            break
+                    continue
+
                 vistos_ids.add(id_p)
                 key = f"PROP_{id_p}"
                 itens.append({
