@@ -2753,96 +2753,83 @@ async function exportarOrientacoesPDF() {
 
   async function verificarViaHTML() {
     try {
+      atualizarStatusTxt('⏳ buscando...');
       const r = await fetch(
         `https://www.camara.leg.br/evento-legislativo/${EVENTO_ID_MON}`,
-        { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } }
+        { cache: 'no-store' }
       );
+
       if (!r.ok) {
-        console.warn('Monitor: HTTP', r.status);
+        atualizarStatusTxt(`⚠️ HTTP ${r.status}`);
         return;
       }
+
       const html   = await r.text();
+      if (!html || html.length < 100) {
+        atualizarStatusTxt('⚠️ resposta vazia');
+        return;
+      }
+
       const parser = new DOMParser();
       const doc2   = parser.parseFromString(html, 'text/html');
-
-      // Extrai texto relevante — remove scripts/styles
       doc2.querySelectorAll('script,style,noscript').forEach(el => el.remove());
       const textoTotal = (doc2.body?.textContent || '').replace(/\s+/g, ' ').trim();
 
-      // Log para debug
-      console.log('[Monitor] Texto extraído (500 chars):', textoTotal.substring(0, 500));
       const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-      atualizarStatusTxt(`✓ ${agora} — ${textoTotal.length} chars`);
+      atualizarStatusTxt(`✓ ${agora} (${textoTotal.length} chars)`);
+      console.log('[Monitor] OK —', textoTotal.length, 'chars. Trecho:', textoTotal.substring(0, 200));
 
-      // Na primeira verificação: salva snapshot do texto completo como baseline
       if (_primeiraVerif) {
         _statusAnterior['__snapshot__'] = textoTotal;
         _primeiraVerif = false;
-        console.log('[Monitor] Baseline salvo. Chars:', textoTotal.length);
+        console.log('[Monitor] Baseline salvo.');
         return;
       }
 
       const snapAnterior = _statusAnterior['__snapshot__'] || '';
-
-      // Termos que indicam mudança de status
-      const termosStatus = [
-        { termo: 'em análise',         label: 'Em Análise',       emoji: '🔴' },
-        { termo: 'em votação',          label: 'Em Votação',        emoji: '🗳️' },
-        { termo: 'em discussão',        label: 'Em Discussão',      emoji: '💬' },
-        { termo: 'em apreciação',       label: 'Em Apreciação',     emoji: '🔵' },
-        { termo: 'votação nominal',     label: 'Votação Nominal',   emoji: '🗳️' },
-        { termo: 'aprovado',            label: 'Aprovado',          emoji: '✅' },
-        { termo: 'rejeitado',           label: 'Rejeitado',         emoji: '❌' },
-        { termo: 'retirado de pauta',   label: 'Retirado de Pauta', emoji: '↩️' },
-        { termo: 'adiado',              label: 'Adiado',            emoji: '⏸️' },
-      ];
-
-      const textoLower    = textoTotal.toLowerCase();
-      const snapLower     = snapAnterior.toLowerCase();
-      const itensNossos   = window.ITENS_DATA || [];
-
-      // Verifica mudanças gerais no texto
-      if (textoTotal !== snapAnterior) {
-        console.log('[Monitor] Página mudou!');
-
-        // Para cada termo de status, verifica se apareceu ou mudou
-        for (const { termo, label, emoji } of termosStatus) {
-          const eraPresente  = snapLower.includes(termo);
-          const agoraPresente = textoLower.includes(termo);
-
-          if (!eraPresente && agoraPresente) {
-            // Novo status apareceu — tenta casar com item da pauta
-            console.log('[Monitor] Novo status detectado:', label);
-
-            // Pega contexto ao redor do termo
-            const idx = textoLower.indexOf(termo);
-            const contexto = textoTotal.substring(Math.max(0, idx - 150), idx + 200);
-
-            // Tenta casar com item da pauta pelo número
-            let itemCasado = null;
-            for (const it of itensNossos) {
-              const nums = (it.projeto || '').match(/\d{3,}/g) || [];
-              if (nums.some(n => contexto.includes(n))) {
-                itemCasado = it;
-                break;
-              }
-            }
-
-            const titulo  = itemCasado ? `${emoji} ${itemCasado.projeto}` : `${emoji} Plenário`;
-            const detalhe = itemCasado ? (itemCasado.ementa || '').substring(0, 120) : contexto.substring(0, 120);
-            dispararAlerta(titulo, detalhe, label);
-            break; // dispara só o mais importante
-          }
-        }
-
-        // Atualiza snapshot
-        _statusAnterior['__snapshot__'] = textoTotal;
-      } else {
+      if (textoTotal === snapAnterior) {
         console.log('[Monitor] Sem mudanças.');
+        return;
       }
 
+      console.log('[Monitor] Página mudou!');
+      const textoLower = textoTotal.toLowerCase();
+      const snapLower  = snapAnterior.toLowerCase();
+
+      const termosStatus = [
+        { termo: 'em análise',       label: 'Em Análise',       emoji: '🔴' },
+        { termo: 'em votação',       label: 'Em Votação',        emoji: '🗳️' },
+        { termo: 'votação nominal',  label: 'Votação Nominal',   emoji: '🗳️' },
+        { termo: 'em discussão',     label: 'Em Discussão',      emoji: '💬' },
+        { termo: 'em apreciação',    label: 'Em Apreciação',     emoji: '🔵' },
+        { termo: 'aprovado',         label: 'Aprovado',          emoji: '✅' },
+        { termo: 'rejeitado',        label: 'Rejeitado',         emoji: '❌' },
+        { termo: 'retirado de pauta',label: 'Retirado de Pauta', emoji: '↩️' },
+        { termo: 'adiado',           label: 'Adiado',            emoji: '⏸️' },
+      ];
+
+      for (const { termo, label, emoji } of termosStatus) {
+        if (!snapLower.includes(termo) && textoLower.includes(termo)) {
+          const idx     = textoLower.indexOf(termo);
+          const contexto = textoTotal.substring(Math.max(0, idx-150), idx+200);
+          const itensNossos = window.ITENS_DATA || [];
+          let itemCasado = null;
+          for (const it of itensNossos) {
+            const nums = (it.projeto||'').match(/\d{3,}/g) || [];
+            if (nums.some(n => contexto.includes(n))) { itemCasado = it; break; }
+          }
+          const titulo  = itemCasado ? `${emoji} ${itemCasado.projeto}` : `${emoji} Plenário`;
+          const detalhe = itemCasado ? (itemCasado.ementa||'').substring(0,120) : contexto.substring(0,120);
+          dispararAlerta(titulo, detalhe, label);
+          break;
+        }
+      }
+
+      _statusAnterior['__snapshot__'] = textoTotal;
+
     } catch(err) {
-      console.warn('Monitor: erro —', err.message);
+      atualizarStatusTxt(`❌ ${err.message.substring(0,30)}`);
+      console.warn('[Monitor] Erro:', err);
     }
   }
 
