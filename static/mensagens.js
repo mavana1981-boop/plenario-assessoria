@@ -69,11 +69,15 @@ async function gerarMensagem() {
 
     if (tipoAtual === 'apresentacao') {
       const ementaCompleta = stripHTML(itemAtual.ementa || '');
-      // Círculo azul + "Em apreciação" + proposição + resumo IA + ementa em itálico (entre _ _)
       let linhas = [];
-      linhas.push(`🔵 *Em apreciação: ${itemAtual.projeto}*`);
-      if (resumo) linhas.push(`${resumo}`);
-      if (ementaCompleta) linhas.push(`_${ementaCompleta}_`);
+      const cabecalho = resumo ? `🔵 *Em apreciação: ${itemAtual.projeto}*\n${resumo}` : `🔵 *Em apreciação: ${itemAtual.projeto}*`;
+      linhas.push(cabecalho);
+      if (ementaCompleta) linhas.push(`*Ementa:* _${ementaCompleta}_`);
+      const autorRelator = [
+        itemAtual.autor ? `*Autor:* ${itemAtual.autor}` : '',
+        (itemAtual.relator && itemAtual.relator !== 'Não atribuído') ? `*Relator:* ${itemAtual.relator}` : '',
+      ].filter(Boolean).join('\n');
+      if (autorRelator) linhas.push(autorRelator);
       msg = linhas.join('\n\n');
 
     } else if (tipoAtual === 'aprovada_simbolica' || tipoAtual === 'aprovado_simbolico') {
