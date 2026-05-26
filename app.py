@@ -547,20 +547,20 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                     )
 
                     codigo = _extrair_codigo_do_bloco(bloco)
-                    if num == 15 or (codigo and '3066' in codigo):
-                        logger.info(f"  DEBUG item {num}: bloco='{bloco[:150]}' → codigo={codigo}")
+                    logger.info(f"  Item {num} (centralizado): bloco='{bloco[:200]}' → codigo={codigo}")
                     if codigo:
                         chave = _normalizar_codigo(codigo)
-                        # Cada número de posição só pode ter UM item
-                        # Se já existe outro item nessa posição, o mais recente vence
-                        # (páginas posteriores têm o número correto)
                         posicoes_usadas = {v: k for k, v in ordem.items()}
                         if num in posicoes_usadas:
-                            # Remove entrada anterior para esta posição
                             del ordem[posicoes_usadas[num]]
                             logger.info(f"  Posição {num} sobrescrita: {posicoes_usadas[num]} → {chave}")
                         ordem[chave] = num
-                        logger.info(f"  Item {num} (centralizado): {codigo} → {chave}")
+                    else:
+                        logger.warning(f"  Item {num}: NÃO extraiu código do bloco: '{bloco[:300]}'")
+                        # Marca posição como pendente para o fallback resolver
+                        chave_pend = f"PEND{num}"
+                        if num not in ordem.values():
+                            ordem[chave_pend] = num
 
         # Fallback para REQ: formato "1. Requerimento nº X.XXX, de AAAA" (não centralizado)
         if pdf_bytes := rp.content if 'rp' in dir() else None:
@@ -584,7 +584,8 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                 logger.info(f"  Item {num} (REQ texto): REQ {num_p}/{ano} → {chave}")
 
         # Fallback robusto: extrai ordem de qualquer linha "N. TIPO Nº X/ANO" no texto
-        # Cobre casos onde o número não está centralizado (PDF com layout diferente)
+        # Sobrescreve posições PEND (não identificadas pelo parser centralizado)
+        posicoes_usadas = {v: k for k, v in ordem.items()}
         for m in re.finditer(
             r'^(\d{1,2})\.\s+(' +
             r'(?:PROJETO\s+DE\s+LEI(?:\s+COMPLEMENTAR)?|' +
@@ -597,34 +598,56 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
             texto_total, re.MULTILINE | re.IGNORECASE
         ):
             num  = int(m.group(1))
+            if num > 30:
+                continue
             tipo_txt = m.group(2).upper()
             num_p = m.group(3).replace('.', '')
             ano   = m.group(4)
-            if 'COMPLEMENTAR' in tipo_txt:  sigla = 'PLP'
-            elif 'EMENDA' in tipo_txt:      sigla = 'PEC'
-            elif 'PROVIS' in tipo_txt:      sigla = 'MPV'
-            elif 'DECRETO' in tipo_txt:     sigla = 'PDL'
-            elif 'RESOLU' in tipo_txt:      sigla = 'PRC'
+            if 'COMPLEMENTAR' in tipo_txt:   sigla = 'PLP'
+            elif 'EMENDA' in tipo_txt:       sigla = 'PEC'
+            elif 'PROVIS' in tipo_txt:       sigla = 'MPV'
+            elif 'DECRETO' in tipo_txt:      sigla = 'PDL'
+            elif 'RESOLU' in tipo_txt:       sigla = 'PRC'
             elif 'REQUERIMENTO' in tipo_txt: sigla = 'REQ'
-            else:                           sigla = 'PL'
+            else:                            sigla = 'PL'
             chave = _normalizar_codigo(f"{sigla} {num_p}/{ano}")
-            if chave not in ordem and num <= 30:
+            chave_pend = f"PEND{num}"
+            # Sobrescreve se: chave nova não existe OU posição tem uma chave PEND/REQSN
+            chave_atual = posicoes_usadas.get(num, '')
+            if chave not in ordem and (num not in posicoes_usadas or
+                    chave_atual.startswith('PEND') or chave_atual.startswith('REQSN')):
+                if chave_atual:
+                    del ordem[chave_atual]
                 ordem[chave] = num
+                posicoes_usadas[num] = chave
                 logger.info(f"  Item {num} (fallback texto): {sigla} {num_p}/{ano} → {chave}")
 
-        # REQ sem número (s/n)
+        # REQ sem número (s/n) — só para posições que continuam sem match após fallback
         req_sn_count = 0
+        posicoes_usadas_final = {v: k for k, v in ordem.items()}
         for m in re.finditer(
             r'^(\d+)\.\s+Requerimento(?:\s+s/n|\s*,\s*de\s+\d{4})',
             texto_total, re.MULTILINE | re.IGNORECASE
         ):
             num = int(m.group(1))
-            if num <= 30:
+            if num > 30:
+                continue
+            chave_atual = posicoes_usadas_final.get(num, '')
+            # Só marca como REQSN se a posição ainda está como PEND ou vazia
+            if chave_atual.startswith('PEND') or num not in posicoes_usadas_final:
+                if chave_atual:
+                    del ordem[chave_atual]
                 chave = f"REQSN{req_sn_count}"
                 req_sn_count += 1
-                if num not in ordem.values():
-                    ordem[chave] = num
-                    logger.info(f"  Item {num} (REQ s/n): chave={chave}")
+                ordem[chave] = num
+                posicoes_usadas_final[num] = chave
+                logger.info(f"  Item {num} (REQ s/n): chave={chave}")
+
+        # Remove chaves PEND que sobraram (posições não identificadas)
+        pends = [k for k in ordem if k.startswith('PEND')]
+        for k in pends:
+            logger.warning(f"  Removendo posição não identificada: {k}={ordem[k]}")
+            del ordem[k]
 
         logger.info(f"Ordem extraída do PDF evento {evento_id}: {len(ordem)} itens — {dict(list(ordem.items())[:10])}")
         return ordem
