@@ -715,10 +715,11 @@ def camara_url(href):
         url = f"https://www.camara.leg.br{href}"
     else:
         url = f"https://www.camara.leg.br/{href}"
-    # Garante /proposicoesWeb/ quando há prop_mostrarintegra sem ele
     if 'prop_mostrarintegra' in url and '/proposicoesWeb/' not in url:
         url = url.replace('camara.leg.br/prop_mostrarintegra', 'camara.leg.br/proposicoesWeb/prop_mostrarintegra')
     return url
+
+def _buscar_ordem_html(evento_id):
     """Fallback: tenta extrair ordem da página HTML de ordem do dia."""
     url = f"https://www.camara.leg.br/internet/ordemdodia/ordemDetalheReuniaoPle.asp?codReuniao={evento_id}"
     try:
