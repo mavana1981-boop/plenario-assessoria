@@ -89,34 +89,63 @@ def _html_para_paragrafos(html, estilo):
     """
     Converte HTML do editor Quill em lista de Paragraphs ReportLab.
     Preserva quebras de linha, ícones/emojis e estrutura de listas.
-    Cada <p>, <li>, <br> vira um parágrafo separado.
+    Detecta cabeçalhos de seção:
+      - Linhas com ✅ / POSITIV → verde, caps, negrito, maior
+      - Linhas com ❌ / NEGATIV → vermelho, caps, negrito, maior
     """
-    from reportlab.platypus import Paragraph
+    from reportlab.platypus import Paragraph, Spacer
+    from reportlab.lib.styles import ParagraphStyle
     import html as _html_mod
 
-    s = str(html or "")
+    C_VERDE_NT   = colors.HexColor("#1A6B3A")
+    C_VERMELHO_NT = colors.HexColor("#C0392B")
 
-    # Normaliza quebras — garante que cada bloco vire linha separada
+    s = str(html or "")
     s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"</p>", "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"</li>", "\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"</p>",      "\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"</li>",     "\n", s, flags=re.IGNORECASE)
     s = re.sub(r"<li[^>]*>", "• ", s, flags=re.IGNORECASE)
-    # Remove demais tags preservando conteúdo
-    s = re.sub(r"<[^>]+>", "", s)
-    # Decodifica entidades HTML
+    s = re.sub(r"<[^>]+>",   "",   s)
     s = _html_mod.unescape(s)
 
-    # Divide em linhas, remove vazias consecutivas
     linhas = [l.strip() for l in s.split("\n")]
     paragrafos = []
+
     for linha in linhas:
-        if linha:
-            paragrafos.append(Paragraph(linha, estilo))
-        else:
-            # Linha vazia = pequeno espaço entre blocos
-            from reportlab.platypus import Spacer
-            if paragrafos:  # não adiciona espaço no início
+        if not linha:
+            if paragrafos:
                 paragrafos.append(Spacer(1, 3))
+            continue
+
+        linha_upper = linha.upper()
+
+        # Detecta cabeçalho de seção POSITIVA
+        eh_positivo = (
+            linha.startswith("✅") or
+            "PONTOS POSITIVOS" in linha_upper or
+            "PONTO POSITIVO" in linha_upper or
+            (("POSITIV" in linha_upper) and len(linha) < 60)
+        )
+        # Detecta cabeçalho de seção NEGATIVA
+        eh_negativo = (
+            linha.startswith("❌") or
+            "PONTOS NEGATIVOS" in linha_upper or
+            "PONTO NEGATIVO" in linha_upper or
+            (("NEGATIV" in linha_upper or "CRÍTICA" in linha_upper or "CRITICA" in linha_upper) and len(linha) < 60)
+        )
+
+        if eh_positivo:
+            st = ParagraphStyle("sNotaPos", parent=estilo,
+                fontName="Helvetica-Bold", fontSize=10, leading=14,
+                textColor=C_VERDE_NT, spaceBefore=4)
+            paragrafos.append(Paragraph(linha.upper(), st))
+        elif eh_negativo:
+            st = ParagraphStyle("sNotaNeg", parent=estilo,
+                fontName="Helvetica-Bold", fontSize=10, leading=14,
+                textColor=C_VERMELHO_NT, spaceBefore=4)
+            paragrafos.append(Paragraph(linha.upper(), st))
+        else:
+            paragrafos.append(Paragraph(linha, estilo))
 
     return paragrafos if paragrafos else [Paragraph("", estilo)]
 
