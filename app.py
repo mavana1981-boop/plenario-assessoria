@@ -622,29 +622,81 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                 posicoes_usadas[num] = chave
                 logger.info(f"  Item {num} (fallback texto): {sigla} {num_p}/{ano} → {chave}")
 
-        # REQ sem número (s/n) — só para posições que continuam sem match após fallback
+        # REQ sem número (s/n ou s/nº) — só para posições que continuam como PEND
         req_sn_count = 0
         posicoes_usadas_final = {v: k for k, v in ordem.items()}
         for m in re.finditer(
-            r'^(\d+)\.\s+Requerimento(?:\s+s/n|\s*,\s*de\s+\d{4})',
+            r'^(\d+)\.\s+Requerimento\s+s/n[º°]?',
             texto_total, re.MULTILINE | re.IGNORECASE
         ):
             num = int(m.group(1))
             if num > 30:
                 continue
             chave_atual = posicoes_usadas_final.get(num, '')
-            # Só marca como REQSN se a posição ainda está como PEND ou vazia
             if chave_atual.startswith('PEND') or num not in posicoes_usadas_final:
                 if chave_atual:
                     del ordem[chave_atual]
-                chave = f"REQSN{req_sn_count}"
+                # Extrai o PL referenciado para usar como chave mais útil
+                # Ex: "para apreciação do Projeto de Lei nº 3.839, de 2023"
+                bloco_req = texto_total[m.start():m.start()+500]
+                m_pl = re.search(
+                    r'Projeto\s+de\s+Lei(?:\s+Complementar)?\s+n[º°.]?\s*([\d.]+),\s*de\s+(\d{4})',
+                    bloco_req, re.IGNORECASE
+                )
+                if m_pl:
+                    num_pl = m_pl.group(1).replace('.', '')
+                    ano_pl = m_pl.group(2)
+                    sigla_pl = 'PLP' if 'Complementar' in m_pl.group(0) else 'PL'
+                    chave = f"REQSN_{sigla_pl}{num_pl}/{ano_pl}"
+                    logger.info(f"  Item {num} (REQ s/nº → {sigla_pl} {num_pl}/{ano_pl}): chave={chave}")
+                else:
+                    chave = f"REQSN{req_sn_count}"
+                    logger.info(f"  Item {num} (REQ s/nº sem PL): chave={chave}")
                 req_sn_count += 1
                 ordem[chave] = num
                 posicoes_usadas_final[num] = chave
-                logger.info(f"  Item {num} (REQ s/n): chave={chave}")
 
-        # Remove chaves PEND que sobraram (posições não identificadas)
-        pends = [k for k in ordem if k.startswith('PEND')]
+        # PLs sem número de ordem explícito — inferir posição pela sequência de aparição
+        # Formato: "PROJETO DE LEI Nº X.XXX, DE AAAA" (cabeçalho de seção)
+        # Posições já usadas
+        posicoes_ocupadas = set(ordem.values())
+        proxima_pos = max(posicoes_ocupadas) + 1 if posicoes_ocupadas else 1
+
+        for m in re.finditer(
+            r'^PROJETO\s+DE\s+LEI(?:\s+COMPLEMENTAR)?\s+N[º°.]?\s*([\d.]+(?:-[A-Z])?),?\s*DE\s+(\d{4})',
+            texto_total, re.MULTILINE | re.IGNORECASE
+        ):
+            num_p = re.sub(r'-[A-Z]$', '', m.group(1).replace('.', ''))
+            ano   = m.group(2)
+            sigla = 'PLP' if 'COMPLEMENTAR' in m.group(0).upper() else 'PL'
+            chave = _normalizar_codigo(f"{sigla} {num_p}/{ano}")
+            if chave not in ordem:
+                # Acha próxima posição livre
+                while proxima_pos in posicoes_ocupadas:
+                    proxima_pos += 1
+                ordem[chave] = proxima_pos
+                posicoes_ocupadas.add(proxima_pos)
+                logger.info(f"  Item {proxima_pos} (PL cabeçalho): {sigla} {num_p}/{ano} → {chave}")
+                proxima_pos += 1
+
+        # Mesma lógica para PEC, PLP como cabeçalho
+        for m in re.finditer(
+            r'^PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O\s+N[º°.]?\s*([\d.]+(?:-[A-Z])?),?\s*DE\s+(\d{4})',
+            texto_total, re.MULTILINE | re.IGNORECASE
+        ):
+            num_p = re.sub(r'-[A-Z]$', '', m.group(1).replace('.', ''))
+            ano   = m.group(2)
+            chave = _normalizar_codigo(f"PEC {num_p}/{ano}")
+            if chave not in ordem:
+                while proxima_pos in posicoes_ocupadas:
+                    proxima_pos += 1
+                ordem[chave] = proxima_pos
+                posicoes_ocupadas.add(proxima_pos)
+                logger.info(f"  Item {proxima_pos} (PEC cabeçalho): PEC {num_p}/{ano} → {chave}")
+                proxima_pos += 1
+
+        # Remove chaves PEND que sobraram
+        pends = [k for k in list(ordem.keys()) if k.startswith('PEND')]
         for k in pends:
             logger.warning(f"  Removendo posição não identificada: {k}={ordem[k]}")
             del ordem[k]
@@ -877,27 +929,46 @@ def fetch_pauta(evento_id, force_reload=False):
         if ordem_oficial:
             # PASSO 3a: PDF como base — cria item para cada código do PDF em ordem
 
-            # Pré-monta mapeamento REQ s/n: chaves REQSN → item da API correspondente
-            # Identifica REQ sem número na API (projeto não tem dígitos antes da /)
-            req_sn_api = []
-            for item in (itens_raw or []):
-                cod = item['codigo'].upper()
-                sigla = cod.split()[0] if cod.split() else ''
-                if sigla in ('REQ','RQS','RQU','REC'):
-                    # REQ sem número: não tem dígitos significativos no código
-                    if not re.search(r'\d{2,}', cod.split('/')[0]):
-                        req_sn_api.append(item)
+            # Pré-monta mapeamento REQ s/n: chaves REQSN_PLxxxx → item da API
+            # A chave REQSN_PL3839/2023 casa com o REQ que menciona PL 3839/2023 na ementa
+            reqsn_para_api = {}
+            for chave_pdf in [k for k in ordem_oficial if k.startswith('REQSN')]:
+                # Extrai PL referenciado da chave (ex: REQSN_PL3839/2023)
+                m_pl = re.search(r'REQSN_((?:PL|PLP)(\d+)/(\d{4}))', chave_pdf)
+                if m_pl:
+                    pl_ref_norm = m_pl.group(1)  # ex: PL3839/2023
+                    pl_num = m_pl.group(2)
+                    pl_ano = m_pl.group(3)
+                    # Busca na API o REQ que menciona esse PL na ementa
+                    for item in (itens_raw or []):
+                        cod = item['codigo'].upper()
+                        sigla = cod.split()[0] if cod.split() else ''
+                        if sigla not in ('REQ','RQS','RQU','REC'):
+                            continue
+                        ementa = item.get('ementa', '')
+                        # Verifica se a ementa menciona o número do PL
+                        if pl_num in ementa and (pl_ano in ementa or True):
+                            reqsn_para_api[chave_pdf] = item
+                            logger.info(f"REQ s/nº match: {chave_pdf} → {item['codigo']} ('{ementa[:50]}')")
+                            break
+                else:
+                    # Chave genérica REQSN0 — usa REQ s/n da API por ordem
+                    pass
 
-            # Ordena chaves REQSN pela posição no PDF
-            chaves_reqsn_pdf = sorted(
-                [k for k in ordem_oficial if k.startswith('REQSN')],
+            # Itens REQ s/n não casados por PL — usa ordem de aparição
+            req_sn_api_restantes = [
+                it for it in (itens_raw or [])
+                if re.match(r'(REQ|RQS|RQU|REC)', it['codigo'].upper())
+                and not re.search(r'\d{3,}', it['codigo'].split('/')[0])
+                and it not in reqsn_para_api.values()
+            ]
+            chaves_reqsn_sem_pl = sorted(
+                [k for k in ordem_oficial if k.startswith('REQSN') and k not in reqsn_para_api],
                 key=lambda k: ordem_oficial[k]
             )
-            # Mapeia chave REQSN → item da API (por ordem de aparição)
-            reqsn_para_api = {}
-            for chave, item in zip(chaves_reqsn_pdf, req_sn_api):
+            for chave, item in zip(chaves_reqsn_sem_pl, req_sn_api_restantes):
                 reqsn_para_api[chave] = item
-                logger.info(f"REQ s/n match: {chave} → {item['codigo']} ('{item.get('ementa','')[:40]}')")
+                logger.info(f"REQ s/nº fallback: {chave} → {item['codigo']}")
 
             codigos_pdf = sorted(ordem_oficial.keys(), key=lambda k: ordem_oficial[k])
 
