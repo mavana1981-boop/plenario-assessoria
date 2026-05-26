@@ -68,13 +68,17 @@ async function gerarMensagem() {
     let msg = '';
 
     if (tipoAtual === 'apresentacao') {
-      const linhaProj = resumo ? `*${itemAtual.projeto}* — *${resumo}*` : `*${itemAtual.projeto}*`;
       const ementaCompleta = stripHTML(itemAtual.ementa || '');
-      msg = `${linhaProj}\n\n${ementaCompleta}\n\nAutor: ${itemAtual.autor}\nRelator: ${itemAtual.relator}\n\n*OPOSIÇÃO ORIENTA: ${ori}*`;
+      // Círculo azul + "Em apreciação" + proposição + resumo IA + ementa em itálico (entre _ _)
+      let linhas = [];
+      linhas.push(`🔵 *Em apreciação: ${itemAtual.projeto}*`);
+      if (resumo) linhas.push(`${resumo}`);
+      if (ementaCompleta) linhas.push(`_${ementaCompleta}_`);
+      msg = linhas.join('\n\n');
 
     } else if (tipoAtual === 'aprovada_simbolica' || tipoAtual === 'aprovado_simbolico') {
       const linhaProj = resumo ? `*${itemAtual.projeto}* — *${resumo}*` : `*${itemAtual.projeto}*`;
-      msg = `O ${linhaProj} foi *APROVADO SIMBOLICAMENTE*`;
+      msg = `✅ O ${linhaProj} foi *APROVADO SIMBOLICAMENTE*`;
 
     } else if (tipoAtual === 'votacao') {
       if (!obj) { document.getElementById('preview-msg-container').style.display = 'none'; return; }
@@ -112,7 +116,8 @@ async function gerarMensagem() {
     } else if (tipoAtual === 'aprovado_nominal' || tipoAtual === 'rejeitado_nominal') {
       const v = window._votosAtuais || {sim:'', nao:'', abs:'', resultado: tipoAtual === 'aprovado_nominal' ? 'APROVADO' : 'REJEITADO'};
       const linhaAbs = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
-      const emojiNom = tipoAtual === 'aprovado_nominal' ? '✅' : '❌';
+      const aprovado = tipoAtual === 'aprovado_nominal';
+      const emojiNom = aprovado ? '✅' : '❌';
       const linhaResumo = resumo ? `*${resumo}*` : '';
       msg = `${emojiNom} O *${itemAtual.projeto}* foi *${v.resultado}*` +
             (linhaResumo ? `\n${linhaResumo}` : '') +
