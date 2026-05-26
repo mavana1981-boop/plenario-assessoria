@@ -164,14 +164,17 @@ def obter_itens_pauta(id_evento):
                     continue
                 vistos.add(id_prop)
 
-                # Detalhes via API (ementa completa, situação, autores c/ partido da API)
+                # Detalhes via API (ementa completa, situação)
                 info_extra = obter_detalhes_proposicao(id_prop)
 
-                # Usa autores da API (com partido) se disponível; senão mantém o do HTML
-                if info_extra["autores"]:
-                    autores = info_extra["autores"]
+                # Autor/Relator: prioridade para o HTML da Câmara (já tem partido)
+                # Só usa API se o HTML não trouxe partido
+                def tem_partido(txt):
+                    import re
+                    return bool(re.search(r'\([A-Z]{2,}-[A-Z]{2}\)', txt or ''))
 
-                # Relator: mantém o do HTML (já tem partido); API não retorna relator facilmente
+                if not tem_partido(autores) and info_extra["autores"]:
+                    autores = info_extra["autores"]
                 if not relator and info_extra.get("relator"):
                     relator = info_extra["relator"]
 
