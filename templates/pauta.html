@@ -196,7 +196,7 @@
             <div>
               <i class="fas fa-file-alt text-primary me-2"></i>
               Item {{ item.ordem }} — <strong>{{ item.projeto }}</strong> — <strong>Autor:</strong>
-              <span class="span-autor" id="autor-{{ item.id_principal }}" data-id="{{ item.id_principal }}">{{ item.autor }}</span>
+              <span class="span-autor" id="autor-{{ item.id_principal }}" data-id="{{ item.id_principal }}">{{ item.autor | truncar_autores }}</span>
               <span class="badge secao-badge 
                 {{ 'bg-primary' if item.status in ['Proposta em Análise', 'Propostas em Análise'] else 
                    'bg-info' if item.status in ['Proposta Prevista', 'Propostas Previstas'] else 
@@ -684,15 +684,15 @@
     // Enriquece autor e relator com partido via API da Câmara (no browser)
     async function enriquecerPartidos() {
       const itens = window.ITENS_DATA || [];
+      const temPartido = txt => /\([A-Z]{2,}-[A-Z]{2}\)/.test(txt || '');
+
       for (const item of itens) {
         const id = item.id_principal;
         const spanAutor   = document.getElementById('autor-' + id);
         const spanRelator = document.getElementById('relator-' + id);
 
-        // Só busca se não tem partido já
-        const temPartido = txt => /\([A-Z]{2,}-[A-Z]{2}\)/.test(txt || '');
-
-        if (spanAutor && !temPartido(spanAutor.textContent)) {
+        // Sempre busca autores para garantir limite de 2 e partido
+        if (spanAutor) {
           try {
             const r = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${id}/autores`,
               {headers: {'Accept': 'application/json'}});
@@ -701,7 +701,7 @@
               const autores = dados.map(a => {
                 const p = a.siglaPartido || ''; const uf = a.siglaUf || '';
                 const suf = p && uf ? `(${p}-${uf})` : p ? `(${p})` : '';
-                return suf ? `${a.nome} ${suf}` : a.nome;
+                return a.nome ? (suf ? `${a.nome} ${suf}` : a.nome) : null;
               }).filter(Boolean);
               if (autores.length > 0) {
                 spanAutor.textContent = autores.length > 2
