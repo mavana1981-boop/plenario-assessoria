@@ -278,10 +278,10 @@ def exportar_pauta(evento_id):
             tdata.append([
                 Paragraph(str(it.get("ordem","—")), sNormal),
                 Paragraph(it.get("projeto","—"),
-                    ParagraphStyle("pt"+str(i), parent=sNormal, fontName="Helvetica-Bold", textColor=cor_t)),
+                    ParagraphStyle("pt"+str(it.get("ordem",0)), parent=sNormal, fontName="Helvetica-Bold", textColor=cor_t)),
                 Paragraph(_strip_html(it.get("ementa","—"))[:160] + "…", sNormal),
                 Paragraph(ori or "—",
-                    ParagraphStyle("po"+str(i), parent=sNormal, fontName="Helvetica-Bold", textColor=cor_ori)),
+                    ParagraphStyle("po"+str(it.get("ordem",0)), parent=sNormal, fontName="Helvetica-Bold", textColor=cor_ori)),
             ])
 
         tbl = Table(tdata, colWidths=[1.2*cm, 4.2*cm, 9.0*cm, 2.4*cm], repeatRows=1)
