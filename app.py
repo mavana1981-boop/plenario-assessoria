@@ -656,11 +656,38 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                 ordem[chave] = num
                 posicoes_usadas_final[num] = chave
 
-        # Remove chaves PEND que sobraram
-        pends = [k for k in list(ordem.keys()) if k.startswith('PEND')]
-        for k in pends:
-            logger.warning(f"  Removendo PEND não resolvido: {k}={ordem[k]}")
-            del ordem[k]
+        # Preenche gaps de posição usando cabeçalhos de PL/PLP/PEC no texto
+        # Ex: "PROJETO DE LEI Nº 5.868, DE 2025" aparece entre pos 18 e 20 → pos 19
+        posicoes_usadas_set = set(ordem.values())
+        gaps = sorted(set(range(1, max(posicoes_usadas_set)+1)) - posicoes_usadas_set)
+        logger.info(f"Gaps de posição no PDF: {gaps}")
+
+        if gaps:
+            # Coleta cabeçalhos de proposição no texto (sem número sequencial na frente)
+            cabecalhos = []
+            # Usa re.search sem ^ para pegar cabeçalhos em qualquer posição da linha
+            for m in re.finditer(
+                r'(?:^|\n)\s*(PROJETO\s+DE\s+LEI(?:\s+COMPLEMENTAR)?'
+                r'|PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O)'
+                r'\s+N[º°.]?\s*([\d.]+(?:-[A-Z])?),?\s*DE\s+(\d{4})',
+                texto_total, re.IGNORECASE | re.MULTILINE
+            ):
+                tipo_txt = m.group(1).upper()
+                num_p = re.sub(r'-[A-Z]$', '', m.group(2).replace('.', ''))
+                ano   = m.group(3)
+                if 'COMPLEMENTAR' in tipo_txt: sigla = 'PLP'
+                elif 'EMENDA' in tipo_txt:     sigla = 'PEC'
+                else:                          sigla = 'PL'
+                chave = _normalizar_codigo(f"{sigla} {num_p}/{ano}")
+                if chave not in ordem:
+                    cabecalhos.append((m.start(), chave, sigla, num_p, ano))
+                    logger.info(f"  Cabeçalho encontrado: {sigla} {num_p}/{ano} → {chave}")
+
+            cabecalhos.sort(key=lambda x: x[0])
+            for gap, (_, chave, sigla, num_p, ano) in zip(gaps, cabecalhos):
+                ordem[chave] = gap
+                posicoes_usadas_set.add(gap)
+                logger.info(f"  Gap {gap} preenchido: {sigla} {num_p}/{ano} → {chave}")
 
         logger.info(f"Ordem extraída do PDF evento {evento_id}: {len(ordem)} itens — {dict(list(ordem.items())[:10])}")
         return ordem
@@ -947,79 +974,107 @@ def fetch_pauta(evento_id, force_reload=False):
                         'saved_at':         notas.get(key, {}).get('saved_at', ''),
                         'destaques_emendas': []
                     })
+                elif cod_pdf.startswith('REQSN_'):
+                    # REQ s/n sem match na API — busca o PL referenciado diretamente
+                    m_ref = re.search(r'REQSN_((?:PL|PLP)(\d+)/(\d{4}))', cod_pdf)
+                    if m_ref:
+                        sigla_ref = 'PLP' if 'PLP' in m_ref.group(1) else 'PL'
+                        num_ref   = m_ref.group(2)
+                        ano_ref   = m_ref.group(3)
+                        try:
+                            r_pl = requests.get(
+                                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
+                                f"?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
+                                headers={'Accept': 'application/json'}, timeout=8
+                            )
+                            dados_pl = r_pl.json().get('dados', []) if r_pl.ok else []
+                            if dados_pl:
+                                pl = dados_pl[0]
+                                id_pl = str(pl.get('id', ''))
+                                if id_pl in vistos_ids:
+                                    continue
+                                vistos_ids.add(id_pl)
+                                key = f"PROP_{id_pl}"
+                                projeto_req = f"REQ s/nº ao {sigla_ref} {num_ref}/{ano_ref}"
+                                itens.append({
+                                    'ordem':            str(len(itens) + 1),
+                                    'id_principal':     id_pl,
+                                    'projeto':          projeto_req,
+                                    'projeto_original': projeto_req,
+                                    'ementa':           pl.get('ementa', ''),
+                                    'autor':            'Líderes',
+                                    'relator':          'Não atribuído',
+                                    'situacao':         pl.get('statusProposicao', {}).get('descricaoSituacao', 'N/D') if isinstance(pl.get('statusProposicao'), dict) else 'N/D',
+                                    'secao':            'N/D',
+                                    'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
+                                    'orientacao':       notas.get(key, {}).get('orientacao', ''),
+                                    'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
+                                    'saved_by':         notas.get(key, {}).get('saved_by', ''),
+                                    'saved_at':         notas.get(key, {}).get('saved_at', ''),
+                                    'destaques_emendas': []
+                                })
+                                logger.info(f"REQSN resolvido via API: {cod_pdf} → {sigla_ref} {num_ref}/{ano_ref} id={id_pl}")
+                            else:
+                                logger.warning(f"REQSN: PL {num_ref}/{ano_ref} não encontrado na API")
+                        except Exception as e:
+                            logger.warning(f"Erro buscar PL para REQSN {cod_pdf}: {e}")
                 else:
-                    # Item do PDF não encontrado na API — NÃO cria item novo
-                    # Apenas loga e ignora (a API é a fonte de verdade dos itens)
-                    logger.warning(f"PDF item '{cod_pdf}' não na API — ignorado (total da API é a fonte)")
+                    # Item do PDF não encontrado na API — ignora
+                    logger.warning(f"PDF item '{cod_pdf}' não na API — ignorado")
 
-            # Adiciona itens da API não encontrados no PDF ao final
-            # Tenta primeiro um matching fuzzy por número para evitar itens perdidos
-            numeros_no_pdf = {}
-            for chave_pdf, pos in ordem_oficial.items():
-                m_num = re.search(r'(\d{4,})', chave_pdf)
-                if m_num:
-                    numeros_no_pdf[m_num.group(1)] = (chave_pdf, pos)
-
+            # Itens da API não encontrados no PDF — insere na posição correta
+            # A posição é inferida pela sequência relativa na API
+            nao_encontrados_api = []
             for item in (itens_raw or []):
                 id_p = item.get('id_principal')
                 if not id_p or id_p in vistos_ids:
                     continue
-                cod = _normalizar_codigo(item['codigo'])
-                if cod in ordem_oficial:
-                    continue
+                nao_encontrados_api.append(item)
 
-                # Tenta matching fuzzy: extrai número do código da API e busca no PDF
-                m_num = re.search(r'(\d{4,})', cod)
-                if m_num and m_num.group(1) in numeros_no_pdf:
-                    chave_pdf_match, pos_match = numeros_no_pdf[m_num.group(1)]
-                    logger.info(f"Fuzzy match: {item['codigo']} → {chave_pdf_match} pos={pos_match}")
-                    # Substitui o item "dados não disponíveis" que foi criado para essa chave
-                    for idx_it, it_existente in enumerate(itens):
-                        if it_existente.get('projeto_original','').replace(' ','') == chave_pdf_match:
-                            # Substitui com dados completos da API
-                            vistos_ids.add(id_p)
-                            key = f"PROP_{id_p}"
-                            itens[idx_it] = {
-                                'ordem':            it_existente['ordem'],
-                                'id_principal':     id_p,
-                                'projeto':          extrair_ref_pl(item['codigo'], item['ementa']),
-                                'projeto_original': item['codigo'],
-                                'ementa':           item['ementa'],
-                                'autor':            item.get('autores', 'N/D'),
-                                'relator':          item.get('relator', 'Não atribuído'),
-                                'situacao':         item.get('situacao', 'N/D'),
-                                'secao':            item.get('secao', 'N/D'),
-                                'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
-                                'orientacao':       notas.get(key, {}).get('orientacao', ''),
-                                'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
-                                'saved_by':         notas.get(key, {}).get('saved_by', ''),
-                                'saved_at':         notas.get(key, {}).get('saved_at', ''),
-                                'destaques_emendas': []
-                            }
-                            logger.info(f"  Substituído dados mínimos por dados completos: {item['codigo']}")
-                            break
-                    continue
+            if nao_encontrados_api:
+                # Para cada item não encontrado, determina posição na lista
+                # baseado na posição do item anterior na API
+                for item in nao_encontrados_api:
+                    id_p = item.get('id_principal')
+                    vistos_ids.add(id_p)
+                    key = f"PROP_{id_p}"
+                    # Acha índice do item na lista raw da API
+                    idx_api = next((i for i, it in enumerate(itens_raw) if it.get('id_principal') == id_p), len(itens_raw))
+                    # Acha o item anterior da API que já está na lista
+                    pos_inserir = len(itens)  # default: no final
+                    for idx_prev in range(idx_api - 1, -1, -1):
+                        id_prev = itens_raw[idx_prev].get('id_principal')
+                        for j, it_existente in enumerate(itens):
+                            if it_existente.get('id_principal') == id_prev:
+                                pos_inserir = j + 1
+                                break
+                        else:
+                            continue
+                        break
 
-                vistos_ids.add(id_p)
-                key = f"PROP_{id_p}"
-                itens.append({
-                    'ordem':            str(len(itens) + 1),
-                    'id_principal':     id_p,
-                    'projeto':          extrair_ref_pl(item['codigo'], item['ementa']),
-                    'projeto_original': item['codigo'],
-                    'ementa':           item['ementa'],
-                    'autor':            item.get('autores', 'N/D'),
-                    'relator':          item.get('relator', 'Não atribuído'),
-                    'situacao':         item.get('situacao', 'N/D'),
-                    'secao':            item.get('secao', 'N/D'),
-                    'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
-                    'orientacao':       notas.get(key, {}).get('orientacao', ''),
-                    'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
-                    'saved_by':         notas.get(key, {}).get('saved_by', ''),
-                    'saved_at':         notas.get(key, {}).get('saved_at', ''),
-                    'destaques_emendas': []
-                })
-                logger.info(f"Item da API não no PDF adicionado ao final: {item['codigo']}")
+                    novo_item = {
+                        'ordem':            '',  # será renumerado
+                        'id_principal':     id_p,
+                        'projeto':          extrair_ref_pl(item['codigo'], item['ementa']),
+                        'projeto_original': item['codigo'],
+                        'ementa':           item['ementa'],
+                        'autor':            item.get('autores', 'N/D'),
+                        'relator':          item.get('relator', 'Não atribuído'),
+                        'situacao':         item.get('situacao', 'N/D'),
+                        'secao':            item.get('secao', 'N/D'),
+                        'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
+                        'orientacao':       notas.get(key, {}).get('orientacao', ''),
+                        'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
+                        'saved_by':         notas.get(key, {}).get('saved_by', ''),
+                        'saved_at':         notas.get(key, {}).get('saved_at', ''),
+                        'destaques_emendas': []
+                    }
+                    itens.insert(pos_inserir, novo_item)
+                    logger.info(f"Inserindo '{item['codigo']}' na posição {pos_inserir + 1}")
+
+                # Renumera todos
+                for i, it in enumerate(itens, start=1):
+                    it['ordem'] = str(i)
 
         else:
             # PASSO 3b: sem PDF, usa ordem da API
