@@ -50,8 +50,8 @@ def obter_detalhes_proposicao(id_prop):
                 uf      = (a.get("siglaUf") or "").strip()
                 sufixo  = f"{partido}-{uf}" if partido and uf else partido
                 autores.append(f"{a['nome']} ({sufixo})" if sufixo else a['nome'])
-            if len(autores) > 3:
-                detalhes["autores"] = ", ".join(autores[:3]) + " e outros."
+            if len(autores) > 2:
+                detalhes["autores"] = ", ".join(autores[:2]) + " e outros."
                 detalhes["tem_mais_autores"] = True
             else:
                 detalhes["autores"] = ", ".join(autores)
