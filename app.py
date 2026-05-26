@@ -622,9 +622,10 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                 posicoes_usadas[num] = chave
                 logger.info(f"  Item {num} (fallback texto): {sigla} {num_p}/{ano} → {chave}")
 
-        # REQ sem número (s/n ou s/nº) — só para posições que continuam como PEND
-        req_sn_count = 0
+        # REQ sem número (s/n ou s/nº)
+        # Extrai o PL referenciado da ementa do PDF para matching com a API
         posicoes_usadas_final = {v: k for k, v in ordem.items()}
+        req_sn_count = 0
         for m in re.finditer(
             r'^(\d+)\.\s+Requerimento\s+s/n[º°]?',
             texto_total, re.MULTILINE | re.IGNORECASE
@@ -636,8 +637,7 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
             if chave_atual.startswith('PEND') or num not in posicoes_usadas_final:
                 if chave_atual:
                     del ordem[chave_atual]
-                # Extrai o PL referenciado para usar como chave mais útil
-                # Ex: "para apreciação do Projeto de Lei nº 3.839, de 2023"
+                # Extrai PL referenciado do bloco do PDF para uso no matching
                 bloco_req = texto_total[m.start():m.start()+500]
                 m_pl = re.search(
                     r'Projeto\s+de\s+Lei(?:\s+Complementar)?\s+n[º°.]?\s*([\d.]+),\s*de\s+(\d{4})',
@@ -651,54 +651,15 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                     logger.info(f"  Item {num} (REQ s/nº → {sigla_pl} {num_pl}/{ano_pl}): chave={chave}")
                 else:
                     chave = f"REQSN{req_sn_count}"
-                    logger.info(f"  Item {num} (REQ s/nº sem PL): chave={chave}")
+                    logger.info(f"  Item {num} (REQ s/nº): chave={chave}")
                 req_sn_count += 1
                 ordem[chave] = num
                 posicoes_usadas_final[num] = chave
 
-        # PLs sem número de ordem explícito — inferir posição pela sequência de aparição
-        # Formato: "PROJETO DE LEI Nº X.XXX, DE AAAA" (cabeçalho de seção)
-        # Posições já usadas
-        posicoes_ocupadas = set(ordem.values())
-        proxima_pos = max(posicoes_ocupadas) + 1 if posicoes_ocupadas else 1
-
-        for m in re.finditer(
-            r'^PROJETO\s+DE\s+LEI(?:\s+COMPLEMENTAR)?\s+N[º°.]?\s*([\d.]+(?:-[A-Z])?),?\s*DE\s+(\d{4})',
-            texto_total, re.MULTILINE | re.IGNORECASE
-        ):
-            num_p = re.sub(r'-[A-Z]$', '', m.group(1).replace('.', ''))
-            ano   = m.group(2)
-            sigla = 'PLP' if 'COMPLEMENTAR' in m.group(0).upper() else 'PL'
-            chave = _normalizar_codigo(f"{sigla} {num_p}/{ano}")
-            if chave not in ordem:
-                # Acha próxima posição livre
-                while proxima_pos in posicoes_ocupadas:
-                    proxima_pos += 1
-                ordem[chave] = proxima_pos
-                posicoes_ocupadas.add(proxima_pos)
-                logger.info(f"  Item {proxima_pos} (PL cabeçalho): {sigla} {num_p}/{ano} → {chave}")
-                proxima_pos += 1
-
-        # Mesma lógica para PEC, PLP como cabeçalho
-        for m in re.finditer(
-            r'^PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O\s+N[º°.]?\s*([\d.]+(?:-[A-Z])?),?\s*DE\s+(\d{4})',
-            texto_total, re.MULTILINE | re.IGNORECASE
-        ):
-            num_p = re.sub(r'-[A-Z]$', '', m.group(1).replace('.', ''))
-            ano   = m.group(2)
-            chave = _normalizar_codigo(f"PEC {num_p}/{ano}")
-            if chave not in ordem:
-                while proxima_pos in posicoes_ocupadas:
-                    proxima_pos += 1
-                ordem[chave] = proxima_pos
-                posicoes_ocupadas.add(proxima_pos)
-                logger.info(f"  Item {proxima_pos} (PEC cabeçalho): PEC {num_p}/{ano} → {chave}")
-                proxima_pos += 1
-
         # Remove chaves PEND que sobraram
         pends = [k for k in list(ordem.keys()) if k.startswith('PEND')]
         for k in pends:
-            logger.warning(f"  Removendo posição não identificada: {k}={ordem[k]}")
+            logger.warning(f"  Removendo PEND não resolvido: {k}={ordem[k]}")
             del ordem[k]
 
         logger.info(f"Ordem extraída do PDF evento {evento_id}: {len(ordem)} itens — {dict(list(ordem.items())[:10])}")
@@ -929,46 +890,29 @@ def fetch_pauta(evento_id, force_reload=False):
         if ordem_oficial:
             # PASSO 3a: PDF como base — cria item para cada código do PDF em ordem
 
-            # Pré-monta mapeamento REQ s/n: chaves REQSN_PLxxxx → item da API
-            # A chave REQSN_PL3839/2023 casa com o REQ que menciona PL 3839/2023 na ementa
+            # Mapeamento REQSN → item da API
+            # REQSN_PL3839/2023 → busca na API o REQ cuja ementa menciona "3.839" ou "3839"
             reqsn_para_api = {}
-            for chave_pdf in [k for k in ordem_oficial if k.startswith('REQSN')]:
-                # Extrai PL referenciado da chave (ex: REQSN_PL3839/2023)
-                m_pl = re.search(r'REQSN_((?:PL|PLP)(\d+)/(\d{4}))', chave_pdf)
+            for chave_pdf in sorted(
+                [k for k in ordem_oficial if k.startswith('REQSN')],
+                key=lambda k: ordem_oficial[k]
+            ):
+                m_pl = re.search(r'REQSN_(?:PL|PLP)(\d+)/(\d{4})', chave_pdf)
                 if m_pl:
-                    pl_ref_norm = m_pl.group(1)  # ex: PL3839/2023
-                    pl_num = m_pl.group(2)
-                    pl_ano = m_pl.group(3)
-                    # Busca na API o REQ que menciona esse PL na ementa
+                    num_pl, ano_pl = m_pl.group(1), m_pl.group(2)
+                    # Busca REQ na API cuja ementa menciona esse número
                     for item in (itens_raw or []):
-                        cod = item['codigo'].upper()
-                        sigla = cod.split()[0] if cod.split() else ''
-                        if sigla not in ('REQ','RQS','RQU','REC'):
+                        if not re.match(r'RE[QCS]', item['codigo'].upper()):
                             continue
                         ementa = item.get('ementa', '')
-                        # Verifica se a ementa menciona o número do PL
-                        if pl_num in ementa and (pl_ano in ementa or True):
+                        num_fmt1 = num_pl  # "3839"
+                        num_fmt2 = f"{int(num_pl):,}".replace(',', '.')  # "3.839"
+                        if (num_fmt1 in ementa or num_fmt2 in ementa) and item not in reqsn_para_api.values():
                             reqsn_para_api[chave_pdf] = item
-                            logger.info(f"REQ s/nº match: {chave_pdf} → {item['codigo']} ('{ementa[:50]}')")
+                            logger.info(f"REQSN match por PL: {chave_pdf} → {item['codigo']}")
                             break
-                else:
-                    # Chave genérica REQSN0 — usa REQ s/n da API por ordem
-                    pass
-
-            # Itens REQ s/n não casados por PL — usa ordem de aparição
-            req_sn_api_restantes = [
-                it for it in (itens_raw or [])
-                if re.match(r'(REQ|RQS|RQU|REC)', it['codigo'].upper())
-                and not re.search(r'\d{3,}', it['codigo'].split('/')[0])
-                and it not in reqsn_para_api.values()
-            ]
-            chaves_reqsn_sem_pl = sorted(
-                [k for k in ordem_oficial if k.startswith('REQSN') and k not in reqsn_para_api],
-                key=lambda k: ordem_oficial[k]
-            )
-            for chave, item in zip(chaves_reqsn_sem_pl, req_sn_api_restantes):
-                reqsn_para_api[chave] = item
-                logger.info(f"REQ s/nº fallback: {chave} → {item['codigo']}")
+                if chave_pdf not in reqsn_para_api:
+                    logger.warning(f"REQSN sem match: {chave_pdf}")
 
             codigos_pdf = sorted(ordem_oficial.keys(), key=lambda k: ordem_oficial[k])
 
@@ -1004,47 +948,9 @@ def fetch_pauta(evento_id, force_reload=False):
                         'destaques_emendas': []
                     })
                 else:
-                    # Item do PDF não encontrado na API — adiciona com dados mínimos
-                    logger.warning(f"PDF item '{cod_pdf}' não na API — adicionando com dados mínimos")
-                    # Tenta buscar dados via API diretamente pelo código
-                    ementa_min = ''
-                    autor_min  = 'N/D'
-                    relator_min = 'Não atribuído'
-                    id_p_min = ''
-                    try:
-                        partes = re.match(r'([A-Z]+)(\d+)/(\d{4})', cod_pdf)
-                        if partes:
-                            sigla, num, ano = partes.groups()
-                            r_min = requests.get(
-                                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla}&numero={num}&ano={ano}&itens=1",
-                                headers={'Accept': 'application/json'}, timeout=8
-                            )
-                            if r_min.ok:
-                                dados_min = r_min.json().get('dados', [])
-                                if dados_min:
-                                    ementa_min = dados_min[0].get('ementa', '')
-                                    id_p_min   = str(dados_min[0].get('id', ''))
-                    except Exception:
-                        pass
-
-                    codigo_display = cod_pdf.replace('/', ' ').replace('MPV', 'MPV ').replace('PL', 'PL ')
-                    itens.append({
-                        'ordem':            str(len(itens) + 1),
-                        'id_principal':     id_p_min,
-                        'projeto':          codigo_display.strip(),
-                        'projeto_original': codigo_display.strip(),
-                        'ementa':           ementa_min or f'Item {cod_pdf} — dados não disponíveis no momento',
-                        'autor':            autor_min,
-                        'relator':          relator_min,
-                        'situacao':         'Em votação',
-                        'secao':            'N/D',
-                        'resumo_materia':   '',
-                        'orientacao':       '',
-                        'resumo_parecer':   '',
-                        'saved_by':         '',
-                        'saved_at':         '',
-                        'destaques_emendas': []
-                    })
+                    # Item do PDF não encontrado na API — NÃO cria item novo
+                    # Apenas loga e ignora (a API é a fonte de verdade dos itens)
+                    logger.warning(f"PDF item '{cod_pdf}' não na API — ignorado (total da API é a fonte)")
 
             # Adiciona itens da API não encontrados no PDF ao final
             # Tenta primeiro um matching fuzzy por número para evitar itens perdidos
