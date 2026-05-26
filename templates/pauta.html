@@ -168,6 +168,11 @@
         data-bs-toggle="modal" data-bs-target="#modalMensagens">
         <i class="fab fa-whatsapp me-2"></i>Mensagens Plenário
       </button>
+      <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-monitorar"
+        onclick="toggleMonitoramento()"
+        style="background:linear-gradient(135deg,#6c757d,#495057);">
+        <i class="fas fa-satellite-dish me-2"></i><span id="btn-monitorar-label">Monitorar</span>
+      </button>
       {% endif %}
       <button class="btn btn-sm mb-3 ms-2 text-white"
         style="background:linear-gradient(135deg,#B8860B,#DAA520);"
@@ -2657,5 +2662,202 @@ async function exportarOrientacoesPDF() {
   });
 })();
 </script>
+
+<!-- Modal de alerta do monitoramento -->
+<div class="modal fade" id="modalMonitorAlerta" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header text-white" style="background:linear-gradient(135deg,#C0392B,#922B21);">
+        <h5 class="modal-title fw-bold">
+          <i class="fas fa-satellite-dish me-2"></i>
+          <span id="monitor-alerta-titulo">Item Em Análise</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body text-center py-4">
+        <div style="font-size:3rem;margin-bottom:12px;">🔔</div>
+        <div id="monitor-alerta-corpo" style="font-size:1.15rem;font-weight:700;color:#2c3e50;"></div>
+        <div id="monitor-alerta-detalhe" class="text-muted mt-2" style="font-size:0.88rem;"></div>
+        <div id="monitor-alerta-horario" class="mt-2" style="font-size:0.8rem;color:#888;"></div>
+      </div>
+      <div class="modal-footer justify-content-center gap-2">
+        <button type="button" class="btn btn-danger fw-bold px-4" data-bs-dismiss="modal">
+          <i class="fas fa-check me-2"></i>Entendido
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  // ── Agente de Monitoramento da Pauta ──────────────────────────────────────
+  // Polling no browser (não passa pelo Railway) da API da Câmara
+  // Dispara popup quando item muda para "Em Análise" ou "Em Votação"
+
+  const EVENTO_ID_MON = window.EVENTO_ID;
+  const INTERVALO_MS  = 45_000; // 45 segundos
+  const TERMOS_ALERTA = ['em análise', 'em votacao', 'em votação', 'em discussão', 'em apreciação'];
+
+  let _monitorando    = false;
+  let _timerMonitor   = null;
+  let _statusAnterior = {}; // { id_proposicao: situacao }
+  let _primeiraVerif  = true;
+
+  window.toggleMonitoramento = function() {
+    _monitorando ? pararMonitoramento() : iniciarMonitoramento();
+  };
+
+  function iniciarMonitoramento() {
+    _monitorando   = true;
+    _primeiraVerif = true;
+    atualizarBotao(true);
+    verificarStatus();
+    _timerMonitor = setInterval(verificarStatus, INTERVALO_MS);
+  }
+
+  function pararMonitoramento() {
+    _monitorando = false;
+    clearInterval(_timerMonitor);
+    _timerMonitor = null;
+    atualizarBotao(false);
+  }
+
+  function atualizarBotao(ativo) {
+    const btn   = document.getElementById('btn-monitorar');
+    const label = document.getElementById('btn-monitorar-label');
+    if (!btn) return;
+    btn.style.background = ativo
+      ? 'linear-gradient(135deg,#C0392B,#922B21)'
+      : 'linear-gradient(135deg,#6c757d,#495057)';
+    if (label) label.textContent = ativo ? 'Monitorando…' : 'Monitorar';
+  }
+
+  async function verificarStatus() {
+    if (!_monitorando) return;
+    try {
+      // Tenta API de pauta (acessível pelo browser do usuário)
+      const rApi = await fetch(
+        `https://dadosabertos.camara.leg.br/api/v2/eventos/${EVENTO_ID_MON}/pauta`,
+        { headers: { 'Accept': 'application/json' }, cache: 'no-store' }
+      );
+      if (!rApi.ok) {
+        // Fallback: scraping da página HTML
+        await verificarViaHTML();
+        return;
+      }
+      const jApi = await rApi.json();
+      const itens = jApi.dados || [];
+
+      itens.forEach(d => {
+        const id       = String(d.proposicao?.id || d.codProposicao || '');
+        const titulo   = d.proposicao?.siglaTipo
+          ? `${d.proposicao.siglaTipo} ${d.proposicao.numero}/${d.proposicao.ano}`
+          : (d.titulo || '');
+        const situacao = (d.situacaoItem || '').toLowerCase();
+
+        if (!_primeiraVerif && _statusAnterior[id] !== undefined && _statusAnterior[id] !== situacao) {
+          // Mudou de status
+          if (TERMOS_ALERTA.some(t => situacao.includes(t))) {
+            const ementa = d.proposicao?.ementa || '';
+            dispararAlerta(titulo, ementa, situacao);
+          }
+        }
+        _statusAnterior[id] = situacao;
+      });
+
+      _primeiraVerif = false;
+
+    } catch(err) {
+      console.warn('Monitor: erro API —', err.message);
+      await verificarViaHTML();
+    }
+  }
+
+  async function verificarViaHTML() {
+    try {
+      const r = await fetch(
+        `https://www.camara.leg.br/evento-legislativo/${EVENTO_ID_MON}`,
+        { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } }
+      );
+      if (!r.ok) return;
+      const html   = await r.text();
+      const parser = new DOMParser();
+      const doc2   = parser.parseFromString(html, 'text/html');
+      const texto  = doc2.body?.textContent || '';
+
+      const itensNossos = window.ITENS_DATA || [];
+      itensNossos.forEach(it => {
+        const proj = (it.projeto || '').toUpperCase();
+        // Verifica se o projeto aparece no HTML junto com termo de alerta
+        const nums = proj.match(/\d{3,}/g) || [];
+        const regex = new RegExp(
+          '(' + nums.join('|') + ').{0,200}(' + TERMOS_ALERTA.join('|') + ')',
+          'i'
+        );
+        if (!regex.test(texto)) return;
+
+        const chave = String(it.id_principal);
+        if (_primeiraVerif) { _statusAnterior[chave] = 'em análise'; return; }
+        if (_statusAnterior[chave] === 'alerta_disparado') return;
+        _statusAnterior[chave] = 'alerta_disparado';
+        dispararAlerta(it.projeto, it.ementa, 'Em Análise');
+      });
+
+      _primeiraVerif = false;
+    } catch(err) {
+      console.warn('Monitor: erro HTML —', err.message);
+    }
+  }
+
+  function dispararAlerta(titulo, ementa, situacao) {
+    const el_titulo   = document.getElementById('monitor-alerta-titulo');
+    const el_corpo    = document.getElementById('monitor-alerta-corpo');
+    const el_detalhe  = document.getElementById('monitor-alerta-detalhe');
+    const el_horario  = document.getElementById('monitor-alerta-horario');
+    const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+
+    if (el_titulo)  el_titulo.textContent  = `🔴 ${situacao || 'Em Análise'}`;
+    if (el_corpo)   el_corpo.textContent   = titulo;
+    if (el_detalhe) el_detalhe.textContent = (ementa || '').substring(0, 140);
+    if (el_horario) el_horario.textContent = `Detectado às ${agora}`;
+
+    // Som de notificação (3 bips)
+    try {
+      const ctx  = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.2, 0.4].forEach(t => {
+        const osc  = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.3, ctx.currentTime + t);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.18);
+        osc.start(ctx.currentTime + t);
+        osc.stop(ctx.currentTime + t + 0.2);
+      });
+    } catch(_) {}
+
+    // Notificação nativa do browser (se permitido)
+    if (Notification.permission === 'granted') {
+      new Notification('🔔 Pauta — ' + titulo, {
+        body: `${situacao} — ${(ementa||'').substring(0,80)}`,
+        icon: '/static/logo_minoria.png'
+      });
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission().then(p => {
+        if (p === 'granted') new Notification('🔔 ' + titulo, { body: situacao });
+      });
+    }
+
+    // Abre modal
+    const modal = bootstrap.Modal.getOrCreateInstance(
+      document.getElementById('modalMonitorAlerta')
+    );
+    modal.show();
+  }
+
+})();
+</script>
+
 </body>
 </html>
