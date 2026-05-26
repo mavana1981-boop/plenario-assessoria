@@ -173,6 +173,7 @@
         style="background:linear-gradient(135deg,#6c757d,#495057);">
         <i class="fas fa-satellite-dish me-2"></i><span id="btn-monitorar-label">Monitorar</span>
       </button>
+      <small id="monitor-status-txt" class="text-muted ms-1" style="font-size:0.75rem;"></small>
       {% endif %}
       <button class="btn btn-sm mb-3 ms-2 text-white"
         style="background:linear-gradient(135deg,#B8860B,#DAA520);"
@@ -2731,47 +2732,21 @@ async function exportarOrientacoesPDF() {
       ? 'linear-gradient(135deg,#C0392B,#922B21)'
       : 'linear-gradient(135deg,#6c757d,#495057)';
     if (label) label.textContent = ativo ? 'Monitorando…' : 'Monitorar';
+    if (!ativo) {
+      const st = document.getElementById('monitor-status-txt');
+      if (st) st.textContent = '';
+    }
+  }
+
+  function atualizarStatusTxt(txt) {
+    const el = document.getElementById('monitor-status-txt');
+    if (el) el.textContent = txt;
   }
 
   async function verificarStatus() {
     if (!_monitorando) return;
-    try {
-      // Tenta API de pauta (acessível pelo browser do usuário)
-      const rApi = await fetch(
-        `https://dadosabertos.camara.leg.br/api/v2/eventos/${EVENTO_ID_MON}/pauta`,
-        { headers: { 'Accept': 'application/json' }, cache: 'no-store' }
-      );
-      if (!rApi.ok) {
-        // Fallback: scraping da página HTML
-        await verificarViaHTML();
-        return;
-      }
-      const jApi = await rApi.json();
-      const itens = jApi.dados || [];
-
-      itens.forEach(d => {
-        const id       = String(d.proposicao?.id || d.codProposicao || '');
-        const titulo   = d.proposicao?.siglaTipo
-          ? `${d.proposicao.siglaTipo} ${d.proposicao.numero}/${d.proposicao.ano}`
-          : (d.titulo || '');
-        const situacao = (d.situacaoItem || '').toLowerCase();
-
-        if (!_primeiraVerif && _statusAnterior[id] !== undefined && _statusAnterior[id] !== situacao) {
-          // Mudou de status
-          if (TERMOS_ALERTA.some(t => situacao.includes(t))) {
-            const ementa = d.proposicao?.ementa || '';
-            dispararAlerta(titulo, ementa, situacao);
-          }
-        }
-        _statusAnterior[id] = situacao;
-      });
-
-      _primeiraVerif = false;
-
-    } catch(err) {
-      console.warn('Monitor: erro API —', err.message);
-      await verificarViaHTML();
-    }
+    console.log('[Monitor] Verificando...', new Date().toLocaleTimeString('pt-BR'));
+    await verificarViaHTML();
   }
 
   async function verificarViaHTML() {
@@ -2780,33 +2755,92 @@ async function exportarOrientacoesPDF() {
         `https://www.camara.leg.br/evento-legislativo/${EVENTO_ID_MON}`,
         { cache: 'no-store', headers: { 'Cache-Control': 'no-cache' } }
       );
-      if (!r.ok) return;
+      if (!r.ok) {
+        console.warn('Monitor: HTTP', r.status);
+        return;
+      }
       const html   = await r.text();
       const parser = new DOMParser();
       const doc2   = parser.parseFromString(html, 'text/html');
-      const texto  = doc2.body?.textContent || '';
 
-      const itensNossos = window.ITENS_DATA || [];
-      itensNossos.forEach(it => {
-        const proj = (it.projeto || '').toUpperCase();
-        // Verifica se o projeto aparece no HTML junto com termo de alerta
-        const nums = proj.match(/\d{3,}/g) || [];
-        const regex = new RegExp(
-          '(' + nums.join('|') + ').{0,200}(' + TERMOS_ALERTA.join('|') + ')',
-          'i'
-        );
-        if (!regex.test(texto)) return;
+      // Extrai texto relevante — remove scripts/styles
+      doc2.querySelectorAll('script,style,noscript').forEach(el => el.remove());
+      const textoTotal = (doc2.body?.textContent || '').replace(/\s+/g, ' ').trim();
 
-        const chave = String(it.id_principal);
-        if (_primeiraVerif) { _statusAnterior[chave] = 'em análise'; return; }
-        if (_statusAnterior[chave] === 'alerta_disparado') return;
-        _statusAnterior[chave] = 'alerta_disparado';
-        dispararAlerta(it.projeto, it.ementa, 'Em Análise');
-      });
+      // Log para debug
+      console.log('[Monitor] Texto extraído (500 chars):', textoTotal.substring(0, 500));
+      const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+      atualizarStatusTxt(`✓ ${agora} — ${textoTotal.length} chars`);
 
-      _primeiraVerif = false;
+      // Na primeira verificação: salva snapshot do texto completo como baseline
+      if (_primeiraVerif) {
+        _statusAnterior['__snapshot__'] = textoTotal;
+        _primeiraVerif = false;
+        console.log('[Monitor] Baseline salvo. Chars:', textoTotal.length);
+        return;
+      }
+
+      const snapAnterior = _statusAnterior['__snapshot__'] || '';
+
+      // Termos que indicam mudança de status
+      const termosStatus = [
+        { termo: 'em análise',         label: 'Em Análise',       emoji: '🔴' },
+        { termo: 'em votação',          label: 'Em Votação',        emoji: '🗳️' },
+        { termo: 'em discussão',        label: 'Em Discussão',      emoji: '💬' },
+        { termo: 'em apreciação',       label: 'Em Apreciação',     emoji: '🔵' },
+        { termo: 'votação nominal',     label: 'Votação Nominal',   emoji: '🗳️' },
+        { termo: 'aprovado',            label: 'Aprovado',          emoji: '✅' },
+        { termo: 'rejeitado',           label: 'Rejeitado',         emoji: '❌' },
+        { termo: 'retirado de pauta',   label: 'Retirado de Pauta', emoji: '↩️' },
+        { termo: 'adiado',              label: 'Adiado',            emoji: '⏸️' },
+      ];
+
+      const textoLower    = textoTotal.toLowerCase();
+      const snapLower     = snapAnterior.toLowerCase();
+      const itensNossos   = window.ITENS_DATA || [];
+
+      // Verifica mudanças gerais no texto
+      if (textoTotal !== snapAnterior) {
+        console.log('[Monitor] Página mudou!');
+
+        // Para cada termo de status, verifica se apareceu ou mudou
+        for (const { termo, label, emoji } of termosStatus) {
+          const eraPresente  = snapLower.includes(termo);
+          const agoraPresente = textoLower.includes(termo);
+
+          if (!eraPresente && agoraPresente) {
+            // Novo status apareceu — tenta casar com item da pauta
+            console.log('[Monitor] Novo status detectado:', label);
+
+            // Pega contexto ao redor do termo
+            const idx = textoLower.indexOf(termo);
+            const contexto = textoTotal.substring(Math.max(0, idx - 150), idx + 200);
+
+            // Tenta casar com item da pauta pelo número
+            let itemCasado = null;
+            for (const it of itensNossos) {
+              const nums = (it.projeto || '').match(/\d{3,}/g) || [];
+              if (nums.some(n => contexto.includes(n))) {
+                itemCasado = it;
+                break;
+              }
+            }
+
+            const titulo  = itemCasado ? `${emoji} ${itemCasado.projeto}` : `${emoji} Plenário`;
+            const detalhe = itemCasado ? (itemCasado.ementa || '').substring(0, 120) : contexto.substring(0, 120);
+            dispararAlerta(titulo, detalhe, label);
+            break; // dispara só o mais importante
+          }
+        }
+
+        // Atualiza snapshot
+        _statusAnterior['__snapshot__'] = textoTotal;
+      } else {
+        console.log('[Monitor] Sem mudanças.');
+      }
+
     } catch(err) {
-      console.warn('Monitor: erro HTML —', err.message);
+      console.warn('Monitor: erro —', err.message);
     }
   }
 
