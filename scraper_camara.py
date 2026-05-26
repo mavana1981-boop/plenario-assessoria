@@ -4,15 +4,9 @@ import re
 import logging
 import sys
 
-# -----------------------------------------------------------------------------
-# LOGGING
-# -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# -----------------------------------------------------------------------------
-# FUNÇÃO AUXILIAR PARA DETALHES DE PROPOSIÇÃO
-# -----------------------------------------------------------------------------
 def obter_detalhes_proposicao(id_prop):
     """Obtém detalhes complementares de uma proposição pela API da Câmara"""
     base = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}"
@@ -32,12 +26,19 @@ def obter_detalhes_proposicao(id_prop):
             detalhes["ementa"] = j.get("ementa", "")
             detalhes["urlInteiroTeor"] = j.get("urlInteiroTeor", "")
 
-        # Autores
+        # Autores com partido
         r_autores = requests.get(base + "/autores", timeout=8)
         if r_autores.ok:
-            autores_dados = r_autores.json().get("dados", [])
-            autores = [f"{a['nome']}" for a in autores_dados if "nome" in a]
-            # Limitar a 3 autores, com "e outros" se houver mais
+            autores_dados = r_autores.ok and r_autores.json().get("dados", [])
+            autores = []
+            for a in autores_dados:
+                if "nome" not in a:
+                    continue
+                partido = a.get("siglaPartido", "") or a.get("siglaPartidoAutor", "")
+                if partido:
+                    autores.append(f"{a['nome']} ({partido})")
+                else:
+                    autores.append(a['nome'])
             if len(autores) > 3:
                 detalhes["autores"] = ", ".join(autores[:3]) + " e outros."
                 detalhes["tem_mais_autores"] = True
@@ -45,20 +46,40 @@ def obter_detalhes_proposicao(id_prop):
                 detalhes["autores"] = ", ".join(autores)
                 detalhes["tem_mais_autores"] = False
 
+        # Relator com partido — busca via tramitações
+        try:
+            r_tram = requests.get(base + "/tramitacoes?itens=10&ordem=DESC", timeout=8)
+            if r_tram.ok:
+                for t in r_tram.json().get("dados", []):
+                    despacho = (t.get("despacho") or "").lower()
+                    if "relator" in despacho:
+                        # Extrai nome do relator do despacho
+                        m = re.search(r"dep(?:\.|utad[ao])?\s+([A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+)+)", t.get("despacho",""))
+                        if m:
+                            relator_nome = m.group(1).strip()
+                            # Busca partido do relator
+                            r_dep = requests.get(
+                                f"https://dadosabertos.camara.leg.br/api/v2/deputados?nome={requests.utils.quote(relator_nome)}&itens=1",
+                                timeout=6
+                            )
+                            if r_dep.ok:
+                                deps = r_dep.json().get("dados", [])
+                                if deps:
+                                    partido = deps[0].get("siglaPartido", "")
+                                    detalhes["relator"] = f"{relator_nome} ({partido})" if partido else relator_nome
+                                    break
+        except Exception:
+            pass
+
     except Exception as e:
         logger.warning(f"⚠️ Falha ao obter detalhes da proposição {id_prop}: {e}")
 
     return detalhes
 
-# -----------------------------------------------------------------------------
-# FUNÇÃO AUXILIAR PARA BUSCAR ID DA PROPOSIÇÃO
-# -----------------------------------------------------------------------------
 def buscar_id_proposicao_por_codigo(codigo):
-    """Busca o idProposicao pela API usando siglaTipo, numero e ano extraídos do código"""
     try:
         match = re.match(r"(\w+)\s+(\d+)/(\d+)", codigo.strip())
         if not match:
-            logger.warning(f"⚠️ Formato de código inválido: {codigo}")
             return None
         sigla_tipo, numero, ano = match.groups()
         url = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla_tipo}&numero={numero}&ano={ano}"
@@ -67,55 +88,33 @@ def buscar_id_proposicao_por_codigo(codigo):
             dados = r.json().get("dados", [])
             if dados:
                 return str(dados[0].get("id"))
-        logger.warning(f"⚠️ Nenhuma proposição encontrada para {codigo}")
         return None
     except Exception as e:
         logger.warning(f"⚠️ Erro ao buscar idProposicao para {codigo}: {e}")
         return None
 
-# -----------------------------------------------------------------------------
-# FUNÇÃO PRINCIPAL DE SCRAPING
-# -----------------------------------------------------------------------------
 def obter_itens_pauta(id_evento):
-    """Obtém a lista de proposições da pauta de um evento legislativo pelo site da Câmara"""
     url_evento = f"https://www.camara.leg.br/evento-legislativo/{id_evento}"
     logger.info(f"🌐 Acessando {url_evento} ...")
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-    }
-
     try:
-        resp = requests.get(url_evento, headers=headers, timeout=15)
+        resp = requests.get(url_evento, timeout=10)
         resp.raise_for_status()
     except Exception as e:
         logger.error(f"❌ Falha ao baixar HTML: {e}")
         return []
 
-    html = resp.text
-    logger.info(f"📄 HTML baixado ({len(html)} caracteres)")
-
-    soup = BeautifulSoup(html, "html.parser")
-
-    # Buscar todas as seções h2 com classe info-reveal__title
+    soup = BeautifulSoup(resp.text, "html.parser")
     secoes_h2 = soup.find_all("h2", class_="info-reveal__title")
     logger.info(f"🔍 Seções h2 detectadas: {[h2.get_text(strip=True) for h2 in secoes_h2]}")
 
     itens = []
-    vistos = set()  # Para evitar duplicatas
+    vistos = set()
 
-    # Mapeamento de seções específicas baseadas no texto do h2 e no target do botão de toggle
     for h2 in secoes_h2:
         texto_raw = h2.get_text(strip=True)
-        # Limpar números do título
         texto_limpo = re.sub(r'\s*\d+$', '', texto_raw).strip().lower()
-        logger.info(f"Processando seção: '{texto_raw}' -> '{texto_limpo}'")
 
-        # Normalizar o nome da seção
         if "previstas" in texto_limpo:
             secao_nome = "Proposta Prevista"
         elif "não analisadas" in texto_limpo:
@@ -125,36 +124,23 @@ def obter_itens_pauta(id_evento):
         else:
             secao_nome = texto_limpo.title()
 
-        # Encontrar o botão de toggle próximo ao h2 para identificar o target do collapse
         botao_toggle = h2.find_next_sibling("button", class_="info-reveal__toggle-button")
         if not botao_toggle:
-            logger.warning(f"⚠️ Nenhum botão de toggle encontrado para a seção '{secao_nome}'. Pulando...")
             continue
-
         target_id = botao_toggle.get("data-target")
         if not target_id:
-            logger.warning(f"⚠️ Botão de toggle sem data-target para a seção '{secao_nome}'. Pulando...")
             continue
-
-        # Encontrar o div de collapse com esse ID e a ul dentro dele
         div_collapse = soup.find("div", id=target_id.replace("#", ""))
         if not div_collapse:
-            logger.warning(f"⚠️ Div de collapse '{target_id}' não encontrado para a seção '{secao_nome}'. Pulando...")
             continue
-
         ul_lista = div_collapse.find("ul", class_="l-pauta__lista")
         if not ul_lista:
-            logger.warning(f"⚠️ Nenhuma lista <ul class='l-pauta__lista'> encontrada no collapse '{target_id}' para a seção '{secao_nome}'. Pulando...")
             continue
 
-        logger.info(f"Associada seção '{secao_nome}' à lista com {len(ul_lista.find_all('li', class_='l-pauta__item'))} itens.")
-
-        # Processar cada item da lista
         for li in ul_lista.find_all("li", class_="l-pauta__item"):
             try:
                 titulo_tag = li.find("a", class_="item-pauta__proposicao")
                 if not titulo_tag:
-                    logger.warning("⚠️ Item sem título de proposição. Pulando...")
                     continue
 
                 codigo = titulo_tag.get_text(strip=True)
@@ -162,7 +148,6 @@ def obter_itens_pauta(id_evento):
                 ementa_tag = titulo_tag.find_parent("p")
                 ementa_html = ementa_tag.get_text(strip=True) if ementa_tag else ""
 
-                # Autor e relator
                 info = li.find("div", class_="info-pauta")
                 autores = ""
                 relator = ""
@@ -177,73 +162,44 @@ def obter_itens_pauta(id_evento):
                         relator = relator_tag.parent.find_next_sibling(string=True) or ""
                         relator = relator.strip(" :") if relator else ""
 
-                # ID da proposição
-                match = re.search(r"idProposicao=(\d+)", url)
-                id_prop = match.group(1) if match else None
+                match_id = re.search(r"idProposicao=(\d+)", url)
+                id_prop = match_id.group(1) if match_id else None
 
-                # Fallback: buscar idProposicao via API se não encontrado na URL
                 if not id_prop:
-                    logger.info(f"🔍 Buscando idProposicao para {codigo} via API...")
                     id_prop = buscar_id_proposicao_por_codigo(codigo)
-
                 if not id_prop:
-                    logger.warning(f"⚠️ idProposicao não encontrado para {codigo}. Pulando item.")
                     continue
-
-                # Evitar duplicatas
                 if id_prop in vistos:
-                    logger.warning(f"⚠️ Proposição {codigo} (id {id_prop}) já processada. Pulando...")
                     continue
                 vistos.add(id_prop)
 
-                # Obter detalhes complementares via API
                 info_extra = obter_detalhes_proposicao(id_prop)
                 if info_extra["autores"]:
                     autores = info_extra["autores"]
                 if info_extra["relator"]:
                     relator = info_extra["relator"]
-                situacao = info_extra["situacao"]
-                ementa_final = info_extra["ementa"] or ementa_html
-                url_inteiro_teor = info_extra["urlInteiroTeor"]
 
                 itens.append({
                     "id_principal": id_prop,
                     "codigo": codigo,
-                    "ementa": ementa_final,
+                    "ementa": info_extra["ementa"] or ementa_html,
                     "autores": autores,
                     "relator": relator or "Não atribuído",
-                    "situacao": situacao or "N/D",
-                    "urlInteiroTeor": url_inteiro_teor,
+                    "situacao": info_extra["situacao"] or "N/D",
+                    "urlInteiroTeor": info_extra["urlInteiroTeor"],
                     "url": url,
                     "secao": secao_nome,
                     "tem_mais_autores": info_extra["tem_mais_autores"]
                 })
 
             except Exception as e:
-                logger.warning(f"⚠️ Erro ao processar item da pauta (seção {secao_nome}): {e}")
+                logger.warning(f"⚠️ Erro ao processar item: {e}")
 
-    logger.info(f"📊 Total de {len(itens)} proposições únicas coletadas.")
+    logger.info(f"📊 Total de {len(itens)} proposições coletadas.")
     return itens
 
-# -----------------------------------------------------------------------------
-# TESTE LOCAL DIRETO
-# -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Aceita argumento de linha de comando ou usa evento padrão
-    if len(sys.argv) > 1:
-        try:
-            evento_teste = int(sys.argv[1])
-        except ValueError:
-            logger.error("❌ ID do evento deve ser um número inteiro.")
-            sys.exit(1)
-    else:
-        evento_teste = 79930  # Padrão para teste
-
+    evento_teste = int(sys.argv[1]) if len(sys.argv) > 1 else 79930
     resultados = obter_itens_pauta(evento_teste)
     for i, r in enumerate(resultados, start=1):
-        print(f"\n{i}. {r['codigo']} — {r['autores']}")
-        print(f"   {r['ementa'][:120]}...")
-        print(f"   Situação: {r['situacao']}")
-        print(f"   Seção: {r['secao']}")
-        print(f"   Inteiro teor: {r['urlInteiroTeor']}")
-    print(f"\nTotal de proposições encontradas: {len(resultados)}")
+        print(f"\n{i}. {r['codigo']} — {r['autores']} | Relator: {r['relator']}")
