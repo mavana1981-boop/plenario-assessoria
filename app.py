@@ -944,7 +944,21 @@ def fetch_pauta(evento_id, force_reload=False):
 # --------------------------------------------------------------------------
 # FILTRO DE DATA
 # --------------------------------------------------------------------------
-@app.template_filter('datetimeformat')
+@app.template_filter('truncar_autores')
+def truncar_autores(value, max_autores=2):
+    """Limita a exibição a max_autores, acrescentando 'e outros.' se necessário."""
+    if not value:
+        return value
+    # Separa por vírgula, respeitando parênteses ex: "João (PL-RJ), Maria (PT-SP)"
+    import re as _re
+    partes = _re.split(r',\s*(?![^()]*\))', str(value))
+    partes = [p.strip() for p in partes if p.strip()]
+    # Remove " e outros." do final se já existir
+    if partes and 'e outros' in partes[-1].lower():
+        partes = partes[:-1]
+    if len(partes) <= max_autores:
+        return ', '.join(partes)
+    return ', '.join(partes[:max_autores]) + ' e outros.'
 def datetimeformat(value, format='%d/%m/%Y %H:%M'):
     try:
         dt = datetime.fromisoformat(str(value))
