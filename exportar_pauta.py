@@ -265,7 +265,7 @@ def exportar_pauta(evento_id):
             fontSize=9, leading=11, alignment=TA_CENTER)
         sObjeto = ParagraphStyle("sObjeto", parent=SS["Normal"],
             fontSize=8.5, leading=12, alignment=TA_CENTER, wordWrap="CJK",
-            textColor=C_VERDE)
+            textColor=colors.black)
         sOri_tab = ParagraphStyle("sOri_tab", parent=SS["Normal"],
             fontName="Helvetica-Bold", fontSize=9, leading=11,
             alignment=TA_CENTER)
