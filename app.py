@@ -1816,12 +1816,13 @@ Seja detalhado e técnico. Máximo 600 palavras. Não use ### ou ** no texto, ap
             return jsonify({'resumo': texto, 'fonte': 'gemini', 'parecer': parecer_info})
         except Exception as e:
             status = getattr(getattr(e, 'response', None), 'status_code', None)
+            import traceback
+            logger.error(f"Gemini falhou analisar_ia status={status}: {e}\n{traceback.format_exc()[-500:]}")
             if status == 429:
-                logger.warning(f"Gemini 429 — limite atingido")
                 return jsonify({'error': 'Limite de requisições atingido. Aguarde alguns segundos e tente novamente.'}), 429
-            logger.warning(f"Gemini falhou: {e}")
+            return jsonify({'error': f'Erro Gemini ({status}): {str(e)}'}), 500
 
-    return jsonify({'error': 'Falha ao gerar análise. Tente novamente.'}), 500
+    return jsonify({'error': 'GEMINI_API_KEY não configurada.'}), 500
 
 @app.route('/infografico/<int:evento_id>')
 @login_required
