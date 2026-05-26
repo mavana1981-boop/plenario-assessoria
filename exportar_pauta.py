@@ -43,19 +43,16 @@ CORES_ORI = {
 }
 
 # Tipo de proposição → (cor_texto, cor_fundo)
+# REQ urgência = vermelho escuro; tudo mais = azul escuro
+C_AZUL_TABELA = colors.HexColor("#2E5FA3")   # azul mais claro para índice
+
 def cor_tipo(projeto):
-    p = (projeto or "").upper().split()[0] if projeto else ""
+    proj_upper = (projeto or "").upper()
+    p = proj_upper.split()[0] if proj_upper else ""
     if any(p.startswith(s) for s in ("REQ","RQS","RQU","REC")):
-        # Verifica se é urgência
-        proj_upper = (projeto or "").upper()
-        if "URGÊN" in proj_upper or "URGENCIA" in proj_upper or "URGÊNCIA" in proj_upper:
-            return C_VERMELHO, C_VERM_LT       # vermelho
-        return C_LARANJA, C_LAR_LT             # laranja para outros req
-    if p in ("PEC","PLP"):
-        return C_ROXO, C_ROXO_LT               # roxo
-    if p in ("MPV","PDL","PLV","PRS"):
-        return C_LARANJA, C_LAR_LT             # laranja
-    return C_AZUL, C_AZUL_LT                   # azul (PL padrão)
+        if any(x in proj_upper for x in ("URGÊN","URGENCIA","URGÊNCIA")):
+            return C_VERMELHO, C_VERM_LT   # vermelho escuro
+    return C_AZUL, C_AZUL_LT              # azul escuro para tudo mais
 
 MESES_PT = {
     "January":"Janeiro","February":"Fevereiro","March":"Março",
@@ -277,18 +274,20 @@ def exportar_pauta(evento_id):
             cor_ori, _ = CORES_ORI.get(ori, (C_CINZA, C_CINZA_LT))
             tdata.append([
                 Paragraph(str(it.get("ordem","—")), sNormal),
-                Paragraph(it.get("projeto","—"),
+                Paragraph(
+                    it.get("projeto","—") + (("\n" + it.get("resumo_ia","")) if it.get("resumo_ia") else ""),
                     ParagraphStyle("pt"+str(it.get("ordem",0)), parent=sNormal, fontName="Helvetica-Bold", textColor=cor_t)),
-                Paragraph(_strip_html(it.get("ementa","—"))[:160] + "…", sNormal),
+                Paragraph(_strip_html(it.get("ementa","—") or "—"), sNormal),
                 Paragraph(ori or "—",
                     ParagraphStyle("po"+str(it.get("ordem",0)), parent=sNormal, fontName="Helvetica-Bold", textColor=cor_ori)),
             ])
 
         tbl = Table(tdata, colWidths=[1.2*cm, 4.2*cm, 9.0*cm, 2.4*cm], repeatRows=1)
         tbl_style = [
-            ("BACKGROUND", (0,0), (-1,0), C_AZUL),
-            ("TEXTCOLOR",  (0,0), (-1,0), colors.white),
+            ("BACKGROUND", (0,0), (-1,0), colors.white),
+            ("TEXTCOLOR",  (0,0), (-1,0), C_AZUL_TABELA),
             ("FONTNAME",   (0,0), (-1,0), "Helvetica-Bold"),
+            ("LINEBELOW",  (0,0), (-1,0), 1.5, C_AZUL_TABELA),
             ("FONTSIZE",   (0,0), (-1,-1), 8.5),
             ("GRID",       (0,0), (-1,-1), 0.3, colors.HexColor("#cccccc")),
             ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, C_CINZA_LT]),
@@ -317,14 +316,15 @@ def exportar_pauta(evento_id):
                 Paragraph(f'<b>Item {it.get("ordem","—")} — {projeto}</b>',
                            ParagraphStyle("hdr", parent=SS["Normal"],
                                fontName="Helvetica-Bold", fontSize=11, leading=14,
-                               textColor=colors.white)),
+                               textColor=cor_t)),
             ]]
             hdr_tbl = Table(hdr_data, colWidths=[doc.width])
             hdr_tbl.setStyle(TableStyle([
-                ("BACKGROUND", (0,0), (-1,-1), cor_t),
-                ("TOPPADDING", (0,0), (-1,-1), 6),
-                ("BOTTOMPADDING",(0,0),(-1,-1), 6),
-                ("LEFTPADDING", (0,0), (-1,-1), 8),
+                ("BACKGROUND",    (0,0), (-1,-1), colors.white),
+                ("LINEBELOW",     (0,0), (-1,-1), 2, cor_t),
+                ("TOPPADDING",    (0,0), (-1,-1), 6),
+                ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+                ("LEFTPADDING",   (0,0), (-1,-1), 8),
                 ]))
             bloco.append(hdr_tbl)
 
@@ -358,7 +358,7 @@ def exportar_pauta(evento_id):
                 ])
             info_tbl = Table(info_rows, colWidths=[doc.width/2, doc.width/2])
             info_tbl.setStyle(TableStyle([
-                ("BACKGROUND",    (0,0), (-1,-1), cor_bg),
+                ("BACKGROUND",    (0,0), (-1,-1), colors.white),
                 ("TOPPADDING",    (0,0), (-1,-1), 3),
                 ("BOTTOMPADDING", (0,0), (-1,-1), 3),
                 ("LEFTPADDING",   (0,0), (-1,-1), 8),
@@ -385,10 +385,11 @@ def exportar_pauta(evento_id):
                         ParagraphStyle("sOri2", parent=sOri, textColor=cor_ori))
                 ]], colWidths=[doc.width])
                 ori_tbl.setStyle(TableStyle([
-                    ("BACKGROUND", (0,0), (-1,-1), cor_ori_bg),
-                    ("TOPPADDING", (0,0), (-1,-1), 6),
-                    ("BOTTOMPADDING",(0,0),(-1,-1), 6),
-                    ("LINEBELOW",  (0,0), (-1,-1), 2, cor_ori),
+                    ("BACKGROUND",    (0,0), (-1,-1), colors.white),
+                    ("TOPPADDING",    (0,0), (-1,-1), 4),
+                    ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+                    ("LINEABOVE",     (0,0), (-1,0), 0.5, cor_ori),
+                    ("LINEBELOW",     (0,0), (-1,0), 0.5, cor_ori),
                 ]))
                 bloco.append(ori_tbl)
 
