@@ -119,31 +119,45 @@ def _html_para_paragrafos(html, estilo):
 
         linha_upper = linha.upper()
 
-        # Detecta cabeçalho de seção POSITIVA
+        # Detecta cabeçalho de seção pelo emoji ou palavra-chave
         eh_positivo = (
-            linha.startswith("✅") or
-            "PONTOS POSITIVOS" in linha_upper or
-            "PONTO POSITIVO" in linha_upper or
-            (("POSITIV" in linha_upper) and len(linha) < 60)
+            linha.startswith('🟢') or
+            'PONTOS POSITIVOS' in linha_upper or
+            'PONTO POSITIVO' in linha_upper or
+            (('POSITIV' in linha_upper) and len(linha) < 80)
         )
-        # Detecta cabeçalho de seção NEGATIVA
         eh_negativo = (
-            linha.startswith("❌") or
-            "PONTOS NEGATIVOS" in linha_upper or
-            "PONTO NEGATIVO" in linha_upper or
-            (("NEGATIV" in linha_upper or "CRÍTICA" in linha_upper or "CRITICA" in linha_upper) and len(linha) < 60)
+            linha.startswith('🔴') or
+            'PONTOS NEGATIVOS' in linha_upper or
+            'PONTO NEGATIVO' in linha_upper or
+            (('NEGATIV' in linha_upper or 'CRÍTICA' in linha_upper or 'CRITICA' in linha_upper) and len(linha) < 80)
+        )
+        eh_neutro = (
+            linha.startswith('📘') or
+            linha.startswith('⚖️') or
+            linha.startswith('↔️') or
+            linha.startswith('⚠️') or
+            ('RESUMO TÉCNICO' in linha_upper or
+             'RISCOS POLÍTICOS' in linha_upper or
+             'ORIENTAÇÃO SUGERIDA' in linha_upper or
+             'CRÍTICAS E PONTOS' in linha_upper) and len(linha) < 80
         )
 
         if eh_positivo:
             st = ParagraphStyle("sNotaPos", parent=estilo,
                 fontName="Helvetica-Bold", fontSize=10, leading=14,
-                textColor=C_VERDE_NT, spaceBefore=4)
+                textColor=C_VERDE_NT, spaceBefore=6)
             paragrafos.append(Paragraph(linha.upper(), st))
         elif eh_negativo:
             st = ParagraphStyle("sNotaNeg", parent=estilo,
                 fontName="Helvetica-Bold", fontSize=10, leading=14,
-                textColor=C_VERMELHO_NT, spaceBefore=4)
+                textColor=C_VERMELHO_NT, spaceBefore=6)
             paragrafos.append(Paragraph(linha.upper(), st))
+        elif eh_neutro:
+            st = ParagraphStyle("sNotaNeu", parent=estilo,
+                fontName="Helvetica-Bold", fontSize=10, leading=14,
+                textColor=colors.HexColor("#1a1a2e"), spaceBefore=6)
+            paragrafos.append(Paragraph(linha, st))
         else:
             paragrafos.append(Paragraph(linha, estilo))
 
