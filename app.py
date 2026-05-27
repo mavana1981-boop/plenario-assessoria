@@ -1994,24 +1994,47 @@ def analisar_ia():
 **Ementa:** {ementa}
 {contexto_doc}
 
-Gere uma nota técnica em texto puro (sem HTML, sem markdown com asteriscos, sem ###) seguindo EXATAMENTE este modelo de estrutura e emojis:
+Gere uma nota técnica em texto puro seguindo EXATAMENTE esta estrutura.
+REGRA CRÍTICA: cada título de seção (com emoji) deve estar SOZINHO em sua linha, seguido de linha em branco, depois o texto. Nunca coloque texto na mesma linha do emoji/título.
+
+Formato obrigatório:
 
 📘 Resumo técnico
-[2 parágrafos descrevendo objetivamente o que a proposição faz, seus dispositivos principais, a quem se aplica e quando entra em vigor. Seja preciso e técnico.]
+
+[parágrafo 1]
+
+[parágrafo 2]
 
 🟢 Pontos positivos
-[2 parágrafos com os argumentos favoráveis à proposição — impacto positivo, benefícios concretos, alinhamento com valores conservadores/liberais, segurança jurídica, redução de burocracia, fortalecimento da sociedade civil, etc.]
+
+[parágrafo 1]
+
+[parágrafo 2]
 
 🔴 Pontos negativos
-[2 parágrafos com os problemas da proposição — redações amplas, impacto fiscal, risco de abusos, distorções, inconsistências jurídicas, efeitos colaterais.]
+
+[parágrafo 1]
+
+[parágrafo 2]
 
 ⚖️ Riscos políticos e de imagem
-[2 parágrafos sobre como adversários podem atacar a proposição, como a imprensa pode retratar, e também como a base pode reagir positivamente. Equilibrado mas estratégico.]
+
+[parágrafo 1]
+
+[parágrafo 2]
 
 ↔️ Orientação sugerida
-[2 parágrafos com recomendação clara de posicionamento — apoio, rejeição ou apoio com emendas — com argumentos de comunicação para o plenário e sugestões de salvaguardas ou ajustes se pertinente.]
-{secao_criticas}
-Seja detalhado, estratégico e político. Máximo 500 palavras. Use apenas os emojis dos títulos das seções, sem outros emojis no texto. Não use asteriscos, não use ###, não use HTML."""
+
+[parágrafo 1]
+
+[parágrafo 2]
+
+Regras de estilo:
+- Sem HTML, sem asteriscos, sem ###
+- Apenas os emojis dos títulos, sem outros emojis no texto
+- Detalhado, estratégico e político
+- Máximo 500 palavras no total
+{secao_criticas}"""
 
     # Tenta Gemini primeiro, fallback para Groq
     if gemini_key:
@@ -2027,6 +2050,42 @@ Seja detalhado, estratégico e político. Máximo 500 palavras. Use apenas os em
             )
             r.raise_for_status()
             texto = r.json()['candidates'][0]['content']['parts'][0]['text']
+
+            # Pós-processamento: garante que cada título de seção fique sozinho na linha
+            titulos_secao = ['📘', '🟢', '🔴', '⚖️', '↔️', '⚠️']
+            linhas = texto.split('\n')
+            linhas_corrigidas = []
+            for linha in linhas:
+                linha_strip = linha.strip()
+                # Se a linha começa com emoji de seção mas tem texto depois
+                for emoji in titulos_secao:
+                    if linha_strip.startswith(emoji) and len(linha_strip) > len(emoji) + 30:
+                        # Separa o título do texto
+                        # Encontra onde termina o título (até o primeiro ponto ou dois pontos longo)
+                        idx_sep = linha_strip.find('\n')
+                        # Tenta separar após o nome da seção (ex: "📘 Resumo técnico\nTexto...")
+                        partes = linha_strip.split(None, 5)
+                        if len(partes) >= 3:
+                            # Heurística: título são as primeiras 2-4 palavras com o emoji
+                            titulo_palavras = [partes[0]]  # emoji
+                            i = 1
+                            while i < len(partes) and i < 4:
+                                titulo_palavras.append(partes[i])
+                                i += 1
+                                # Para quando encontrar palavra que parece início de parágrafo
+                                if partes[i-1][-1:] in '.,:' or len(' '.join(titulo_palavras)) > 30:
+                                    break
+                            titulo = ' '.join(titulo_palavras)
+                            resto = linha_strip[len(titulo):].strip()
+                            if resto:
+                                linhas_corrigidas.append(titulo)
+                                linhas_corrigidas.append('')
+                                linhas_corrigidas.append(resto)
+                                break
+                else:
+                    linhas_corrigidas.append(linha)
+
+            texto = '\n'.join(linhas_corrigidas)
             return jsonify({'resumo': texto, 'fonte': 'gemini', 'parecer': parecer_info})
         except Exception as e:
             status = getattr(getattr(e, 'response', None), 'status_code', None)
