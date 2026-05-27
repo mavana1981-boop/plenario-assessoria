@@ -1678,15 +1678,22 @@
     // ── Para emendas: lista emendas disponíveis e pede seleção ──────────────
     if (ehEmenda) {
       try {
-        // Tenta rota interna primeiro, senão busca direto no browser
         let emendas = [];
+
+        // Extrai número da emenda da descrição do DTQ
+        const mNumDesc = descricao.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i);
+        const numEmdDesc = mNumDesc ? mNumDesc[1] : null;
+
+        // Tenta API interna primeiro
         try {
           const rEmd = await fetch('/listar_emendas/' + idPrincipal);
-          const jEmd = rEmd.ok ? await rEmd.json() : {emendas:[]};
-          emendas = jEmd.emendas || [];
+          if (rEmd.ok) {
+            const jEmd = await rEmd.json();
+            emendas = jEmd.emendas || [];
+          }
         } catch(e) {}
 
-        // Se servidor falhou (403 Railway), tenta direto no browser
+        // Se falhou (Railway 403), tenta via browser direto
         if (emendas.length === 0) {
           try {
             const urlEmd = `https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao=${idPrincipal}&subst=0`;
@@ -1695,30 +1702,54 @@
               const html = await rBrowser.text();
               const parser = new DOMParser();
               const doc2 = parser.parseFromString(html, 'text/html');
+              const seen = new Set();
               doc2.querySelectorAll('tr').forEach(row => {
                 const txt = row.textContent.trim();
                 const m = txt.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i);
-                if (!m) return;
-                const num = m[1];
-                // Pega link do PDF
+                if (!m || seen.has(m[1])) return;
+                seen.add(m[1]);
                 const link = row.querySelector('a[href*="codteor"]');
-                if (link) {
-                  let href = link.getAttribute('href');
-                  if (!href.startsWith('http')) href = 'https://www.camara.leg.br' + href;
-                  const label = txt.includes('Aglutinativa') ? `Emenda Aglutinativa nº ${num}` :
-                                txt.includes('Substitutiva') ? `Emenda Substitutiva nº ${num}` :
-                                `Emenda nº ${num}`;
-                  // Evita duplicatas
-                  if (!emendas.find(e => e.num === num)) {
-                    emendas.push({num, label, url: href});
-                  }
-                }
+                if (!link) return;
+                let href = link.getAttribute('href');
+                if (!href.startsWith('http')) href = 'https://www.camara.leg.br' + href;
+                const label = txt.includes('Aglutinativa') ? `Emenda Aglutinativa nº ${m[1]}` :
+                              txt.includes('Substitutiva')  ? `Emenda Substitutiva nº ${m[1]}`  :
+                              `Emenda nº ${m[1]}`;
+                emendas.push({num: m[1], label, url: href});
               });
-              emendas.sort((a,b) => parseInt(a.num)-parseInt(b.num));
+              emendas.sort((a,b) => parseInt(a.num) - parseInt(b.num));
             }
           } catch(eBrowser) {
-            console.warn('Busca emendas no browser falhou:', eBrowser.message);
+            console.warn('Busca emendas browser:', eBrowser.message);
           }
+        }
+
+        // Se ainda vazio, usa /listar_documentos e filtra por emenda
+        if (emendas.length === 0) {
+          try {
+            const rDocs = await fetch('/listar_documentos/' + idPrincipal);
+            if (rDocs.ok) {
+              const jDocs = await rDocs.json();
+              (jDocs.documentos || []).forEach(doc => {
+                const mE = doc.label.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i) ||
+                           doc.filename?.match(/(?:EMD|Emenda).*?(\d+)/i);
+                if (mE) {
+                  emendas.push({num: mE[1], label: doc.label.replace(/📋|📄/g,'').trim(), url: doc.url});
+                }
+              });
+            }
+          } catch(e) {}
+        }
+
+        // Se ainda vazio mas sabemos o número da emenda pela descrição,
+        // monta entrada sintética para análise direta
+        if (emendas.length === 0 && numEmdDesc) {
+          emendas.push({
+            num: numEmdDesc,
+            label: `Emenda nº ${numEmdDesc} (buscar PDF manualmente)`,
+            url: '',
+            manual: true,
+          });
         }
 
         if (emendas.length > 0) {
@@ -1740,7 +1771,7 @@
           mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
 
           const mBody = document.createElement('div'); mBody.className = 'modal-body';
-          const info = document.createElement('p'); info.className = 'small text-muted';
+          const info = document.createElement('p'); info.className = 'small text-muted mb-2';
           info.textContent = numero + ' — ' + descricao;
           mBody.appendChild(info);
 
@@ -1748,17 +1779,23 @@
           emendas.forEach(emd => {
             const item = document.createElement('button');
             item.type = 'button';
-            item.className = 'list-group-item list-group-item-action';
+            item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
             item.textContent = emd.label;
+            // Destaca a emenda que corresponde ao DTQ atual
+            if (numEmdDesc && emd.num === numEmdDesc) {
+              item.className += ' active';
+            }
             item.addEventListener('click', () => {
               bootstrap.Modal.getInstance(modalEl)?.hide();
               modalEl.remove();
-              // Executa análise com a emenda selecionada
-              _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {
-                url_emenda: emd.url,
-                num_emenda: emd.num,
-                autoria,
-              });
+              if (emd.manual) {
+                // Sem URL — abre direto o modal de debug para colar texto
+                _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto,
+                  {autoria, url_emenda: '', num_emenda: emd.num});
+              } else {
+                _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto,
+                  {autoria, url_emenda: emd.url, num_emenda: emd.num});
+              }
             });
             lista.appendChild(item);
           });
@@ -1778,7 +1815,7 @@
           return; // aguarda seleção
         }
       } catch(e) {
-        console.warn('listar_emendas falhou:', e);
+        console.warn('Bloco emenda falhou:', e);
       }
     }
 
