@@ -1669,10 +1669,84 @@
 
     if (!idPrincipal) { alert('ID da proposição não encontrado.'); return; }
 
+    // Detecta se é destaque de emenda
+    const ehEmenda = /emenda|emd|subemenda/i.test(descricao);
+
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
-    try {
+    // ── Para emendas: lista emendas disponíveis e pede seleção ──────────────
+    if (ehEmenda) {
+      try {
+        const rEmd = await fetch('/listar_emendas/' + idPrincipal);
+        const jEmd = rEmd.ok ? await rEmd.json() : {emendas:[]};
+        const emendas = jEmd.emendas || [];
+
+        if (emendas.length > 0) {
+          // Monta modal de seleção de emenda
+          document.getElementById('modal-sel-emenda')?.remove();
+          const modalEl = document.createElement('div');
+          modalEl.id = 'modal-sel-emenda';
+          modalEl.className = 'modal fade';
+          modalEl.setAttribute('tabindex', '-1');
+
+          const mDialog  = document.createElement('div');  mDialog.className = 'modal-dialog';
+          const mContent = document.createElement('div');  mContent.className = 'modal-content';
+          const mHeader  = document.createElement('div');  mHeader.className = 'modal-header bg-warning';
+          const mTitle   = document.createElement('h6');   mTitle.className = 'modal-title fw-bold';
+          mTitle.textContent = '📋 Selecione a Emenda para Analisar';
+          const mClose = document.createElement('button');
+          mClose.type = 'button'; mClose.className = 'btn-close';
+          mClose.setAttribute('data-bs-dismiss', 'modal');
+          mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
+
+          const mBody = document.createElement('div'); mBody.className = 'modal-body';
+          const info = document.createElement('p'); info.className = 'small text-muted';
+          info.textContent = numero + ' — ' + descricao;
+          mBody.appendChild(info);
+
+          const lista = document.createElement('div'); lista.className = 'list-group';
+          emendas.forEach(emd => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'list-group-item list-group-item-action';
+            item.textContent = emd.label;
+            item.addEventListener('click', () => {
+              bootstrap.Modal.getInstance(modalEl)?.hide();
+              modalEl.remove();
+              // Executa análise com a emenda selecionada
+              _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {
+                url_emenda: emd.url,
+                num_emenda: emd.num,
+              });
+            });
+            lista.appendChild(item);
+          });
+          mBody.appendChild(lista);
+
+          mContent.appendChild(mHeader); mContent.appendChild(mBody);
+          mDialog.appendChild(mContent); modalEl.appendChild(mDialog);
+          document.body.appendChild(modalEl);
+
+          const modal = new bootstrap.Modal(modalEl);
+          modalEl.addEventListener('hidden.bs.modal', () => {
+            modalEl.remove();
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-robot"></i>';
+          });
+          modal.show();
+          return; // aguarda seleção
+        }
+      } catch(e) {
+        console.warn('listar_emendas falhou:', e);
+      }
+    }
+
+    // ── Fluxo normal (não emenda ou sem emendas listadas) ──────────────────
+    _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {});
+  }
+
+  async function _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, extraParams) {
       const r = await fetch('/listar_documentos/' + idPrincipal);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
@@ -1928,7 +2002,8 @@
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({id_principal: idPrincipal, descricao, numero, projeto,
-              url_documento: doc.url, label_documento: doc.label})
+              url_documento: doc.url, label_documento: doc.label,
+              ...(extraParams || {})})
           });
           const j2 = await r2.json();
           if (j2.resumo) {
@@ -2022,7 +2097,6 @@
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-robot"></i>';
     }
-  }
 
   async function limparResumosIA(eventoId) {
     if (!confirm("Remover resumos IA salvos? Serão regenerados ao recarregar.")) return;
