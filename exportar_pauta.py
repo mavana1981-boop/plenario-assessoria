@@ -368,37 +368,42 @@ def exportar_pauta(evento_id):
             ori = (it.get("orientacao","") or "").strip().upper()
             cor_ori, _ = CORES_ORI.get(ori, (C_CINZA, C_CINZA_LT))
 
-            # Coluna proposição: título negrito + ementa abaixo em itálico menor na mesma cor
+            # Coluna proposição: título + ementa num único Paragraph (resolve split entre páginas)
             proj_titulo  = it.get("projeto","—")
             ementa_curta = _strip_html(it.get("ementa","") or "")
 
-            sProjEmenta = ParagraphStyle("pe"+str(it.get("ordem",0)),
-                parent=SS["Normal"],
-                fontName="Helvetica-Oblique", fontSize=7, leading=9,
-                textColor=cor_t, alignment=TA_CENTER, wordWrap="CJK")
+            try:
+                cor_hex = '#' + ''.join(f'{int(x*255):02X}' for x in cor_t.rgb())
+            except Exception:
+                cor_hex = '#0D2B5E'
 
-            cell_proj = [
-                Paragraph(proj_titulo,
-                    ParagraphStyle("ptt"+str(it.get("ordem",0)),
-                        parent=sProjTitulo, textColor=cor_t)),
-            ]
-            if ementa_curta:
-                cell_proj.append(Spacer(1, 2))
-                cell_proj.append(Paragraph(ementa_curta, sProjEmenta))
+            # Escapa caracteres XML especiais no título e ementa
+            import xml.sax.saxutils as _xml
+            proj_titulo_esc  = _xml.escape(proj_titulo)
+            ementa_curta_esc = _xml.escape(ementa_curta) if ementa_curta else ''
 
-            # Coluna objeto: resumo IA em verde sem itálico
+            proj_xml = f'<b><font color="{cor_hex}" size="9.5">{proj_titulo_esc}</font></b>'
+            if ementa_curta_esc:
+                proj_xml += f'<br/><font color="{cor_hex}" size="7"><i>{ementa_curta_esc}</i></font>'
+
+            proj_para = Paragraph(proj_xml,
+                ParagraphStyle("pm"+str(it.get("ordem",0)),
+                    parent=SS["Normal"], alignment=TA_CENTER, wordWrap="CJK"))
+
+            # Coluna objeto: resumo IA em preto sem itálico
             resumo_ia_tab = _strip_html(it.get("resumo_ia","") or "")
 
             tdata.append([
                 Paragraph(str(it.get("ordem","—")), sNum),
-                cell_proj,
+                proj_para,
                 Paragraph(resumo_ia_tab or "—", sObjeto),
                 Paragraph(ori or "—",
                     ParagraphStyle("ot"+str(it.get("ordem",0)),
                         parent=sOri_tab, textColor=cor_ori)),
             ])
 
-        tbl = Table(tdata, colWidths=[1.0*cm, 4.0*cm, 9.2*cm, 2.4*cm], repeatRows=1)
+        tbl = Table(tdata, colWidths=[1.0*cm, 4.0*cm, 9.2*cm, 2.4*cm],
+                    repeatRows=1, splitByRow=True)
         tbl_style = [
             # Cabeçalho
             ("BACKGROUND",    (0,0), (-1,0), colors.white),
@@ -430,10 +435,11 @@ def exportar_pauta(evento_id):
             resumo_ia      = it.get("resumo_ia","") or ""
 
             bloco = []
+            import xml.sax.saxutils as _xml2
 
             # Cabeçalho do item: fundo colorido por tipo
             hdr_data = [[
-                Paragraph(f'<b>Item {it.get("ordem","—")} — {projeto}</b>',
+                Paragraph(f'<b>Item {it.get("ordem","—")} — {_xml2.escape(projeto)}</b>',
                            ParagraphStyle("hdr", parent=SS["Normal"],
                                fontName="Helvetica-Bold", fontSize=11, leading=14,
                                textColor=cor_t)),
