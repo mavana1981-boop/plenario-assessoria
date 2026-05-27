@@ -104,17 +104,16 @@ async function gerarMensagem() {
     } else if (tipoAtual === 'resultado_req') {
       const req = window._reqAtual || {tipo: 'Requerimento', resultado: 'aprovado_simbolico'};
       const proj = itemAtual ? `do *${itemAtual.projeto}*` : '';
-      const linhaResumo = resumo ? `\n*${resumo}*` : '';
       if (req.resultado === 'aprovado_simbolico') {
-        msg = `✅ O Requerimento de *${req.tipo}* ${proj} foi *APROVADO SIMBOLICAMENTE*${linhaResumo}`;
+        msg = `✅ O Requerimento de *${req.tipo}* ${proj} foi *APROVADO SIMBOLICAMENTE*`;
       } else if (req.resultado === 'aprovado_nominal') {
         const v = window._votosAtuais || {sim:'', nao:'', abs:''};
         const linhaAbs = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
-        msg = `✅ O Requerimento de *${req.tipo}* ${proj} foi *APROVADO*${linhaResumo}\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
+        msg = `✅ O Requerimento de *${req.tipo}* ${proj} foi *APROVADO*\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
       } else {
         const v = window._votosAtuais || {sim:'', nao:'', abs:''};
         const linhaAbs = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
-        msg = `❌ O Requerimento de *${req.tipo}* ${proj} foi *REJEITADO*${linhaResumo}\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
+        msg = `❌ O Requerimento de *${req.tipo}* ${proj} foi *REJEITADO*\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
       }
 
     } else if (tipoAtual === 'aprovado_nominal' || tipoAtual === 'rejeitado_nominal') {
@@ -122,9 +121,7 @@ async function gerarMensagem() {
       const linhaAbs = v.abs ? `\n*Abstenção*: ${v.abs} votos` : '';
       const aprovado = tipoAtual === 'aprovado_nominal';
       const emojiNom = aprovado ? '✅' : '❌';
-      const linhaResumo = resumo ? `*${resumo}*` : '';
       msg = `${emojiNom} O *${itemAtual.projeto}* foi *${v.resultado}*` +
-            (linhaResumo ? `\n${linhaResumo}` : '') +
             `\n*SIM*: ${v.sim} votos\n*NÃO*: ${v.nao} votos${linhaAbs}`;
     }
 
