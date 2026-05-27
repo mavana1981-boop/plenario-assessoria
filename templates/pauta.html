@@ -1691,6 +1691,8 @@
 
         // Extrai emendas da memória de destaques carregados (fonte mais confiável)
         try {
+          console.log('[DTQ Emenda] _destaquesMem keys:', window._destaquesMem ? Object.keys(window._destaquesMem) : 'undefined');
+          console.log('[DTQ Emenda] idPrincipal:', idPrincipal, typeof idPrincipal);
           const todosDestaques = (window._destaquesMem && window._destaquesMem[idPrincipal]) || [];
           console.log('[DTQ Emenda] Destaques em memória:', todosDestaques.length, todosDestaques.map(d=>d.descricao));
           const seen = new Set();
