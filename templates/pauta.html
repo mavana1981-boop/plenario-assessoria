@@ -1679,27 +1679,34 @@
     if (ehEmenda) {
       try {
         let emendas = [];
+        console.log('[DTQ Emenda] idPrincipal:', idPrincipal, '| descricao:', descricao);
 
         // Extrai número da emenda da descrição do DTQ
         const mNumDesc = descricao.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i);
         const numEmdDesc = mNumDesc ? mNumDesc[1] : null;
+        console.log('[DTQ Emenda] numEmdDesc:', numEmdDesc);
 
         // Tenta API interna primeiro
         try {
           const rEmd = await fetch('/listar_emendas/' + idPrincipal);
+          console.log('[DTQ Emenda] /listar_emendas status:', rEmd.status);
           if (rEmd.ok) {
             const jEmd = await rEmd.json();
             emendas = jEmd.emendas || [];
+            console.log('[DTQ Emenda] Emendas do servidor:', emendas.length, emendas);
           }
-        } catch(e) {}
+        } catch(e) { console.warn('[DTQ Emenda] Servidor falhou:', e.message); }
 
-        // Se falhou (Railway 403), tenta via browser direto
+        // Se falhou, tenta via browser direto
         if (emendas.length === 0) {
           try {
             const urlEmd = `https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao=${idPrincipal}&subst=0`;
+            console.log('[DTQ Emenda] Tentando browser:', urlEmd);
             const rBrowser = await fetch(urlEmd, {cache: 'no-store'});
+            console.log('[DTQ Emenda] Browser status:', rBrowser.status, rBrowser.ok);
             if (rBrowser.ok) {
               const html = await rBrowser.text();
+              console.log('[DTQ Emenda] HTML tamanho:', html.length);
               const parser = new DOMParser();
               const doc2 = parser.parseFromString(html, 'text/html');
               const seen = new Set();
@@ -1720,37 +1727,35 @@
               emendas.sort((a,b) => parseInt(a.num) - parseInt(b.num));
             }
           } catch(eBrowser) {
-            console.warn('Busca emendas browser:', eBrowser.message);
+            console.warn('[DTQ Emenda] Browser falhou:', eBrowser.message);
           }
         }
 
-        // Se ainda vazio, usa /listar_documentos e filtra por emenda
+        // Terceira camada: /listar_documentos filtrando emendas
         if (emendas.length === 0) {
           try {
             const rDocs = await fetch('/listar_documentos/' + idPrincipal);
             if (rDocs.ok) {
               const jDocs = await rDocs.json();
-              (jDocs.documentos || []).forEach(doc => {
+              const docs = jDocs.documentos || [];
+              console.log('[DTQ Emenda] Docs disponíveis:', docs.map(d=>d.label));
+              docs.forEach(doc => {
                 const mE = doc.label.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i) ||
-                           doc.filename?.match(/(?:EMD|Emenda).*?(\d+)/i);
-                if (mE) {
-                  emendas.push({num: mE[1], label: doc.label.replace(/📋|📄/g,'').trim(), url: doc.url});
-                }
+                           (doc.filename||'').match(/(?:EMD|Emenda).*?(\d+)/i);
+                if (mE) emendas.push({num: mE[1], label: doc.label.replace(/📋|📄/g,'').trim(), url: doc.url});
               });
+              console.log('[DTQ Emenda] Emendas dos docs:', emendas);
             }
-          } catch(e) {}
+          } catch(e) { console.warn('[DTQ Emenda] listar_documentos falhou:', e.message); }
         }
 
-        // Se ainda vazio mas sabemos o número da emenda pela descrição,
-        // monta entrada sintética para análise direta
+        // Fallback sintético pelo número da descrição
         if (emendas.length === 0 && numEmdDesc) {
-          emendas.push({
-            num: numEmdDesc,
-            label: `Emenda nº ${numEmdDesc} (buscar PDF manualmente)`,
-            url: '',
-            manual: true,
-          });
+          console.log('[DTQ Emenda] Usando fallback sintético para emenda nº', numEmdDesc);
+          emendas.push({num: numEmdDesc, label: `Emenda nº ${numEmdDesc} (colar texto manualmente)`, url: '', manual: true});
         }
+
+        console.log('[DTQ Emenda] Total emendas:', emendas.length);
 
         if (emendas.length > 0) {
           // Monta modal de seleção de emenda
@@ -1819,8 +1824,16 @@
       }
     }
 
-    // ── Fluxo normal (não emenda ou sem emendas listadas) ──────────────────
-    _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria});
+    // ── Fluxo normal ────────────────────────────────────────────────────────
+    // Para emenda: só chega aqui se não achou emendas — mostra aviso
+    if (ehEmenda) {
+      console.warn('[DTQ] Emenda sem emendas encontradas — abrindo debug');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-robot"></i>';
+      alert('Não foi possível listar as emendas automaticamente.\nUse o botão "Procurar no texto" (🔍) para colar o trecho da emenda manualmente.');
+      return;
+    }
+    _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria, ehEmenda});
   }
 
   async function _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, extraParams) {
