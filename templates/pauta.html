@@ -1686,37 +1686,43 @@
         const numEmdDesc = mNumDesc ? mNumDesc[1] : null;
         console.log('[DTQ Emenda] numEmdDesc:', numEmdDesc);
 
-        // Tenta API interna primeiro
+        // Tenta API interna primeiro (mesmo padrão dos destaques)
         try {
           const rEmd = await fetch('/listar_emendas/' + idPrincipal);
           console.log('[DTQ Emenda] /listar_emendas status:', rEmd.status);
           if (rEmd.ok) {
             const jEmd = await rEmd.json();
             emendas = jEmd.emendas || [];
-            console.log('[DTQ Emenda] Emendas do servidor:', emendas.length, emendas);
+            console.log('[DTQ Emenda] Servidor:', emendas.length, emendas);
           }
-        } catch(e) { console.warn('[DTQ Emenda] Servidor falhou:', e.message); }
+        } catch(e) { console.warn('[DTQ Emenda] Servidor:', e.message); }
 
-        // Se falhou, tenta via browser direto
+        // Busca direto no browser — igual estratégia dos destaques
         if (emendas.length === 0) {
-          try {
-            const urlEmd = `https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao=${idPrincipal}&subst=0`;
-            console.log('[DTQ Emenda] Tentando browser:', urlEmd);
-            const rBrowser = await fetch(urlEmd, {cache: 'no-store'});
-            console.log('[DTQ Emenda] Browser status:', rBrowser.status, rBrowser.ok);
-            if (rBrowser.ok) {
-              const html = await rBrowser.text();
-              console.log('[DTQ Emenda] HTML tamanho:', html.length);
+          // Tenta prop_emendas direto (sem CORS problem pois é mesmo domínio do usuário)
+          const urlsParaTentar = [
+            `https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao=${idPrincipal}&subst=0`,
+            `https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao=${idPrincipal}&subst=1`,
+          ];
+          for (const urlEmd of urlsParaTentar) {
+            try {
+              console.log('[DTQ Emenda] Tentando browser:', urlEmd);
+              const rB = await fetch(urlEmd, {headers: {'Accept': 'text/html'}, cache: 'no-store'});
+              console.log('[DTQ Emenda] Browser status:', rB.status, 'ok:', rB.ok);
+              if (!rB.ok) continue;
+              const html = await rB.text();
+              console.log('[DTQ Emenda] HTML tamanho:', html.length, 'preview:', html.substring(0,200));
               const parser = new DOMParser();
               const doc2 = parser.parseFromString(html, 'text/html');
               const seen = new Set();
+              // Tenta linhas de tabela
               doc2.querySelectorAll('tr').forEach(row => {
                 const txt = row.textContent.trim();
                 const m = txt.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i);
                 if (!m || seen.has(m[1])) return;
-                seen.add(m[1]);
                 const link = row.querySelector('a[href*="codteor"]');
                 if (!link) return;
+                seen.add(m[1]);
                 let href = link.getAttribute('href');
                 if (!href.startsWith('http')) href = 'https://www.camara.leg.br' + href;
                 const label = txt.includes('Aglutinativa') ? `Emenda Aglutinativa nº ${m[1]}` :
@@ -1724,10 +1730,23 @@
                               `Emenda nº ${m[1]}`;
                 emendas.push({num: m[1], label, url: href});
               });
-              emendas.sort((a,b) => parseInt(a.num) - parseInt(b.num));
+              // Tenta também links diretos com codteor no texto
+              if (emendas.length === 0) {
+                doc2.querySelectorAll('a[href*="codteor"]').forEach(a => {
+                  const txt = (a.closest('tr') || a).textContent.trim();
+                  const m = txt.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i);
+                  if (!m || seen.has(m[1])) return;
+                  seen.add(m[1]);
+                  let href = a.getAttribute('href');
+                  if (!href.startsWith('http')) href = 'https://www.camara.leg.br' + href;
+                  emendas.push({num: m[1], label: `Emenda nº ${m[1]}`, url: href});
+                });
+              }
+              console.log('[DTQ Emenda] Emendas do browser:', emendas.length);
+              if (emendas.length > 0) break;
+            } catch(eBrowser) {
+              console.warn('[DTQ Emenda] Browser URL falhou:', eBrowser.message);
             }
-          } catch(eBrowser) {
-            console.warn('[DTQ Emenda] Browser falhou:', eBrowser.message);
           }
         }
 
@@ -1738,24 +1757,25 @@
             if (rDocs.ok) {
               const jDocs = await rDocs.json();
               const docs = jDocs.documentos || [];
-              console.log('[DTQ Emenda] Docs disponíveis:', docs.map(d=>d.label));
+              console.log('[DTQ Emenda] Docs:', docs.map(d=>d.label));
               docs.forEach(doc => {
                 const mE = doc.label.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i) ||
-                           (doc.filename||'').match(/(?:EMD|Emenda).*?(\d+)/i);
-                if (mE) emendas.push({num: mE[1], label: doc.label.replace(/📋|📄/g,'').trim(), url: doc.url});
+                           (doc.filename||'').match(/EMD.*?(\d+)/i);
+                if (mE && !emendas.find(e=>e.num===mE[1]))
+                  emendas.push({num: mE[1], label: doc.label.replace(/[📋📄]/g,'').trim(), url: doc.url});
               });
               console.log('[DTQ Emenda] Emendas dos docs:', emendas);
             }
-          } catch(e) { console.warn('[DTQ Emenda] listar_documentos falhou:', e.message); }
+          } catch(e) { console.warn('[DTQ Emenda] listar_documentos:', e.message); }
         }
 
-        // Fallback sintético pelo número da descrição
+        // Fallback sintético — pelo menos mostra a emenda da descrição
         if (emendas.length === 0 && numEmdDesc) {
-          console.log('[DTQ Emenda] Usando fallback sintético para emenda nº', numEmdDesc);
+          console.log('[DTQ Emenda] Fallback sintético nº', numEmdDesc);
           emendas.push({num: numEmdDesc, label: `Emenda nº ${numEmdDesc} (colar texto manualmente)`, url: '', manual: true});
         }
 
-        console.log('[DTQ Emenda] Total emendas:', emendas.length);
+        console.log('[DTQ Emenda] Total final:', emendas.length);
 
         if (emendas.length > 0) {
           // Monta modal de seleção de emenda
