@@ -1986,7 +1986,7 @@ def analisar_ia():
 <li><strong>Questionamentos ao relator:</strong> [perguntas incisivas para fazer ao relator no plenário]</li>
 </ul>"""
 
-    prompt = f"""Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil, trabalhando para a Oposição e Minoria.
+    prompt = f"""Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil, trabalhando para a Oposição e Minoria (bancada do PL e aliados).
 
 **Proposição:** {projeto}
 **Autor(es):** {autor}
@@ -1994,21 +1994,24 @@ def analisar_ia():
 **Ementa:** {ementa}
 {contexto_doc}
 
-Gere uma nota técnica em HTML com EXATAMENTE este formato:
+Gere uma nota técnica em texto puro (sem HTML, sem markdown com asteriscos, sem ###) seguindo EXATAMENTE este modelo de estrutura e emojis:
 
-<p><strong>Nota Técnica: Análise do {projeto}</strong></p>
-{nota_req}<p><em style="color:red;">Análise baseada em: {ref_linha}</em></p>
-<br>
-<p><strong>Objetivo da Proposição</strong><br>[texto detalhado]</p>
-<br>
-<p><strong>Principais Alterações</strong><br><ul><li>[item]</li><li>[item]</li><li>[item]</li></ul></p>
-<br>
-<p><strong>Impacto Esperado</strong><br>[texto detalhado]</p>
-<br>
-<p><strong>Pontos de Atenção</strong><br><ul><li>[item]</li><li>[item]</li></ul></p>
+📘 Resumo técnico
+[2 parágrafos descrevendo objetivamente o que a proposição faz, seus dispositivos principais, a quem se aplica e quando entra em vigor. Seja preciso e técnico.]
+
+🟢 Pontos positivos
+[2 parágrafos com os argumentos favoráveis à proposição — impacto positivo, benefícios concretos, alinhamento com valores conservadores/liberais, segurança jurídica, redução de burocracia, fortalecimento da sociedade civil, etc.]
+
+🔴 Pontos negativos
+[2 parágrafos com os problemas da proposição — redações amplas, impacto fiscal, risco de abusos, distorções, inconsistências jurídicas, efeitos colaterais.]
+
+⚖️ Riscos políticos e de imagem
+[2 parágrafos sobre como adversários podem atacar a proposição, como a imprensa pode retratar, e também como a base pode reagir positivamente. Equilibrado mas estratégico.]
+
+↔️ Orientação sugerida
+[2 parágrafos com recomendação clara de posicionamento — apoio, rejeição ou apoio com emendas — com argumentos de comunicação para o plenário e sugestões de salvaguardas ou ajustes se pertinente.]
 {secao_criticas}
-
-Seja detalhado e técnico. Máximo 600 palavras. Não use ### ou ** no texto, apenas HTML."""
+Seja detalhado, estratégico e político. Máximo 500 palavras. Use apenas os emojis dos títulos das seções, sem outros emojis no texto. Não use asteriscos, não use ###, não use HTML."""
 
     # Tenta Gemini primeiro, fallback para Groq
     if gemini_key:
@@ -2018,7 +2021,7 @@ Seja detalhado e técnico. Máximo 600 palavras. Não use ### ou ** no texto, ap
                 headers={"Content-Type": "application/json"},
                 json={
                     "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.3}
+                    "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.3}
                 },
                 timeout=30
             )
@@ -3061,32 +3064,34 @@ Não use ### ou ** fora do HTML."""
             if not texto_base:
                 return jsonify({'error': f'Texto da Emenda nº {num_emenda_desc} não disponível. Use o botão Debug para colar o texto manualmente.'}), 400
 
-            tipo_doc = f"Emenda nº {num_emenda_desc}" if num_emenda_desc else descricao
+            tipo_doc = f"Emenda nº {num_emenda_desc} — {numero}" if num_emenda_desc else descricao
             regra = ('REGRA: Voto SIM = APROVA a emenda → altera texto do relator. '
                      'Voto NÃO = REJEITA a emenda → mantém texto do relator.')
             prompt_emenda = f"""Você é um assessor legislativo da Câmara dos Deputados.
 
 **Proposição:** {projeto}
-**Destaque:** {numero} — {descricao}
-**Emenda:** nº {num_emenda_desc}
+**Destaque:** {numero}
+**Descrição completa do destaque:** {descricao}
+**Emenda objeto do destaque:** nº {num_emenda_desc}
 
-O texto completo da emenda não está disponível, mas abaixo está o texto base ({label_base}) sobre o qual a emenda incide.
-Analise especificamente o destaque "{descricao}" considerando que se trata da **Emenda nº {num_emenda_desc}**.
+ATENÇÃO: Este é especificamente o destaque referente à **Emenda nº {num_emenda_desc}**.
+O texto integral desta emenda não está disponível, mas abaixo está o texto base ({label_base}).
+Baseie sua análise na descrição do destaque acima e no número da emenda.
 
-TEXTO BASE:
+TEXTO BASE ({label_base}):
 {texto_base[:6000]}
 
 {regra}
 
-Gere análise em HTML focada especificamente na Emenda nº {num_emenda_desc}:
+Gere análise HTML específica para a **Emenda nº {num_emenda_desc}** ({numero}):
 
-<p><strong>Emenda nº {num_emenda_desc} — Objeto:</strong> [o que provavelmente propõe alterar, baseado na descrição do destaque]</p>
+<p><strong>Emenda nº {num_emenda_desc}:</strong> [descreva o que esta emenda específica propõe, baseado na descrição do destaque e no contexto do texto base]</p>
 <br>
-<p><strong>Voto SIM (aprova a emenda nº {num_emenda_desc}):</strong><br>[efeito prático. Máx 80 palavras.]</p>
+<p><strong>Voto SIM — aprova a Emenda nº {num_emenda_desc}:</strong><br>[consequência direta de aprovar esta emenda específica. Máx 80 palavras.]</p>
 <br>
-<p><strong>Voto NÃO (rejeita a emenda nº {num_emenda_desc}):</strong><br>[texto do relator prevalece. Máx 60 palavras.]</p>
+<p><strong>Voto NÃO — rejeita a Emenda nº {num_emenda_desc}:</strong><br>[o texto do relator prevalece. Máx 60 palavras.]</p>
 
-Não use ### ou ** fora do HTML."""
+Não use ### ou ** fora do HTML. Não repita análise de outras emendas."""
 
             if gemini_key:
                 try:
