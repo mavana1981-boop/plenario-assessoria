@@ -2893,6 +2893,50 @@ def buscar_texto_emenda(id_proposicao, descricao):
     return None, None
 
 
+@app.route('/listar_emendas/<int:id_prop>')
+@login_required
+def listar_emendas(id_prop):
+    """Lista todas as emendas disponíveis para uma proposição."""
+    from bs4 import BeautifulSoup
+    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
+    try:
+        url = f"https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao={id_prop}&subst=0"
+        r = requests.get(url, headers=headers, timeout=12)
+        if not r.ok:
+            return jsonify({'emendas': [], 'erro': f'HTTP {r.status_code}'})
+
+        soup = BeautifulSoup(r.text, 'html.parser')
+        emendas = []
+        vistos = set()
+
+        for row in soup.find_all('tr'):
+            txt = row.get_text(' ', strip=True)
+            m = re.search(r'(?:EMD|Emenda)\s*[Nn]?[º°.]?\s*(\d+)', txt, re.IGNORECASE)
+            if not m:
+                continue
+            num = m.group(1)
+            if num in vistos:
+                continue
+            vistos.add(num)
+            # Pega o link do PDF
+            link = row.find('a', href=True)
+            if link:
+                url_doc = camara_url(link['href'])
+                label = f"Emenda nº {num}"
+                # Tenta extrair mais info (autor, tipo)
+                m_tipo = re.search(r'(Aglutinativa|Substitutiva|de Plenário)', txt, re.IGNORECASE)
+                if m_tipo:
+                    label = f"Emenda {m_tipo.group(1)} nº {num}"
+                emendas.append({'num': num, 'label': label, 'url': url_doc, 'txt': txt[:100]})
+
+        # Ordena por número
+        emendas.sort(key=lambda e: int(e['num']) if e['num'].isdigit() else 0)
+        logger.info(f"Emendas para {id_prop}: {[e['label'] for e in emendas]}")
+        return jsonify({'emendas': emendas, 'total': len(emendas)})
+    except Exception as e:
+        logger.warning(f"listar_emendas {id_prop}: {e}")
+        return jsonify({'emendas': [], 'erro': str(e)})
+
 @app.route('/analisar_destaque', methods=['POST'])
 @login_required
 def analisar_destaque():
@@ -2912,8 +2956,18 @@ def analisar_destaque():
     descricao_upper = descricao.upper()
     eh_emenda = any(p in descricao_upper for p in ['EMENDA', 'EMD', 'SUBEMENDA'])
 
+    # ── Destaque de emenda: usa URL passada diretamente pelo frontend ──
+    url_emenda_sel = data.get('url_emenda', '')  # URL específica da emenda selecionada
+    num_emenda_sel = data.get('num_emenda', '')
+
     if eh_emenda and id_principal and not trecho_manual:
-        texto_emenda, label_emenda = buscar_texto_emenda(id_principal, descricao)
+        # Se frontend passou URL específica, usa ela
+        if url_emenda_sel:
+            texto_emenda = extrair_texto_documento(url_emenda_sel) or ''
+            label_emenda = f"Emenda nº {num_emenda_sel}" if num_emenda_sel else 'Emenda selecionada'
+        else:
+            # Fallback: busca pelo número da descrição
+            texto_emenda, label_emenda = buscar_texto_emenda(id_principal, descricao)
         if texto_emenda:
             tipo_doc = label_emenda or 'Emenda'
             regra = ('REGRA: Voto SIM = APROVA a emenda → altera texto do relator. '
