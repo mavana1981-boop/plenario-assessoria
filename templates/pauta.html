@@ -960,7 +960,7 @@
                     data-id-principal="${idProp}"
                     data-descricao="${d.descricao.replace(/"/g,"'")}"
                     data-numero="${d.numero}"
-                    data-autoria="${d.autoria.replace(/"/g,"'")}"
+                    data-autoria="${(d.autoria||'').replace(/"/g,"'")}"
                     data-projeto="${projeto}">
                     <i class="fas fa-robot"></i>
                   </button>
@@ -1678,9 +1678,48 @@
     // ── Para emendas: lista emendas disponíveis e pede seleção ──────────────
     if (ehEmenda) {
       try {
-        const rEmd = await fetch('/listar_emendas/' + idPrincipal);
-        const jEmd = rEmd.ok ? await rEmd.json() : {emendas:[]};
-        const emendas = jEmd.emendas || [];
+        // Tenta rota interna primeiro, senão busca direto no browser
+        let emendas = [];
+        try {
+          const rEmd = await fetch('/listar_emendas/' + idPrincipal);
+          const jEmd = rEmd.ok ? await rEmd.json() : {emendas:[]};
+          emendas = jEmd.emendas || [];
+        } catch(e) {}
+
+        // Se servidor falhou (403 Railway), tenta direto no browser
+        if (emendas.length === 0) {
+          try {
+            const urlEmd = `https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao=${idPrincipal}&subst=0`;
+            const rBrowser = await fetch(urlEmd, {cache: 'no-store'});
+            if (rBrowser.ok) {
+              const html = await rBrowser.text();
+              const parser = new DOMParser();
+              const doc2 = parser.parseFromString(html, 'text/html');
+              doc2.querySelectorAll('tr').forEach(row => {
+                const txt = row.textContent.trim();
+                const m = txt.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i);
+                if (!m) return;
+                const num = m[1];
+                // Pega link do PDF
+                const link = row.querySelector('a[href*="codteor"]');
+                if (link) {
+                  let href = link.getAttribute('href');
+                  if (!href.startsWith('http')) href = 'https://www.camara.leg.br' + href;
+                  const label = txt.includes('Aglutinativa') ? `Emenda Aglutinativa nº ${num}` :
+                                txt.includes('Substitutiva') ? `Emenda Substitutiva nº ${num}` :
+                                `Emenda nº ${num}`;
+                  // Evita duplicatas
+                  if (!emendas.find(e => e.num === num)) {
+                    emendas.push({num, label, url: href});
+                  }
+                }
+              });
+              emendas.sort((a,b) => parseInt(a.num)-parseInt(b.num));
+            }
+          } catch(eBrowser) {
+            console.warn('Busca emendas no browser falhou:', eBrowser.message);
+          }
+        }
 
         if (emendas.length > 0) {
           // Monta modal de seleção de emenda
