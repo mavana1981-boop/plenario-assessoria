@@ -3728,62 +3728,117 @@ def resumo_ementa_impl(data):
     if not groq_key and not gemini_key:
         return jsonify({'resumo': ''})
 
-    # Para REQ ou qualquer proposição que mencione outro PL na ementa:
-    # busca dados do PL referenciado para enriquecer o resumo
-    contexto_pl = ''
     proj_base = projeto.split(' ao ')[0].strip()
     siglas_req = ('REQ', 'RQS', 'RQU', 'REC')
     eh_req = any(proj_base.upper().startswith(s) for s in siglas_req)
 
-    # Busca referência ao PL na ementa ou no projeto
-    m_pl = None
-    num_ref = ano_ref = sigla_ref = ''
-
-    # Padrão com ano: "PL nº 4.215/2023" ou "PL 4215, de 2023"
-    for txt_busca in [ementa, projeto]:
-        m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL|PLC)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', txt_busca, re.IGNORECASE)
-        if m_pl: break
-        m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL|PLC)\s+([\d.]+)[/\-](\d{4})', txt_busca, re.IGNORECASE)
-        if m_pl: break
-
-    # Padrão sem ano: "PL nº 4.215" ou "Projeto de Lei nº 4.215"
-    if not m_pl:
-        for txt_busca in [ementa, projeto]:
-            m_pl2 = re.search(r'\b(?:Projeto de Lei|PL|PEC|PLP|MPV|PDL)\s+n[º°.]?\s*([\d.]+)\b', txt_busca, re.IGNORECASE)
-            if m_pl2:
-                num_ref = m_pl2.group(1).replace('.', '').replace(',', '')
-                sigla_ref = 'PL'
-                ano_ref = ''
-                break
-
-    if m_pl:
-        sigla_ref = m_pl.group(1).upper()
-        num_ref   = m_pl.group(2).replace('.', '')
-        ano_ref   = m_pl.group(3)
-
-    if num_ref and (eh_req or sigla_ref):
+    # ── Para REQ: busca ementa completa e PL referenciado ────────────────────
+    contexto_pl = ''
+    if eh_req:
         try:
-            # Busca com ano se disponível, senão busca só pelo número
-            if ano_ref:
-                url_api = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla_ref or 'PL'}&numero={num_ref}&ano={ano_ref}&itens=1"
-            else:
-                url_api = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?numero={num_ref}&itens=1&ordem=DESC&ordenarPor=ano"
-            r_api = requests.get(url_api, headers={'Accept': 'application/json'}, timeout=8)
-            if r_api.ok:
-                dados = r_api.json().get('dados', [])
-                if dados:
-                    ementa_pl  = dados[0].get('ementa', '')
-                    sigla_real = dados[0].get('siglaTipo', sigla_ref)
-                    num_real   = dados[0].get('numero', num_ref)
-                    ano_real   = dados[0].get('ano', ano_ref)
-                    if ementa_pl:
-                        contexto_pl = f"\nO {sigla_real} {num_real}/{ano_real} (referenciado) trata de: {ementa_pl}"
-                        logger.info(f"Contexto PL encontrado: {sigla_real} {num_real}/{ano_real}")
-            if not contexto_pl:
-                # API indisponível — usa a referência extraída da ementa para orientar a IA
-                ref_str = f"{sigla_ref} {num_ref}" + (f"/{ano_ref}" if ano_ref else "")
-                contexto_pl = f"\n(Referência ao {ref_str} — busque na ementa o contexto do projeto referenciado)"
+            # Passo 1: busca ementa completa do REQ (API retorna truncada)
+            ementa_completa = ementa or ''
+            if id_principal:
+                try:
+                    r_req = requests.get(
+                        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_principal}",
+                        headers={'Accept': 'application/json'}, timeout=6
+                    )
+                    if r_req.ok:
+                        ementa_api = r_req.json().get('dados', {}).get('ementa', '')
+                        if ementa_api and len(ementa_api) > len(ementa_completa):
+                            ementa_completa = ementa_api
+                            logger.info(f"Ementa completa REQ {id_principal}: {ementa_completa[:80]}")
+                except Exception as e:
+                    logger.warning(f"Erro buscar ementa completa: {e}")
+
+            # Passo 2: extrai sigla+número+ano do PL referenciado na ementa completa
+            sigla_ref = num_ref = ano_ref = ''
+            padroes_pl = [
+                r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})',
+                r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+([\d.]+)[/\-](\d{4})',
+            ]
+            for txt in [ementa_completa, projeto]:
+                for padrao in padroes_pl:
+                    m = re.search(padrao, txt, re.IGNORECASE)
+                    if m:
+                        sigla_ref = m.group(1).upper()
+                        num_ref   = m.group(2).replace('.', '')
+                        ano_ref   = m.group(3)
+                        break
+                if num_ref:
+                    break
+
+            # Passo 3: se não achou sigla+número+ano completos → retorna vazio
+            # Nunca faz busca sem ano para evitar pegar PL errado
+            if not (sigla_ref and num_ref and ano_ref):
+                logger.warning(f"REQ {id_principal}: não encontrou PL com sigla+num+ano — retornando vazio")
+                return jsonify({'resumo': ''})
+
+            logger.info(f"REQ referencia: {sigla_ref} {num_ref}/{ano_ref}")
+
+            # Passo 4: busca ementa do PL referenciado com sigla+número+ano exatos
+            r_pl = requests.get(
+                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
+                f"?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
+                headers={'Accept': 'application/json'}, timeout=8
+            )
+            if not r_pl.ok:
+                logger.warning(f"API PL {sigla_ref} {num_ref}/{ano_ref}: HTTP {r_pl.status_code}")
+                return jsonify({'resumo': ''})
+
+            dados_pl = r_pl.json().get('dados', [])
+            if not dados_pl:
+                logger.warning(f"PL {sigla_ref} {num_ref}/{ano_ref} não encontrado na API")
+                return jsonify({'resumo': ''})
+
+            ementa_pl  = dados_pl[0].get('ementa', '')
+            sigla_real = dados_pl[0].get('siglaTipo', sigla_ref)
+            num_real   = dados_pl[0].get('numero', num_ref)
+            ano_real   = dados_pl[0].get('ano', ano_ref)
+
+            if not ementa_pl:
+                logger.warning(f"PL {sigla_ref} {num_ref}/{ano_ref} sem ementa")
+                return jsonify({'resumo': ''})
+
+            contexto_pl = f"\nO {sigla_real} {num_real}/{ano_real} (referenciado) trata de: {ementa_pl}"
+            logger.info(f"PL referenciado encontrado: {sigla_real} {num_real}/{ano_real}")
+
         except Exception as e:
+            logger.error(f"Erro ao buscar PL do REQ: {e}")
+            return jsonify({'resumo': ''})
+
+    # ── Para não-REQ: busca PL mencionado na ementa se houver ────────────────
+    elif not contexto_pl:
+        try:
+            m_pl = None
+            for txt in [ementa, projeto]:
+                for padrao in [
+                    r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})',
+                    r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+([\d.]+)[/\-](\d{4})',
+                ]:
+                    m_pl = re.search(padrao, txt, re.IGNORECASE)
+                    if m_pl: break
+                if m_pl: break
+            if m_pl:
+                sigla_ref = m_pl.group(1).upper()
+                num_ref   = m_pl.group(2).replace('.', '')
+                ano_ref   = m_pl.group(3)
+                r_api = requests.get(
+                    f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
+                    f"?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
+                    headers={'Accept': 'application/json'}, timeout=8
+                )
+                if r_api.ok:
+                    dados = r_api.json().get('dados', [])
+                    if dados and dados[0].get('ementa'):
+                        ementa_pl  = dados[0]['ementa']
+                        sigla_real = dados[0].get('siglaTipo', sigla_ref)
+                        num_real   = dados[0].get('numero', num_ref)
+                        ano_real   = dados[0].get('ano', ano_ref)
+                        contexto_pl = f"\nO {sigla_real} {num_real}/{ano_real} (referenciado) trata de: {ementa_pl}"
+        except Exception as e:
+            logger.warning(f"Erro ao buscar PL mencionado: {e}")
             logger.warning(f"Erro buscar PL referenciado: {e}")
             if num_ref:
                 ref_str = f"{sigla_ref} {num_ref}" + (f"/{ano_ref}" if ano_ref else "")
