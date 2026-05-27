@@ -398,26 +398,27 @@ def extrair_ref_pl(projeto, ementa):
 
     # Padrões do mais específico para o mais genérico
     padroes = [
-        # "PL nº 1811/2026" ou "PL 1811/2026"
-        r'\b(PL|PEC|PLP|PLC|MPV|PDL|PLV|PDS|PRS)\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})\b',
-        # "PL 1811, de 2026"
-        r'\b(PL|PEC|PLP|PLC|MPV|PDL|PLV|PDS|PRS)\s+(\d+),?\s*de\s+(\d{4})\b',
-        # "Projeto de Lei nº 1811/2026"
-        r'Projeto de Lei\s+(?:Complementar\s+)?n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})',
-        # "PL1811/2026" sem espaço
-        r'\b(PL|PEC|PLP|PLC|MPV)\s*(\d{3,5})[/\-](\d{4})\b',
+        # Sigla curta com número: "PLP nº 221/2024", "PL nº 1811/2026"
+        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})\b', 3, None),
+        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s+(\d+),?\s*de\s+(\d{4})\b', 3, None),
+        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s*(\d{3,5})[/\-](\d{4})\b', 3, None),
+        # Texto por extenso — ordem importa: Complementar antes de Lei simples
+        (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PLP'),
+        (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PEC'),
+        (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'MPV'),
+        (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PDL'),
+        (r'Projeto\s+de\s+Lei\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PL'),
     ]
 
-    for padrao in padroes:
+    for item in padroes:
+        padrao, n_grupos, sigla_fixa = item
         m = re.search(padrao, ementa_str, re.IGNORECASE)
         if m:
-            grupos = m.groups()
-            if len(grupos) == 3:
-                sigla, num, ano = grupos
-                return f"{projeto_base} ao {sigla.upper()} {num}/{ano}"
-            elif len(grupos) == 2:
-                num, ano = grupos
-                return f"{projeto_base} ao PL {num}/{ano}"
+            if n_grupos == 3:
+                sigla, num, ano = m.group(1).upper(), m.group(2), m.group(3)
+            else:
+                sigla, num, ano = sigla_fixa, m.group(1), m.group(2)
+            return f"{projeto_base} ao {sigla} {num}/{ano}"
 
     return projeto_base
 
