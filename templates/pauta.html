@@ -1747,6 +1747,7 @@
   }
 
   async function _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, extraParams) {
+    try {
       const r = await fetch('/listar_documentos/' + idPrincipal);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
@@ -2097,6 +2098,7 @@
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-robot"></i>';
     }
+  } // fim _executarAnaliseDestaque
 
   async function limparResumosIA(eventoId) {
     if (!confirm("Remover resumos IA salvos? Serão regenerados ao recarregar.")) return;
