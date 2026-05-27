@@ -943,6 +943,9 @@
 
           tabela.style.display = 'block';
           if (destaques.length > 0) {
+            // Salva em memória global por idProp para uso posterior na análise
+            if (!window._destaquesMem) window._destaquesMem = {};
+            window._destaquesMem[idProp] = destaques;
             const projeto = btn.dataset.projeto || '';
             destaques.forEach(d => {
               const badge = d.situacao.toLowerCase().includes('tramitação')
@@ -1686,39 +1689,29 @@
         const numEmdDesc = mNumDesc ? mNumDesc[1] : null;
         console.log('[DTQ Emenda] numEmdDesc:', numEmdDesc);
 
-        // Busca emendas via /listar_documentos (que já funciona — usa fichadetramitacao)
-        // Filtra documentos cujo filename contém EMD, EMENDA, etc.
+        // Extrai emendas da memória de destaques carregados (fonte mais confiável)
         try {
-          const rDocs = await fetch('/listar_documentos/' + idPrincipal);
-          console.log('[DTQ Emenda] /listar_documentos status:', rDocs.status);
-          if (rDocs.ok) {
-            const jDocs = await rDocs.json();
-            const docs = jDocs.documentos || [];
-            console.log('[DTQ Emenda] Docs disponíveis:', docs.map(d => d.label + '|' + d.filename));
-            const seen = new Set();
-            docs.forEach(doc => {
-              const fn = (doc.filename || '').toUpperCase();
-              const lb = (doc.label || '').toUpperCase();
-              // Detecta emenda pelo filename (EMD, EMENDA) ou label
-              const isEmd = /EMD|EMENDA/.test(fn) || /EMENDA\s*N[Âº°]?\s*\d+/.test(lb);
-              if (!isEmd) return;
-              // Extrai número
-              const mNum = fn.match(/EMD.*?(\d+)/) || lb.match(/EMENDA\s*N?[Âº°.]?\s*(\d+)/i);
-              const num = mNum ? mNum[1] : String(docs.indexOf(doc) + 1);
-              if (seen.has(num)) return;
-              seen.add(num);
-              const label = doc.label.replace(/[📋📄]/g, '').trim() || `Emenda nº ${num}`;
-              emendas.push({num, label, url: doc.url});
-            });
-            emendas.sort((a, b) => parseInt(a.num) - parseInt(b.num));
-            console.log('[DTQ Emenda] Emendas encontradas nos docs:', emendas);
-          }
-        } catch(e) { console.warn('[DTQ Emenda] listar_documentos falhou:', e.message); }
+          const todosDestaques = (window._destaquesMem && window._destaquesMem[idPrincipal]) || [];
+          console.log('[DTQ Emenda] Destaques em memória:', todosDestaques.length, todosDestaques.map(d=>d.descricao));
+          const seen = new Set();
+          todosDestaques.forEach(d => {
+            if (!/emenda|emd|subemenda/i.test(d.descricao)) return;
+            const mNum = d.descricao.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i);
+            if (!mNum || seen.has(mNum[1])) return;
+            seen.add(mNum[1]);
+            const label = d.descricao.includes('glutinativa') ? `Emenda Aglutinativa nº ${mNum[1]}` :
+                          d.descricao.includes('ubstitutiva')  ? `Emenda Substitutiva nº ${mNum[1]}`  :
+                          `Emenda nº ${mNum[1]}`;
+            emendas.push({num: mNum[1], label, url: '', descricaoCompleta: d.descricao});
+          });
+          emendas.sort((a,b) => parseInt(a.num) - parseInt(b.num));
+          console.log('[DTQ Emenda] Emendas da memória:', emendas.length, emendas.map(e=>e.label));
+        } catch(e) { console.warn('[DTQ Emenda] memória falhou:', e.message); }
 
-        // Fallback sintético — usa número da descrição do DTQ
+        // Fallback: pelo menos a emenda da própria descrição
         if (emendas.length === 0 && numEmdDesc) {
-          console.log('[DTQ Emenda] Fallback sintético nº', numEmdDesc);
-          emendas.push({num: numEmdDesc, label: `Emenda nº ${numEmdDesc}`, url: '', manual: true});
+          console.log('[DTQ Emenda] Fallback nº', numEmdDesc);
+          emendas.push({num: numEmdDesc, label: `Emenda nº ${numEmdDesc}`, url: '', descricaoCompleta: descricao});
         }
 
         console.log('[DTQ Emenda] Total final:', emendas.length);
@@ -1759,14 +1752,9 @@
             item.addEventListener('click', () => {
               bootstrap.Modal.getInstance(modalEl)?.hide();
               modalEl.remove();
-              if (emd.manual) {
-                // Sem URL — abre direto o modal de debug para colar texto
-                _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto,
-                  {autoria, url_emenda: '', num_emenda: emd.num});
-              } else {
-                _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto,
-                  {autoria, url_emenda: emd.url, num_emenda: emd.num});
-              }
+              // Passa descricaoCompleta da emenda para o backend analisar pelo texto do destaque
+              _executarAnaliseDestaque(btn, idPrincipal, emd.descricaoCompleta || descricao, numero, projeto,
+                {autoria, url_emenda: emd.url || '', num_emenda: emd.num});
             });
             lista.appendChild(item);
           });
