@@ -2461,6 +2461,34 @@ def buscar_documentos_disponiveis(id_proposicao):
     except Exception as e:
         logger.warning(f"Erro ao buscar pareceres: {e}")
 
+    # 3. Busca emendas via tramitações da API (fonte alternativa quando fichadetramitacao dá 403)
+    try:
+        r_tram = requests.get(
+            f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/tramitacoes?itens=50&ordem=DESC",
+            headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0'}, timeout=10
+        )
+        if r_tram.ok:
+            for t in r_tram.json().get('dados', []):
+                despacho = (t.get('despacho', '') or '').upper()
+                # Detecta menção de emenda no despacho
+                m_emd = re.search(r'EMENDA\s*(?:N[Âº°.]?\s*)?(\d+)', despacho)
+                if m_emd:
+                    num_emd = m_emd.group(1)
+                    label = f"📋 EMD nº {num_emd} — mencionada em tramitação"
+                    # Sem URL direta — será resolvida manualmente
+                    chave = f"EMD{num_emd}"
+                    if chave not in vistos:
+                        vistos.add(chave)
+                        docs.append({
+                            'label':    label,
+                            'url':      '',
+                            'filename': f'EMD{num_emd}',
+                            'tipo':     'Emenda',
+                            'data':     t.get('dataHora', '')[:10],
+                        })
+    except Exception as e:
+        logger.warning(f"Erro busca emendas tramitações: {e}")
+
     logger.info(f"Total documentos: {len(docs)} — {[d['label'] for d in docs]}")
     return docs
 
