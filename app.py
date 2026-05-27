@@ -3753,20 +3753,38 @@ def resumo_ementa_impl(data):
                     logger.warning(f"Erro buscar ementa completa: {e}")
 
             # Passo 2: extrai sigla+número+ano do PL referenciado na ementa completa
+            # Suporta tanto sigla curta (PLP 221/2024) quanto texto por extenso
+            # ("Projeto de Lei Complementar nº 221, de 2024")
             sigla_ref = num_ref = ano_ref = ''
-            padroes_pl = [
-                r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})',
-                r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+([\d.]+)[/\-](\d{4})',
-            ]
-            for txt in [ementa_completa, projeto]:
-                for padrao in padroes_pl:
-                    m = re.search(padrao, txt, re.IGNORECASE)
+
+            def _extrair_pl_ref(texto):
+                """Extrai (sigla, numero, ano) do PL referenciado no texto."""
+                padroes = [
+                    # Sigla curta: PLP 221/2024 ou PL nº 221, de 2024
+                    (r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 3),
+                    (r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+([\d.]+)[/\-](\d{4})', 3),
+                    # Texto por extenso com sigla inferida
+                    (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PLP'),
+                    (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PEC'),
+                    (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'MPV'),
+                    (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PDL'),
+                    (r'Projeto\s+de\s+Lei\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PL'),
+                ]
+                for item in padroes:
+                    padrao, n_grupos = item[0], item[1]
+                    sigla_fixa = item[2] if len(item) > 2 else None
+                    m = re.search(padrao, texto, re.IGNORECASE)
                     if m:
-                        sigla_ref = m.group(1).upper()
-                        num_ref   = m.group(2).replace('.', '')
-                        ano_ref   = m.group(3)
-                        break
-                if num_ref:
+                        if n_grupos == 3:
+                            return m.group(1).upper(), m.group(2).replace('.',''), m.group(3)
+                        else:
+                            return sigla_fixa, m.group(1).replace('.',''), m.group(2)
+                return '', '', ''
+
+            for txt in [ementa_completa, projeto]:
+                sigla_ref, num_ref, ano_ref = _extrair_pl_ref(txt)
+                if sigla_ref and num_ref and ano_ref:
+                    logger.info(f"REQ {id_principal}: PL extraído de '{txt[:60]}' → {sigla_ref} {num_ref}/{ano_ref}")
                     break
 
             # Passo 3: se não achou sigla+número+ano completos → retorna vazio
@@ -3839,10 +3857,6 @@ def resumo_ementa_impl(data):
                         contexto_pl = f"\nO {sigla_real} {num_real}/{ano_real} (referenciado) trata de: {ementa_pl}"
         except Exception as e:
             logger.warning(f"Erro ao buscar PL mencionado: {e}")
-            logger.warning(f"Erro buscar PL referenciado: {e}")
-            if num_ref:
-                ref_str = f"{sigla_ref} {num_ref}" + (f"/{ano_ref}" if ano_ref else "")
-                contexto_pl = f"\n(Referência ao {ref_str})"
 
     if contexto_pl and eh_req:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
