@@ -2990,13 +2990,18 @@ def analisar_destaque():
     num_emenda_sel = data.get('num_emenda', '')
 
     if eh_emenda and id_principal and not trecho_manual:
+        # Extrai número da emenda da descrição — sempre disponível
+        m_num_emd = re.search(r'(?:EMD|Emenda|EMENDA)\s+(?:[Aa]glutinativa\s+)?(?:[Ss]ubstitutiva\s+)?(?:n[º°.]?\s*)?(\d+)', descricao, re.IGNORECASE)
+        num_emenda_desc = m_num_emd.group(1) if m_num_emd else (num_emenda_sel or '')
+
         # Se frontend passou URL específica, usa ela
         if url_emenda_sel:
             texto_emenda = extrair_texto_documento(url_emenda_sel) or ''
             label_emenda = f"Emenda nº {num_emenda_sel}" if num_emenda_sel else 'Emenda selecionada'
         else:
-            # Fallback: busca pelo número da descrição
+            # Tenta buscar PDF da emenda pelo número da descrição
             texto_emenda, label_emenda = buscar_texto_emenda(id_principal, descricao)
+
         if texto_emenda:
             tipo_doc = label_emenda or 'Emenda'
             regra = ('REGRA: Voto SIM = APROVA a emenda → altera texto do relator. '
@@ -3044,6 +3049,62 @@ Não use ### ou ** fora do HTML."""
                     if status == 429:
                         return jsonify({'error': 'Limite de requisições. Aguarde e tente novamente.'}), 429
                     logger.warning(f"Gemini falhou (emenda): {e}")
+            return jsonify({'error': 'Falha ao analisar emenda.'}), 500
+
+        # ── Bloco else: PDF não disponível, usa avulso/PRLP ──────────────
+        else:
+            logger.info(f"PDF da emenda não disponível — usando avulso com contexto do número {num_emenda_desc}")
+            doc_base = buscar_texto_prlp_ou_sbt(id_principal)
+            texto_base = doc_base.get('texto', '') if doc_base else ''
+            label_base = f"{doc_base.get('tipo','')} nº {doc_base.get('numero','')}" if doc_base else 'texto da proposição'
+
+            if not texto_base:
+                return jsonify({'error': f'Texto da Emenda nº {num_emenda_desc} não disponível. Use o botão Debug para colar o texto manualmente.'}), 400
+
+            tipo_doc = f"Emenda nº {num_emenda_desc}" if num_emenda_desc else descricao
+            regra = ('REGRA: Voto SIM = APROVA a emenda → altera texto do relator. '
+                     'Voto NÃO = REJEITA a emenda → mantém texto do relator.')
+            prompt_emenda = f"""Você é um assessor legislativo da Câmara dos Deputados.
+
+**Proposição:** {projeto}
+**Destaque:** {numero} — {descricao}
+**Emenda:** nº {num_emenda_desc}
+
+O texto completo da emenda não está disponível, mas abaixo está o texto base ({label_base}) sobre o qual a emenda incide.
+Analise especificamente o destaque "{descricao}" considerando que se trata da **Emenda nº {num_emenda_desc}**.
+
+TEXTO BASE:
+{texto_base[:6000]}
+
+{regra}
+
+Gere análise em HTML focada especificamente na Emenda nº {num_emenda_desc}:
+
+<p><strong>Emenda nº {num_emenda_desc} — Objeto:</strong> [o que provavelmente propõe alterar, baseado na descrição do destaque]</p>
+<br>
+<p><strong>Voto SIM (aprova a emenda nº {num_emenda_desc}):</strong><br>[efeito prático. Máx 80 palavras.]</p>
+<br>
+<p><strong>Voto NÃO (rejeita a emenda nº {num_emenda_desc}):</strong><br>[texto do relator prevalece. Máx 60 palavras.]</p>
+
+Não use ### ou ** fora do HTML."""
+
+            if gemini_key:
+                try:
+                    r = requests.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+                        headers={"Content-Type": "application/json"},
+                        json={"contents": [{"parts": [{"text": prompt_emenda}]}],
+                              "generationConfig": {"maxOutputTokens": 600, "temperature": 0.3}},
+                        timeout=30
+                    )
+                    r.raise_for_status()
+                    texto_resp = r.json()['candidates'][0]['content']['parts'][0]['text']
+                    return jsonify({'resumo': texto_resp, 'doc_usado': tipo_doc})
+                except Exception as e:
+                    status = getattr(getattr(e, 'response', None), 'status_code', None)
+                    if status == 429:
+                        return jsonify({'error': 'Limite de requisições. Aguarde e tente novamente.'}), 429
+                    logger.warning(f"Gemini falhou (emenda fallback): {e}")
             return jsonify({'error': 'Falha ao analisar emenda.'}), 500
 
     # ── Fluxo normal (não emenda) ───────────────────────────────────────────
