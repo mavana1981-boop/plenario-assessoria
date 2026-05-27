@@ -1718,6 +1718,7 @@
               _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {
                 url_emenda: emd.url,
                 num_emenda: emd.num,
+                autoria,
               });
             });
             lista.appendChild(item);
@@ -1743,10 +1744,11 @@
     }
 
     // ── Fluxo normal (não emenda ou sem emendas listadas) ──────────────────
-    _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {});
+    _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria});
   }
 
   async function _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, extraParams) {
+    const autoria = (extraParams && extraParams.autoria) || '';
     try {
       const r = await fetch('/listar_documentos/' + idPrincipal);
       if (!r.ok) throw new Error('HTTP ' + r.status);
