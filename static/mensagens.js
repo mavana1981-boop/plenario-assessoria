@@ -70,8 +70,9 @@ async function gerarMensagem() {
     if (tipoAtual === 'apresentacao') {
       const ementaCompleta = stripHTML(itemAtual.ementa || '');
       let linhas = [];
-      const cabecalho = resumo ? `🔵 *Em apreciação: ${itemAtual.projeto}*\n${resumo}` : `🔵 *Em apreciação: ${itemAtual.projeto}*`;
-      linhas.push(cabecalho);
+      linhas.push(`🔵 Em apreciação:`);
+      const resumoLinha = resumo ? `* *${itemAtual.projeto} — ${resumo}*` : `* *${itemAtual.projeto}*`;
+      linhas.push(resumoLinha);
       if (ementaCompleta) linhas.push(`*Ementa:* _${ementaCompleta}_`);
       const autorRelator = [
         itemAtual.autor ? `*Autor:* ${itemAtual.autor}` : '',
