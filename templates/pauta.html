@@ -1678,115 +1678,12 @@
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
-    // ── Para emendas: lista emendas disponíveis e pede seleção ──────────────
+    // ── Para emendas: passa direto para análise com num_emenda da descrição ──
     if (ehEmenda) {
-      try {
-        let emendas = [];
-        console.log('[DTQ Emenda] idPrincipal:', idPrincipal, '| descricao:', descricao);
-
-        // Extrai número da emenda da descrição do DTQ
-        const mNumDesc = descricao.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i);
-        const numEmdDesc = mNumDesc ? mNumDesc[1] : null;
-        console.log('[DTQ Emenda] numEmdDesc:', numEmdDesc);
-
-        // Extrai emendas da memória de destaques carregados (fonte mais confiável)
-        try {
-          console.log('[DTQ Emenda] _destaquesMem keys:', window._destaquesMem ? Object.keys(window._destaquesMem) : 'undefined');
-          console.log('[DTQ Emenda] idPrincipal:', idPrincipal, typeof idPrincipal);
-          const todosDestaques = (window._destaquesMem && window._destaquesMem[idPrincipal]) || [];
-          console.log('[DTQ Emenda] Destaques em memória:', todosDestaques.length, todosDestaques.map(d=>d.descricao));
-          const seen = new Set();
-          todosDestaques.forEach(d => {
-            if (!/emenda|emd|subemenda/i.test(d.descricao)) return;
-            const mNum = d.descricao.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i);
-            if (!mNum || seen.has(mNum[1])) return;
-            seen.add(mNum[1]);
-            const label = d.descricao.includes('glutinativa') ? `Emenda Aglutinativa nº ${mNum[1]}` :
-                          d.descricao.includes('ubstitutiva')  ? `Emenda Substitutiva nº ${mNum[1]}`  :
-                          `Emenda nº ${mNum[1]}`;
-            emendas.push({num: mNum[1], label, url: '', descricaoCompleta: d.descricao});
-          });
-          emendas.sort((a,b) => parseInt(a.num) - parseInt(b.num));
-          console.log('[DTQ Emenda] Emendas da memória:', emendas.length, emendas.map(e=>e.label));
-        } catch(e) { console.warn('[DTQ Emenda] memória falhou:', e.message); }
-
-        // Fallback: pelo menos a emenda da própria descrição
-        if (emendas.length === 0 && numEmdDesc) {
-          console.log('[DTQ Emenda] Fallback nº', numEmdDesc);
-          emendas.push({num: numEmdDesc, label: `Emenda nº ${numEmdDesc}`, url: '', descricaoCompleta: descricao});
-        }
-
-        console.log('[DTQ Emenda] Total final:', emendas.length);
-
-        if (emendas.length > 0) {
-          // Monta modal de seleção de emenda
-          document.getElementById('modal-sel-emenda')?.remove();
-          const modalEl = document.createElement('div');
-          modalEl.id = 'modal-sel-emenda';
-          modalEl.className = 'modal fade';
-          modalEl.setAttribute('tabindex', '-1');
-
-          const mDialog  = document.createElement('div');  mDialog.className = 'modal-dialog';
-          const mContent = document.createElement('div');  mContent.className = 'modal-content';
-          const mHeader  = document.createElement('div');  mHeader.className = 'modal-header bg-warning';
-          const mTitle   = document.createElement('h6');   mTitle.className = 'modal-title fw-bold';
-          mTitle.textContent = '📋 Selecione a Emenda para Analisar';
-          const mClose = document.createElement('button');
-          mClose.type = 'button'; mClose.className = 'btn-close';
-          mClose.setAttribute('data-bs-dismiss', 'modal');
-          mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
-
-          const mBody = document.createElement('div'); mBody.className = 'modal-body';
-          const info = document.createElement('p'); info.className = 'small text-muted mb-2';
-          info.textContent = numero + ' — ' + descricao;
-          mBody.appendChild(info);
-
-          const lista = document.createElement('div'); lista.className = 'list-group';
-          emendas.forEach(emd => {
-            const item = document.createElement('button');
-            item.type = 'button';
-            item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
-            item.textContent = emd.label;
-            // Destaca a emenda que corresponde ao DTQ atual
-            if (numEmdDesc && emd.num === numEmdDesc) {
-              item.className += ' active';
-            }
-            item.addEventListener('click', () => {
-              bootstrap.Modal.getInstance(modalEl)?.hide();
-              modalEl.remove();
-              // Passa descricaoCompleta da emenda para o backend analisar pelo texto do destaque
-              _executarAnaliseDestaque(btn, idPrincipal, emd.descricaoCompleta || descricao, numero, projeto,
-                {autoria, url_emenda: emd.url || '', num_emenda: emd.num});
-            });
-            lista.appendChild(item);
-          });
-          mBody.appendChild(lista);
-
-          mContent.appendChild(mHeader); mContent.appendChild(mBody);
-          mDialog.appendChild(mContent); modalEl.appendChild(mDialog);
-          document.body.appendChild(modalEl);
-
-          const modal = new bootstrap.Modal(modalEl);
-          modalEl.addEventListener('hidden.bs.modal', () => {
-            modalEl.remove();
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-robot"></i>';
-          });
-          modal.show();
-          return; // aguarda seleção
-        }
-      } catch(e) {
-        console.warn('Bloco emenda falhou:', e);
-      }
-    }
-
-    // ── Fluxo normal ────────────────────────────────────────────────────────
-    // Para emenda: só chega aqui se não achou emendas — mostra aviso
-    if (ehEmenda) {
-      console.warn('[DTQ] Emenda sem emendas encontradas — abrindo debug');
-      btn.disabled = false;
-      btn.innerHTML = '<i class="fas fa-robot"></i>';
-      alert('Não foi possível listar as emendas automaticamente.\nUse o botão "Procurar no texto" (🔍) para colar o trecho da emenda manualmente.');
+      const mNum = descricao.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i);
+      const numEmenda = mNum ? mNum[1] : '';
+      console.log('[DTQ Emenda] Analisando emenda nº', numEmenda, '| descricao:', descricao);
+      _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria, num_emenda: numEmenda});
       return;
     }
     _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria, ehEmenda});
