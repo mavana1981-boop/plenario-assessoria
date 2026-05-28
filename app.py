@@ -76,7 +76,7 @@ def get_conn():
                             'json_pauta=EXCLUDED.json_pauta, last_updated=EXCLUDED.last_updated')
                 elif re.search(r'INSERT OR REPLACE INTO orientacoes_grupo\b', sql_orig, re.I):
                     sql = re.sub(r'INSERT OR REPLACE INTO orientacoes_grupo\b', 'INSERT INTO orientacoes_grupo', sql, flags=re.I)
-                    sql += (' ON CONFLICT (evento_id, grupo, item_key) DO UPDATE SET '
+                    sql += (' ON CONFLICT (evento_id, id_principal, grupo) DO UPDATE SET '
                             'orientacao=EXCLUDED.orientacao, comentario=EXCLUDED.comentario, '
                             'saved_by=EXCLUDED.saved_by, saved_at=EXCLUDED.saved_at')
                 elif re.search(r'INSERT OR IGNORE INTO users\b', sql_orig, re.I):
