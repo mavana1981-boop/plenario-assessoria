@@ -160,6 +160,7 @@
         <i class="fas fa-file-export me-2"></i>Exportar resumo
       </a>
       <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-iconografica"
+        onclick="window._abrirModalIconografica && window._abrirModalIconografica()"
         style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
         <i class="fas fa-th-large me-2"></i>Pauta Iconográfica
       </button>
@@ -2468,7 +2469,8 @@ async function exportarOrientacoesPDF() {
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
-        <button class="btn btn-primary" id="btn-gerar-iconografica">
+        <button class="btn btn-primary" id="btn-gerar-iconografica"
+          onclick="window._gerarIconografica && window._gerarIconografica()">
           <i class="fas fa-print me-1"></i>Imprimir / Salvar PDF
         </button>
       </div>
@@ -2804,6 +2806,9 @@ async function exportarOrientacoesPDF() {
     document.getElementById('btn-iconografica')?.addEventListener('click', abrirModalIconografica);
     document.getElementById('btn-gerar-iconografica')?.addEventListener('click', gerarIconografica);
   });
+  // Expõe globalmente como fallback (caso DOMContentLoaded já tenha disparado)
+  window._abrirModalIconografica = abrirModalIconografica;
+  window._gerarIconografica = gerarIconografica;
 })();
 </script>
 
