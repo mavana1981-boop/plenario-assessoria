@@ -4304,19 +4304,93 @@ def salvar_orientacoes():
 @app.route('/get_orientacoes/<int:evento_id>')
 @login_required
 def get_orientacoes(evento_id):
-    """Retorna orientações salvas para um evento."""
+    """Retorna orientações para um evento.
+    Busca em orientacoes_grupo e complementa com dados de notas
+    (migração automática das orientações salvas na pauta)."""
     conn = get_conn()
     c    = conn.cursor()
+    result = []
     try:
+        # 1. Busca em orientacoes_grupo
         c.execute('''SELECT id_principal, grupo, orientacao, comentario, saved_by, saved_at
                      FROM orientacoes_grupo WHERE evento_id=?''', (evento_id,))
         rows = c.fetchall()
         result = [{'id_principal': str(r[0]), 'grupo': r[1], 'orientacao': r[2],
                    'comentario': r[3], 'saved_by': r[4], 'saved_at': r[5]} for r in rows]
+
+        # 2. Complementa com notas — migração automática
+        # Busca notas do evento que tenham orientação e cujo responsável tenha grupo válido
+        GRUPOS_VALIDOS = {'oposicao', 'minoria', 'PL', 'NOVO', 'pl', 'novo'}
+        already = {(r['id_principal'], r['grupo']) for r in result}
+
+        c.execute('''SELECT n.item_key, n.orientacao, n.saved_by, n.saved_at, n.responsavel_username
+                     FROM notas n
+                     WHERE n.evento_id=? AND n.orientacao IS NOT NULL AND n.orientacao != ""''',
+                  (evento_id,))
+        notas_rows = c.fetchall()
+
+        now_str = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
+
+        for item_key, orientacao, saved_by, saved_at, resp_username in notas_rows:
+            if not orientacao:
+                continue
+            # Extrai id_principal do item_key (PROP_12345 → 12345)
+            id_principal = item_key.replace('PROP_', '') if item_key else ''
+            if not id_principal:
+                continue
+
+            # Determina o grupo pelo responsável ou pelo usuário que salvou
+            grupo = None
+            if resp_username:
+                c.execute('SELECT categoria FROM users WHERE username=?', (resp_username,))
+                row = c.fetchone()
+                if row and row[0] and row[0].lower() in {g.lower() for g in GRUPOS_VALIDOS}:
+                    grupo = row[0]
+
+            if not grupo:
+                # Tenta pelo saved_by (nome display) — busca por nome
+                c.execute('SELECT categoria, username FROM users WHERE username=? OR nome_display=?',
+                          (saved_by, saved_by))
+                row = c.fetchone()
+                if row and row[0] and row[0].lower() in {g.lower() for g in GRUPOS_VALIDOS}:
+                    grupo = row[0]
+
+            if not grupo:
+                # Fallback: salva para todos os grupos com responsavel_pauta
+                c.execute('SELECT categoria FROM users WHERE responsavel_pauta=1 AND categoria IS NOT NULL')
+                for (cat,) in c.fetchall():
+                    if cat and cat.lower() in {g.lower() for g in GRUPOS_VALIDOS}:
+                        grupo = cat
+                        break
+
+            if not grupo:
+                continue
+
+            chave = (id_principal, grupo)
+            if chave in already:
+                continue  # já tem dado mais recente em orientacoes_grupo
+
+            # Migra para orientacoes_grupo
+            try:
+                c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
+                             (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
+                             VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                          (evento_id, id_principal, grupo, orientacao, '', saved_by or '', saved_at or now_str))
+                conn.commit()
+                logger.info(f"Migração automática: {id_principal} → {grupo}: {orientacao}")
+            except Exception as em:
+                logger.warning(f"Erro migração orientação: {em}")
+
+            result.append({'id_principal': id_principal, 'grupo': grupo,
+                           'orientacao': orientacao, 'comentario': '',
+                           'saved_by': saved_by or '', 'saved_at': saved_at or ''})
+            already.add(chave)
+
     except Exception as e:
         logger.warning(f"Erro get_orientacoes: {e}")
         result = []
-    conn.close()
+    finally:
+        conn.close()
     return jsonify(result)
 
 @app.route('/admin/reset_todas_senhas', methods=['POST'])
