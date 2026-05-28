@@ -1384,26 +1384,53 @@ def save_item():
         # Exporta orientação para o quadro da bancada
         if orientacao:
             try:
-                # Determina o grupo: assessor responsável se existir, senão usuário logado
-                grupo = current_user.categoria or 'geral'
+                # Grupos válidos para o quadro de orientações
+                GRUPOS_VALIDOS = {'oposicao', 'minoria', 'PL', 'NOVO', 'pl', 'novo'}
 
-                # Tenta pegar categoria do assessor responsável pelo item
-                c.execute('SELECT responsavel_username FROM notas WHERE item_key=?', (prop_key,))
-                row_resp = c.fetchone()
-                responsavel = (row_resp[0] if row_resp else '') or ''
-                if responsavel:
-                    c.execute('SELECT categoria FROM users WHERE username=?', (responsavel,))
+                # Tenta pegar responsavel_username do item (campo enviado pelo frontend)
+                responsavel_username = data.get('responsavel_username', '') or ''
+
+                # Se não veio do frontend, busca na nota
+                if not responsavel_username:
+                    c.execute('SELECT responsavel_username FROM notas WHERE item_key=?', (prop_key,))
+                    row_resp = c.fetchone()
+                    responsavel_username = (row_resp[0] if row_resp else '') or ''
+
+                # Determina o grupo a partir do responsável ou do usuário logado
+                grupo = None
+
+                if responsavel_username:
+                    c.execute('SELECT categoria FROM users WHERE username=?', (responsavel_username,))
                     row_cat = c.fetchone()
-                    if row_cat and row_cat[0]:
+                    if row_cat and row_cat[0] and row_cat[0].lower() in {g.lower() for g in GRUPOS_VALIDOS}:
                         grupo = row_cat[0]
 
-                logger.info(f"Exportando orientação: grupo={grupo} id={id_principal} ori={orientacao} resp={responsavel}")
-                c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
-                             (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
-                             VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                          (evento_id, str(id_principal), grupo, orientacao, '', saved_by, now_str))
-                conn.commit()
-                logger.info(f"✅ Orientação exportada para quadro: {grupo} / {id_principal} → {orientacao}")
+                if not grupo:
+                    cat = (current_user.categoria or '').strip()
+                    if cat and cat.lower() in {g.lower() for g in GRUPOS_VALIDOS}:
+                        grupo = cat
+
+                if not grupo:
+                    # Admin ou geral — salva em todos os grupos com responsavel_pauta=1
+                    c.execute('SELECT username, categoria FROM users WHERE responsavel_pauta=1')
+                    resp_rows = c.fetchall()
+                    for ru, rc in resp_rows:
+                        if rc and rc.lower() in {g.lower() for g in GRUPOS_VALIDOS}:
+                            c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
+                                         (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
+                                         VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                                      (evento_id, str(id_principal), rc, orientacao, '', saved_by, now_str))
+                    conn.commit()
+                    logger.info(f"✅ Orientação exportada para todos os grupos responsáveis: {id_principal} → {orientacao}")
+                else:
+                    logger.info(f"Exportando orientação: grupo={grupo} id={id_principal} ori={orientacao}")
+                    c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
+                                 (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                              (evento_id, str(id_principal), grupo, orientacao, '', saved_by, now_str))
+                    conn.commit()
+                    logger.info(f"✅ Orientação exportada: {grupo} / {id_principal} → {orientacao}")
+
             except Exception as e:
                 logger.error(f"Erro ao exportar orientação: {e}")
 
