@@ -1771,12 +1771,71 @@
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
-    // ── Para emendas: passa direto para análise com num_emenda da descrição ──
+    // ── Para emendas: busca URL da emenda no browser antes de chamar backend ──
     if (ehEmenda) {
       const mNum = descricao.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i);
       const numEmenda = mNum ? mNum[1] : '';
-      console.log('[DTQ Emenda] Analisando emenda nº', numEmenda, '| descricao:', descricao);
-      _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria, num_emenda: numEmenda});
+
+      // Tenta buscar a URL real da emenda na página da Câmara (browser não tem restrição de CORS)
+      let urlEmenda = '';
+      try {
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Buscando emenda...';
+        const urlLista = `https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao=${idPrincipal}&subst=0`;
+        const rLista = await fetch(urlLista);
+        if (rLista.ok) {
+          const html = await rLista.text();
+          const parser = new DOMParser();
+          const doc2 = parser.parseFromString(html, 'text/html');
+
+          // Busca link da emenda pelo número — procura em âncoras emp1, emp2, etc. e em links
+          const links = Array.from(doc2.querySelectorAll('a[href]'));
+
+          if (numEmenda) {
+            // Tenta achar link com texto ou nome que contenha o número da emenda
+            const re = new RegExp(`(?:EMD|Emenda)\\s*[Nº°.]?\\s*0*${numEmenda}\\b`, 'i');
+            for (const a of links) {
+              const txt = a.textContent.trim();
+              const href = a.getAttribute('href') || '';
+              if (re.test(txt) || re.test(href)) {
+                urlEmenda = href.startsWith('http') ? href : 'https://www.camara.leg.br' + href;
+                break;
+              }
+            }
+            // Tenta também pela âncora emp{numEmenda}
+            if (!urlEmenda) {
+              const anchorEl = doc2.getElementById('emp' + numEmenda);
+              if (anchorEl) {
+                const aLink = anchorEl.querySelector('a[href]') || anchorEl.closest('tr')?.querySelector('a[href]');
+                if (aLink) {
+                  const href = aLink.getAttribute('href');
+                  urlEmenda = href.startsWith('http') ? href : 'https://www.camara.leg.br' + href;
+                }
+              }
+            }
+          }
+
+          // Se não achou pelo número, pega o primeiro link de emenda disponível
+          if (!urlEmenda) {
+            for (const a of links) {
+              const href = a.getAttribute('href') || '';
+              if (href.includes('codteor') || href.includes('ficha') || /emenda/i.test(a.textContent)) {
+                urlEmenda = href.startsWith('http') ? href : 'https://www.camara.leg.br' + href;
+                break;
+              }
+            }
+          }
+        }
+      } catch(eBusca) {
+        console.warn('[DTQ Emenda] Não foi possível buscar URL da emenda:', eBusca.message);
+      }
+
+      if (!urlEmenda) {
+        alert(`⚠️ Não foi possível localizar a URL da Emenda nº ${numEmenda || '?'} automaticamente.\n\nO sistema tentará analisar com base na descrição do destaque.`);
+      } else {
+        console.log('[DTQ Emenda] URL encontrada:', urlEmenda);
+      }
+
+      _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria, num_emenda: numEmenda, url_emenda: urlEmenda});
       return;
     }
     _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria, ehEmenda});
