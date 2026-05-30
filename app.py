@@ -1385,24 +1385,48 @@ def save_item():
         # Exporta orientação para o quadro da bancada
         if orientacao:
             try:
-                grupo = current_user.categoria or 'geral'
-                c.execute('SELECT responsavel_username FROM notas WHERE item_key=?', (prop_key,))
-                row_resp = c.fetchone()
-                responsavel = (row_resp[0] if row_resp else '') or ''
-                if responsavel:
-                    c.execute('SELECT categoria FROM users WHERE username=?', (responsavel,))
+                GRUPOS_VALIDOS = ['oposicao', 'minoria', 'PL', 'NOVO']
+                grupo = None
+
+                # 1. Tenta categoria do usuário logado
+                cat_logado = (current_user.categoria or '').strip()
+                if cat_logado and cat_logado.lower() in [g.lower() for g in GRUPOS_VALIDOS]:
+                    grupo = cat_logado
+
+                # 2. Se não (admin/geral), tenta responsavel_username da nota
+                if not grupo:
+                    c.execute('SELECT responsavel_username FROM notas WHERE item_key=? AND responsavel_username IS NOT NULL AND responsavel_username != ""', (prop_key,))
+                    row_resp = c.fetchone()
+                    if row_resp and row_resp[0]:
+                        c.execute('SELECT categoria FROM users WHERE username=?', (row_resp[0],))
+                        row_cat = c.fetchone()
+                        if row_cat and row_cat[0] and row_cat[0].lower() in [g.lower() for g in GRUPOS_VALIDOS]:
+                            grupo = row_cat[0]
+
+                # 3. Se ainda não, tenta usuário que salvou por nome
+                if not grupo:
+                    c.execute('SELECT categoria FROM users WHERE username=? OR nome_display=?', (saved_by, saved_by))
                     row_cat = c.fetchone()
-                    if row_cat and row_cat[0]:
+                    if row_cat and row_cat[0] and row_cat[0].lower() in [g.lower() for g in GRUPOS_VALIDOS]:
                         grupo = row_cat[0]
-                logger.info(f"Exportando orientação: grupo={grupo} id={id_principal} ori={orientacao}")
-                c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
-                             (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
-                             VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                          (evento_id, str(id_principal), grupo, orientacao, '', saved_by, now_str))
-                conn.commit()
-                logger.info(f"✅ Orientação exportada: {grupo} / {id_principal} → {orientacao}")
+
+                if not grupo:
+                    logger.warning(f"Orientação NÃO exportada: usuário '{saved_by}' categoria='{cat_logado}' não tem grupo válido")
+                    grupo_exportado = None
+                else:
+                    c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
+                                 (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                              (evento_id, str(id_principal), grupo, orientacao, '', saved_by, now_str))
+                    conn.commit()
+                    logger.info(f"✅ Orientação exportada: grupo={grupo} id={id_principal} ori={orientacao} by={saved_by}")
+                    grupo_exportado = grupo
+
             except Exception as e:
                 logger.error(f"Erro ao exportar orientação: {e}")
+                grupo_exportado = None
+        else:
+            grupo_exportado = None
 
         # Atualiza o cache persistente
         c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
@@ -1422,7 +1446,7 @@ def save_item():
                 pass
 
         pauta_cache.clear()
-        return jsonify({'message': 'Salvo com sucesso!'})
+        return jsonify({'message': 'Salvo com sucesso!', 'grupo_exportado': grupo_exportado})
     except Exception as e:
         conn.rollback()
         return jsonify({'message': f'Erro ao salvar: {e}'})
