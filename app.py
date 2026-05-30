@@ -2693,23 +2693,38 @@ def gerar_quadro_dtq():
     # Extrai texto limpo da análise já feita
     analise_texto = re.sub(r'<[^>]+>', ' ', analise_html).strip()
 
-    # Detecta se é destaque de emenda
+    # Detecta tipo de destaque pela descrição
     descricao_upper = descricao.upper()
-    eh_emenda = any(p in descricao_upper for p in ['EMENDA', 'EMD', 'SUBEMENDA'])
 
-    if eh_emenda:
-        regra_sim_nao = """REGRA FUNDAMENTAL para destaques de EMENDA:
-- O destaque quer VOTAR A EMENDA EM SEPARADO para aprová-la
-- Voto SIM = APROVA a emenda → ALTERA o texto do relator (acata a emenda)
-- Voto NÃO = REJEITA a emenda → MANTÉM o texto do relator"""
-        sim_label_default = "Aprova a emenda / Altera o texto do relator"
-        nao_label_default = "Rejeita a emenda / Mantém o texto do relator"
+    # DESTAQUE DE EMENDA ou DESTAQUE DE PREFERÊNCIA:
+    #   SIM = aprova a emenda/preferência → ALTERA o texto do relator
+    #   NÃO = rejeita → MANTÉM o texto do relator
+    eh_emenda_ou_preferencia = (
+        'DESTAQUE DE EMENDA' in descricao_upper or
+        'DESTAQUE DE PREFERÊNCIA' in descricao_upper or
+        'DESTAQUE DE PREFERENCIA' in descricao_upper or
+        any(p in descricao_upper for p in ['EMD ', 'SUBEMENDA', 'EMENDA AGLUTINATIVA'])
+    )
+
+    # DESTAQUE (em separado, supressivo, etc.) — lógica inversa:
+    #   SIM = mantém o texto do relator
+    #   NÃO = altera o texto do relator
+    eh_destaque_separado = not eh_emenda_ou_preferencia
+
+    if eh_emenda_ou_preferencia:
+        regra_sim_nao = """REGRA FUNDAMENTAL para DESTAQUE DE EMENDA e DESTAQUE DE PREFERÊNCIA:
+- O destaque quer votar a emenda/preferência em separado para aprová-la
+- Voto SIM = APROVA a emenda/preferência → ALTERA o texto do relator (acata a mudança)
+- Voto NÃO = REJEITA a emenda/preferência → MANTÉM o texto do relator"""
+        sim_label_default = "Aprova / Altera o texto do relator"
+        nao_label_default = "Rejeita / Mantém o texto do relator"
     else:
-        regra_sim_nao = """REGRA FUNDAMENTAL dos destaques de votação em separado:
+        regra_sim_nao = """REGRA FUNDAMENTAL para DESTAQUE (em separado, supressivo, etc.):
+- O destaque quer votar um trecho do texto do relator em separado
 - Voto SIM = MANTÉM o texto do relator (aprovado como está)
 - Voto NÃO = ALTERA ou SUPRIME o texto do relator"""
         sim_label_default = "Mantém o texto do relator"
-        nao_label_default = "Altera o texto do relator"
+        nao_label_default = "Altera / Suprime o texto do relator"
 
     prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
 
