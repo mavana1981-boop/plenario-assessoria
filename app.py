@@ -2151,4 +2151,2268 @@ def trocar_senha():
         if not nova_senha or len(nova_senha) < 4:
             return jsonify({'error': 'Nova senha deve ter ao menos 4 caracteres.'}), 400
         if nova_senha != confirma:
-            return jsonif
+            return jsonify({'error': 'Nova senha e confirmação não coincidem.'}), 400
+        conn = get_conn()
+        c    = conn.cursor()
+        c.execute('SELECT password FROM users WHERE id=?', (current_user.id,))
+        row = c.fetchone()
+        if not row or not bcrypt.check_password_hash(row[0], senha_atual):
+            conn.close()
+            return jsonify({'error': 'Senha atual incorreta.'}), 400
+        nova_hash = bcrypt.generate_password_hash(nova_senha).decode('utf-8')
+        c.execute('UPDATE users SET password=? WHERE id=?', (nova_hash, current_user.id))
+        conn.commit()
+        conn.close()
+        return jsonify({'message': 'Senha alterada com sucesso!'})
+    return render_template('trocar_senha.html')
+
+@app.route('/admin/usuarios')
+@login_required
+def admin_usuarios():
+    if current_user.role.lower() != 'admin':
+        flash('Acesso restrito.', 'error')
+        return redirect(url_for('selecionar_data'))
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute('SELECT id, username, role, categoria, nome_display, foto, responsavel_pauta FROM users ORDER BY id DESC')
+    usuarios = c.fetchall()
+    conn.close()
+    return render_template('admin_usuarios.html', usuarios=usuarios)
+
+@app.route('/admin/usuarios/add', methods=['POST'])
+@login_required
+def add_usuario():
+    if current_user.role.lower() != 'admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    data      = request.get_json()
+    username  = data.get('username', '').strip()
+    password  = data.get('password', '').strip()
+    role      = data.get('role', 'Assessor').strip()
+    categoria = data.get('categoria', 'geral').strip()
+    nome_display = data.get('nome_display', '').strip()
+    if not username or not password:
+        return jsonify({'error': 'Usuário e senha obrigatórios'}), 400
+    hashed = bcrypt.generate_password_hash(password).decode('utf-8')
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        # Verifica se já existe
+        c.execute('SELECT id FROM users WHERE username=?', (username,))
+        if c.fetchone():
+            return jsonify({'error': 'Usuário já existe'}), 409
+        c.execute('INSERT INTO users (username, password, role, categoria, nome_display) VALUES (?, ?, ?, ?, ?)',
+                  (username, hashed, role, categoria, nome_display or username))
+        conn.commit()
+        return jsonify({'message': 'Usuário criado!'})
+    except Exception as e:
+        logger.error(f"Erro add_usuario: {e}")
+        if 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
+            return jsonify({'error': 'Usuário já existe'}), 409
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route('/admin/usuarios/foto/<int:user_id>', methods=['POST'])
+@login_required
+def upload_foto_usuario(user_id):
+    if current_user.role.lower() != 'admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    if 'foto' not in request.files:
+        return jsonify({'error': 'Nenhum arquivo enviado'}), 400
+    f = request.files['foto']
+    if not f.filename:
+        return jsonify({'error': 'Arquivo inválido'}), 400
+    ext = f.filename.rsplit('.', 1)[-1].lower()
+    if ext not in ('jpg', 'jpeg', 'png', 'gif', 'webp'):
+        return jsonify({'error': 'Formato inválido'}), 400
+    import base64
+    data = base64.b64encode(f.read()).decode('utf-8')
+    foto_data = f'data:image/{ext};base64,{data}'
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute('UPDATE users SET foto=? WHERE id=?', (foto_data, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Foto atualizada!'})
+
+@app.route('/admin/usuarios/nome_display/<int:user_id>', methods=['POST'])
+@login_required
+def update_nome_display(user_id):
+    if current_user.role.lower() != 'admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    data = request.get_json()
+    nome = data.get('nome_display', '').strip()
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute('UPDATE users SET nome_display=? WHERE id=?', (nome, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Nome atualizado!'})
+
+@app.route('/admin/usuarios/responsavel_pauta/<int:user_id>', methods=['POST'])
+@login_required
+def set_responsavel_pauta(user_id):
+    if current_user.role.lower() != 'admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    data = request.get_json()
+    ativo = 1 if data.get('ativo') else 0
+    conn = get_conn()
+    c = conn.cursor()
+    if ativo:
+        c.execute('UPDATE users SET responsavel_pauta=? WHERE id=?', (ativo, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Responsável atualizado!'})
+
+@app.route('/atribuir_responsavel', methods=['POST'])
+@login_required
+def atribuir_responsavel():
+    """Atribui assessor a uma proposição. Admin e responsáveis pela pauta podem fazer isso."""
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        # Admin sempre pode; outros só se forem responsável pela pauta
+        if current_user.role.lower() != 'admin':
+            c.execute('SELECT responsavel_pauta FROM users WHERE id=?', (current_user.id,))
+            row = c.fetchone()
+            if not row or not row[0]:
+                return jsonify({'error': 'Apenas o responsável pela pauta pode atribuir proposições'}), 403
+
+        data = request.get_json()
+        item_key             = data.get('item_key', '')
+        evento_id            = data.get('evento_id', '')
+        responsavel_username = data.get('responsavel_username', '')
+
+        if not item_key:
+            return jsonify({'error': 'item_key obrigatório'}), 400
+
+        # Verifica se nota já existe
+        c.execute('SELECT item_key FROM notas WHERE item_key=?', (item_key,))
+        existe = c.fetchone()
+        if existe:
+            c.execute('UPDATE notas SET responsavel_username=? WHERE item_key=?',
+                      (responsavel_username, item_key))
+        else:
+            c.execute('INSERT INTO notas (item_key, evento_id, responsavel_username) VALUES (?,?,?)',
+                      (item_key, evento_id, responsavel_username))
+        conn.commit()
+        return jsonify({'message': 'Responsável atribuído!'})
+    except Exception as e:
+        logger.error(f"Erro atribuir_responsavel: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route('/listar_assessores')
+@login_required
+def listar_assessores():
+    """Lista usuários disponíveis para atribuição de proposição."""
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        c.execute('SELECT username, nome_display, foto, categoria FROM users WHERE categoria != ? ORDER BY nome_display, username', ('restrito',))
+        rows = c.fetchall()
+        conn.close()
+        assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or '', 'categoria': r[3] or 'geral'} for r in rows]
+        return jsonify({'assessores': assessores})
+    except Exception as e:
+        logger.error(f"Erro listar_assessores: {e}")
+        return jsonify({'assessores': [], 'error': str(e)})
+
+@app.route('/exportar_orientacoes_pdf', methods=['POST'])
+@login_required
+def exportar_orientacoes_pdf():
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
+                                     Table, TableStyle, HRFlowable)
+
+    data     = request.get_json()
+    itens    = data.get('itens', [])
+    ori_data = data.get('orientacoes', {})
+    colunas  = data.get('colunas', [])
+    evento_id = data.get('evento_id', '')
+
+    COR_VERDE  = colors.HexColor("#1A6B3A")
+    COR_AZUL   = colors.HexColor("#0D2B5E")
+    COR_CINZA  = colors.HexColor("#555555")
+    CORES_ORI  = {
+        'SIM':        colors.HexColor("#d4edda"),
+        'NÃO':        colors.HexColor("#f8d7da"),
+        'NEGOCIAÇÃO': colors.HexColor("#fff3cd"),
+        'LIBERADO':   colors.HexColor("#cce5ff"),
+        'OBSTRUÇÃO':  colors.HexColor("#ffe5d0"),
+        'ABSTENÇÃO':  colors.HexColor("#e2e3e5"),
+        '—':         colors.white,
+        '':          colors.white,
+    }
+    CORES_COL = {
+        'PL':       colors.HexColor("#dceefb"),
+        'NOVO':     colors.HexColor("#fde8d8"),
+        'oposicao': colors.HexColor("#fdeaea"),
+        'minoria':  colors.HexColor("#e8f5ee"),
+    }
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+                            leftMargin=1.2*cm, rightMargin=1.2*cm,
+                            topMargin=1.5*cm, bottomMargin=1.5*cm)
+    SS = getSampleStyleSheet()
+    T  = ParagraphStyle("T", parent=SS["Title"],  fontSize=12, textColor=COR_VERDE, alignment=TA_CENTER)
+    S  = ParagraphStyle("S", parent=SS["Normal"], fontSize=7.5, textColor=COR_CINZA, leading=10, wordWrap='CJK')
+    SB = ParagraphStyle("SB",parent=SS["Normal"], fontSize=7.5, fontName="Helvetica-Bold", leading=10, wordWrap='CJK')
+    SC = ParagraphStyle("SC",parent=SS["Normal"], fontSize=7,   textColor=COR_CINZA, leading=9, wordWrap='CJK', alignment=TA_CENTER)
+
+    story = []
+    story.append(Paragraph("Quadro de Orientações — Plenário da Câmara dos Deputados", T))
+    story.append(Paragraph(f"Gerado em: {now_brasilia().strftime('%d/%m/%Y %H:%M')}", ParagraphStyle("sm", parent=SS["Normal"], fontSize=7.5, textColor=COR_CINZA, alignment=TA_CENTER)))
+    story.append(Spacer(1, 8))
+    story.append(HRFlowable(width="100%", thickness=1, color=COR_VERDE))
+    story.append(Spacer(1, 6))
+
+    # Cabeçalho
+    header = [Paragraph("<b>#</b>", SC),
+              Paragraph("<b>Proposição</b>", SC),
+              Paragraph("<b>Ementa</b>", SC)]
+    for col in colunas:
+        header.append(Paragraph(f"<b>{col['label']}</b>", SC))
+
+    rows = [header]
+    col_widths = [0.7*cm, 2.5*cm, 7*cm] + [4.5*cm] * len(colunas)
+
+    style_cmds = [
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#f0f0f0")),
+        ("GRID",       (0,0), (-1,-1), 0.4, colors.HexColor("#CCCCCC")),
+        ("VALIGN",     (0,0), (-1,-1), "TOP"),
+        ("TOPPADDING", (0,0), (-1,-1), 3),
+        ("BOTTOMPADDING",(0,0),(-1,-1),3),
+        ("FONTSIZE",   (0,0), (-1,-1), 7.5),
+    ]
+
+    for i, item in enumerate(itens):
+        row_num = i + 1
+        row = [
+            Paragraph(str(item.get('ordem','')), SC),
+            Paragraph(f"<b>{item.get('projeto','')}</b>", SB),
+            Paragraph(item.get('ementa',''), S),
+        ]
+        for j, col in enumerate(colunas):
+            key   = f"{item.get('id_principal')}|{col['grupo']}"
+            salvo = ori_data.get(key, {}) or {}
+            ori   = salvo.get('orientacao', '') if isinstance(salvo, dict) else ''
+            com   = salvo.get('comentario', '') if isinstance(salvo, dict) else ''
+            texto = f"<b>{ori}</b>" if ori else "—"
+            if com:
+                texto += f"<br/><font size='6.5' color='#555555'>{com}</font>"
+            row.append(Paragraph(texto, ParagraphStyle("oc", parent=S, alignment=TA_CENTER)))
+            # Cor de fundo da célula
+            cor_bg = CORES_ORI.get(ori, colors.white)
+            col_idx = 3 + j
+            style_cmds.append(("BACKGROUND", (col_idx, row_num), (col_idx, row_num), cor_bg))
+        rows.append(row)
+
+    tbl = Table(rows, colWidths=col_widths, repeatRows=1)
+    tbl.setStyle(TableStyle(style_cmds))
+    story.append(tbl)
+
+    doc.build(story)
+    pdf = buf.getvalue(); buf.close()
+
+    resp = make_response(pdf)
+    resp.headers["Content-Type"] = "application/pdf"
+    resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
+    return resp
+
+def buscar_documentos_disponiveis(id_proposicao):
+    """
+    Busca todos os documentos da página prop_pareceres_substitutivos_votos.
+    Sempre inclui o Avulso (texto consolidado) no topo.
+    """
+    from bs4 import BeautifulSoup
+    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
+    docs = []
+    vistos = set()
+
+    # 1. Busca o Avulso (texto integral consolidado) da ficha de tramitação — sempre no topo
+    try:
+        url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}"
+        r_tram = requests.get(url_tram, headers=headers, timeout=12)
+        if r_tram.ok:
+            soup_tram = BeautifulSoup(r_tram.text, 'html.parser')
+            for a in soup_tram.find_all('a', href=True):
+                href = a['href']
+                txt_link = a.get_text(strip=True).lower()
+                if 'codteor' not in href.lower():
+                    continue
+                m_fn = re.search(r'filename=([^&"]+)', href)
+                fn   = (m_fn.group(1) if m_fn else '').upper()
+                # Pega avulso pelo texto do link OU pelo filename
+                eh_avulso = ('AVULSO' in fn and 'LEGISLACAO' not in fn) or txt_link in ('avulsos', 'avulso')
+                if eh_avulso:
+                    url_doc = camara_url(href)
+                    docs.append({
+                        'label':    '📄 Avulso — Texto Integral da Proposição',
+                        'url':      url_doc,
+                        'filename': fn,
+                        'tipo':     'Avulso',
+                        'data':     '',
+                    })
+                    vistos.add(url_doc)
+                    break
+        # Fallback: se scraping falhou (403 etc), adiciona link da ficha de tramitação
+        if not any(d['tipo'] == 'Avulso' for d in docs):
+            docs.append({
+                'label': '📄 Texto da Proposição (ficha de tramitação)',
+                'url':   url_tram,
+                'filename': '',
+                'tipo': 'Avulso',
+                'data': '',
+            })
+    except Exception as e:
+        logger.warning(f"Erro ao buscar avulso: {e}")
+        url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}"
+        docs.append({
+            'label': '📄 Texto da Proposição (ficha de tramitação)',
+            'url':   url_tram,
+            'filename': '',
+            'tipo': 'Avulso',
+            'data': '',
+        })
+
+    # 2. Busca todos os documentos da página de pareceres/substitutivos
+    try:
+        url = f"https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao={id_proposicao}"
+        r = requests.get(url, headers=headers, timeout=12)
+        logger.info(f"Página pareceres {id_proposicao}: status={r.status_code}, size={len(r.text)}")
+        if r.ok:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            for row in soup.find_all('tr'):
+                cols = row.find_all('td')
+                if len(cols) < 3:
+                    continue
+                sigla = cols[0].get_text(strip=True)
+                tipo  = cols[1].get_text(strip=True)
+                data  = cols[2].get_text(strip=True)
+                if not sigla:
+                    continue
+                for a in row.find_all('a', href=True):
+                    href = a['href']
+                    if 'codteor' not in href.lower():
+                        continue
+                    url_doc = camara_url(href)
+                    if url_doc in vistos:
+                        continue
+                    vistos.add(url_doc)
+                    label = f"📋 {sigla} — {tipo}"
+                    if data:
+                        label += f" ({data})"
+                    docs.append({
+                        'label':    label,
+                        'url':      url_doc,
+                        'filename': sigla,
+                        'tipo':     tipo,
+                        'data':     data,
+                    })
+    except Exception as e:
+        logger.warning(f"Erro ao buscar pareceres: {e}")
+
+    # 3. Busca emendas via tramitações da API (fonte alternativa quando fichadetramitacao dá 403)
+    try:
+        r_tram = requests.get(
+            f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/tramitacoes?itens=50&ordem=DESC",
+            headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0'}, timeout=10
+        )
+        if r_tram.ok:
+            for t in r_tram.json().get('dados', []):
+                despacho = (t.get('despacho', '') or '').upper()
+                # Detecta menção de emenda no despacho
+                m_emd = re.search(r'EMENDA\s*(?:N[Âº°.]?\s*)?(\d+)', despacho)
+                if m_emd:
+                    num_emd = m_emd.group(1)
+                    label = f"📋 EMD nº {num_emd} — mencionada em tramitação"
+                    # Sem URL direta — será resolvida manualmente
+                    chave = f"EMD{num_emd}"
+                    if chave not in vistos:
+                        vistos.add(chave)
+                        docs.append({
+                            'label':    label,
+                            'url':      '',
+                            'filename': f'EMD{num_emd}',
+                            'tipo':     'Emenda',
+                            'data':     t.get('dataHora', '')[:10],
+                        })
+    except Exception as e:
+        logger.warning(f"Erro busca emendas tramitações: {e}")
+
+    logger.info(f"Total documentos: {len(docs)} — {[d['label'] for d in docs]}")
+    return docs
+
+def extrair_texto_documento(url_doc):
+    """Baixa PDF e extrai texto completo."""
+    import pdfplumber
+    from io import BytesIO
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/pdf,*/*',
+        'Referer': 'https://www.camara.leg.br/',
+    }
+
+    # Garante URL correta
+    if url_doc.startswith('http') and '/proposicoesWeb/' not in url_doc and 'codteor' in url_doc:
+        m_ct = re.search(r'codteor=(\d+)', url_doc)
+        if m_ct:
+            codteor = m_ct.group(1)
+            url_doc = f"https://www.camara.leg.br/proposicoesWeb/prop_mostrarintegra?codteor={codteor}"
+
+    m_ct = re.search(r'codteor=(\d+)', url_doc)
+    codteor = m_ct.group(1) if m_ct else None
+
+    url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
+    urls_tentar = [url_pdf]
+    if codteor:
+        urls_tentar.append(
+            f"https://www.camara.leg.br/proposicoesWeb/prop_mostrarintegra?codteor={codteor}&tipo=PDF"
+        )
+
+    for url in urls_tentar:
+        try:
+            logger.info(f"Tentando PDF: {url[:120]}")
+            rp = requests.get(url, headers=headers, timeout=60, allow_redirects=True)
+            logger.info(f"  → status={rp.status_code}, CT={rp.headers.get('Content-Type','')[:40]}, size={len(rp.content)}")
+
+            if not rp.ok or len(rp.content) < 1000:
+                continue
+            ct = rp.headers.get('Content-Type', '').lower()
+            if 'pdf' not in ct and not rp.content[:4] == b'%PDF':
+                continue
+
+            with pdfplumber.open(BytesIO(rp.content)) as pdf:
+                n_pags = len(pdf.pages)
+                partes = []
+                for page in pdf.pages:
+                    txt = page.extract_text()
+                    if txt:
+                        partes.append(txt)
+                    else:
+                        # Tenta extract_text com layout para PDFs complexos
+                        txt2 = page.extract_text(layout=True)
+                        if txt2:
+                            partes.append(txt2)
+                texto = '\n'.join(partes).strip()
+
+            logger.info(f"  ✅ Extraído: {len(texto)} chars de {n_pags} páginas")
+
+            if len(texto) < 100 and n_pags > 0:
+                logger.warning(f"  ⚠️ PDF com poucas chars — pode ser PDF de imagem (escaneado)")
+                # Retorna aviso no texto para a IA
+                return f"[PDF escaneado — texto não extraível automaticamente. O documento tem {n_pags} páginas.]\n\nURL: {url}"
+
+            return texto
+        except Exception as e:
+            logger.warning(f"  ❌ Erro em {url[:80]}: {e}")
+            continue
+
+    logger.warning(f"Nenhuma URL funcionou para extrair PDF")
+    return None
+
+@app.route('/extrair_texto_doc', methods=['POST'])
+@login_required
+def extrair_texto_doc():
+    """Extrai e retorna o texto de um PDF para visualização."""
+    data    = request.get_json()
+    url_doc = data.get('url_documento', '')
+    if not url_doc:
+        return jsonify({'texto': '', 'erro': 'URL não fornecida'})
+    texto = extrair_texto_documento(url_doc) or '(texto não extraído — verifique se o PDF está acessível)'
+    return jsonify({'texto': texto, 'chars': len(texto)})
+
+@app.route('/listar_documentos/<int:id_prop>')
+@login_required
+def listar_documentos(id_prop):
+    docs = buscar_documentos_disponiveis(id_prop)
+    return jsonify({'documentos': docs})
+
+@app.route('/gerar_quadro_dtq', methods=['POST'])
+@login_required
+def gerar_quadro_dtq():
+    """Gera conteúdo do quadro DTQ: sim/não e explicação."""
+    data         = request.get_json()
+    projeto      = data.get('projeto', '')
+    numero       = data.get('numero', '')
+    descricao    = data.get('descricao', '')
+    analise_html = data.get('analise_html', '')
+    url_doc_sel  = data.get('url_documento', '')
+    label_doc    = data.get('label_documento', '')
+
+    gemini_key = os.environ.get('GEMINI_API_KEY', '')
+    groq_key   = os.environ.get('GROQ_API_KEY', '')
+
+    # Extrai texto limpo da análise já feita
+    analise_texto = re.sub(r'<[^>]+>', ' ', analise_html).strip()
+
+    # Detecta se é destaque de emenda
+    descricao_upper = descricao.upper()
+    eh_emenda = any(p in descricao_upper for p in ['EMENDA', 'EMD', 'SUBEMENDA'])
+
+    if eh_emenda:
+        regra_sim_nao = """REGRA FUNDAMENTAL para destaques de EMENDA:
+- O destaque quer VOTAR A EMENDA EM SEPARADO para aprová-la
+- Voto SIM = APROVA a emenda → ALTERA o texto do relator (acata a emenda)
+- Voto NÃO = REJEITA a emenda → MANTÉM o texto do relator"""
+        sim_label_default = "Aprova a emenda / Altera o texto do relator"
+        nao_label_default = "Rejeita a emenda / Mantém o texto do relator"
+    else:
+        regra_sim_nao = """REGRA FUNDAMENTAL dos destaques de votação em separado:
+- Voto SIM = MANTÉM o texto do relator (aprovado como está)
+- Voto NÃO = ALTERA ou SUPRIME o texto do relator"""
+        sim_label_default = "Mantém o texto do relator"
+        nao_label_default = "Altera o texto do relator"
+
+    prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
+
+**Proposição:** {projeto}
+**Destaque:** {numero}
+**Descrição:** {descricao}
+**Análise já realizada:** {analise_texto}
+
+{regra_sim_nao}
+
+Com base na descrição e análise acima, gere APENAS um JSON válido (sem markdown, sem explicações):
+
+{{
+  "titulo": "{projeto} – [título curto da proposição, máx 60 chars]",
+  "dtq": "{numero} - [autoria resumida]",
+  "descricao": "[descrição resumida do destaque, máx 120 chars]",
+  "sim_label": "{sim_label_default}",
+  "sim_conteudo": "[O que significa votar SIM — efeito prático em 1-2 frases curtas]",
+  "nao_label": "{nao_label_default}",
+  "nao_conteudo": "[O que significa votar NÃO — efeito prático em 1-2 frases curtas]",
+  "explicacao": "[Explicação completa do dispositivo destacado e impacto, 3-5 frases]"
+}}
+
+Responda APENAS com o JSON, sem ```json, sem comentários."""
+
+    if gemini_key:
+        try:
+            r = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+                headers={"Content-Type": "application/json"},
+                json={"contents": [{"parts": [{"text": prompt}]}],
+                      "generationConfig": {"maxOutputTokens": 512, "temperature": 0.2}},
+                timeout=30
+            )
+            r.raise_for_status()
+            texto = r.json()['candidates'][0]['content']['parts'][0]['text']
+            texto = re.sub(r'```(?:json)?|```', '', texto).strip()
+            dados = json.loads(texto)
+            return jsonify({'ok': True, 'dados': dados})
+        except Exception as e:
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status == 429:
+                return jsonify({'ok': False, 'error': 'Limite de requisições atingido. Aguarde alguns segundos.'}), 429
+            logger.warning(f"Erro ao gerar quadro DTQ: {e}")
+
+    return jsonify({'ok': False, 'error': 'Falha na IA — verifique a chave Gemini.'}), 500
+
+@app.route('/monitor_status/<int:evento_id>')
+@login_required
+def monitor_status(evento_id):
+    """
+    Retorna status atual dos itens da pauta para o agente de monitoramento.
+    Tenta múltiplas fontes: API votações, API pauta, página HTML.
+    """
+    resultado = {'evento_id': evento_id, 'itens': [], 'texto': '', 'fonte': '', 'fontes_status': {}}
+
+    headers_camara = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/html, */*',
+        'Accept-Language': 'pt-BR,pt;q=0.9',
+        'Referer': 'https://www.camara.leg.br/',
+    }
+
+    # Fonte 1: API de votações
+    try:
+        r = requests.get(
+            f'https://dadosabertos.camara.leg.br/api/v2/votacoes?idEvento={evento_id}&itens=10&ordem=DESC',
+            headers={**headers_camara, 'Accept': 'application/json'}, timeout=8
+        )
+        resultado['fontes_status']['api_votacoes'] = r.status_code
+        if r.ok:
+            votacoes = r.json().get('dados', [])
+            for v in votacoes:
+                resultado['itens'].append({
+                    'proposicao': v.get('proposicaoObjeto', '') or v.get('descricao', ''),
+                    'situacao': 'Em Votação' if v.get('dataHoraRegistro') else '',
+                    'aprovado': v.get('aprovado'),
+                    'sim': v.get('totalVotosSim', ''),
+                    'nao': v.get('totalVotosNao', ''),
+                })
+            resultado['fonte'] = 'api_votacoes'
+    except Exception as e:
+        resultado['fontes_status']['api_votacoes'] = str(e)
+
+    # Fonte 2: Página HTML do evento
+    try:
+        r2 = requests.get(
+            f'https://www.camara.leg.br/evento-legislativo/{evento_id}',
+            headers=headers_camara, timeout=12
+        )
+        resultado['fontes_status']['html_evento'] = r2.status_code
+        if r2.ok and len(r2.text) > 100:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(r2.text, 'html.parser')
+            for tag in soup(['script', 'style', 'noscript']):
+                tag.decompose()
+            texto = ' '.join(soup.get_text(' ').split())
+            resultado['texto'] = texto[:5000]
+            resultado['fonte'] += '+html'
+    except Exception as e:
+        resultado['fontes_status']['html_evento'] = str(e)
+
+    # Fonte 3: API de pauta
+    try:
+        r3 = requests.get(
+            f'https://dadosabertos.camara.leg.br/api/v2/eventos/{evento_id}/pauta',
+            headers={**headers_camara, 'Accept': 'application/json'}, timeout=8
+        )
+        resultado['fontes_status']['api_pauta'] = r3.status_code
+        if r3.ok:
+            pauta = r3.json().get('dados', [])
+            for item in pauta:
+                sit = item.get('situacaoItem', '') or ''
+                if sit:
+                    resultado['itens'].append({
+                        'proposicao': item.get('proposicao', {}).get('siglaTipo', '') + ' ' + str(item.get('proposicao', {}).get('numero', '')),
+                        'situacao': sit,
+                        'aprovado': None,
+                    })
+            if pauta:
+                resultado['fonte'] += '+api_pauta'
+    except Exception as e:
+        logger.warning(f"monitor_status pauta: {e}")
+
+    return jsonify(resultado)
+
+@app.route('/buscar_votos/<int:evento_id>')
+@login_required
+def buscar_votos(evento_id):
+    """Busca resultado das votações do evento via scraping."""
+    from bs4 import BeautifulSoup
+    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
+    votacoes = []
+    try:
+        # Tenta API aberta primeiro
+        r = requests.get(
+            f"https://dadosabertos.camara.leg.br/api/v2/votacoes?idEvento={evento_id}&itens=50&ordem=DESC",
+            headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'},
+            timeout=10
+        )
+        if r.ok:
+            for v in r.json().get('dados', []):
+                votacoes.append({
+                    'id':         v.get('id', ''),
+                    'descricao':  v.get('descricao', '') or '',
+                    'proposicao': v.get('proposicaoObjeto', '') or '',
+                    'sim':        v.get('totalVotosSim', ''),
+                    'nao':        v.get('totalVotosNao', ''),
+                    'abstencao':  v.get('totalVotosAbstencao', '') or 0,
+                    'aprovado':   v.get('aprovado', None),
+                })
+            if votacoes:
+                return jsonify({'votacoes': votacoes, 'total': len(votacoes)})
+    except Exception as e:
+        logger.warning(f"API votações falhou: {e}")
+
+    # Fallback: scraping da página de votações
+    try:
+        url = f"https://www.camara.leg.br/presenca-comissoes/votacao-portal?reuniao={evento_id}"
+        r2 = requests.get(url, headers=headers, timeout=12)
+        if r2.ok:
+            soup = BeautifulSoup(r2.text, 'html.parser')
+            # Procura dados de votação na página
+            for row in soup.find_all('tr'):
+                cols = row.find_all('td')
+                if len(cols) < 3:
+                    continue
+                texto = ' '.join(c.get_text(strip=True) for c in cols)
+                # Procura padrões SIM/NAO
+                m_sim = re.search(r'(\d+)\s*sim', texto, re.IGNORECASE)
+                m_nao = re.search(r'(\d+)\s*n[ãa]o', texto, re.IGNORECASE)
+                if m_sim or m_nao:
+                    votacoes.append({
+                        'descricao':  cols[0].get_text(strip=True) if cols else '',
+                        'proposicao': texto[:80],
+                        'sim':        m_sim.group(1) if m_sim else '',
+                        'nao':        m_nao.group(1) if m_nao else '',
+                        'abstencao':  '',
+                    })
+    except Exception as e:
+        logger.warning(f"Scraping votações falhou: {e}")
+
+    if votacoes:
+        return jsonify({'votacoes': votacoes, 'total': len(votacoes)})
+
+    # Se nada funcionar, retorna vazio para o frontend pedir manual
+    return jsonify({'votacoes': [], 'total': 0, 'info': 'Votos não encontrados automaticamente — insira manualmente.'})
+
+@app.route('/debug_destaque', methods=['POST'])
+@login_required
+def debug_destaque():
+    """Debug: mostra texto extraído e trecho localizado para análise de destaque."""
+    data         = request.get_json()
+    url_doc_sel  = data.get('url_documento', '')
+    descricao    = data.get('descricao', '')
+
+    texto_doc = extrair_texto_documento(url_doc_sel) if url_doc_sel else ''
+
+    refs_leis = re.findall(r'[Ll]ei\s+(?:n[º°.]?\s*)?([\d.]+)[/\-](\d{4})', descricao)
+    texto_relevante = ''
+    busca_info = []
+
+    if texto_doc and refs_leis:
+        for num_lei, ano_lei in refs_leis:
+            num_limpo = num_lei.replace('.', '')
+            for padrao in [num_limpo, num_lei, f"{num_limpo[:1]}.{num_limpo[1:]}"]:
+                m = re.search(re.escape(padrao), texto_doc)
+                if m:
+                    ini = max(0, m.start() - 200)
+                    fim = min(len(texto_doc), m.end() + 3000)
+                    texto_relevante = texto_doc[ini:fim]
+                    busca_info.append(f"✅ Encontrado '{padrao}' na posição {m.start()}")
+                    break
+                else:
+                    busca_info.append(f"❌ Não encontrado '{padrao}'")
+
+    return jsonify({
+        'total_chars':      len(texto_doc),
+        'primeiros_500':    texto_doc[:500],
+        'texto_completo':   texto_doc[:50000],  # até 50k chars para o popup
+        'refs_extraidas':   refs_leis,
+        'busca_info':       busca_info,
+        'trecho_relevante': texto_relevante[:3000] if texto_relevante else '(não localizado)',
+    })
+
+def buscar_texto_emenda(id_proposicao, descricao):
+    """
+    Busca o texto da emenda referenciada na descrição do destaque.
+    Acessa prop_emendas e extrai o PDF da emenda específica.
+    """
+    from bs4 import BeautifulSoup
+    import pdfplumber
+    from io import BytesIO
+
+    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
+
+    # Extrai número da emenda da descrição
+    # Ex: "Emenda nº 5", "EMD 12", "Emenda Aglutinativa nº 3"
+    m_num = re.search(r'(?:EMD|Emenda|EMENDA)\s+(?:n[º°.]?\s*)?(\d+)', descricao, re.IGNORECASE)
+    num_emenda = m_num.group(1) if m_num else None
+
+    try:
+        url = f"https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao={id_proposicao}&subst=0"
+        r = requests.get(url, headers=headers, timeout=12)
+        if not r.ok:
+            logger.warning(f"Página de emendas retornou {r.status_code}")
+            return None, None
+
+        soup = BeautifulSoup(r.text, 'html.parser')
+
+        # Coleta todas as emendas com seus links
+        emendas = []
+        for row in soup.find_all('tr'):
+            txt = row.get_text(' ', strip=True)
+            # Identifica linha de emenda
+            m = re.search(r'(?:EMD|Emenda)\s*[Nn]?[º°.]?\s*(\d+)', txt, re.IGNORECASE)
+            if not m:
+                continue
+            num = m.group(1)
+            # Pega o link do PDF
+            link = row.find('a', href=True)
+            if link:
+                href = link['href']
+                url_doc = camara_url(href)
+                emendas.append((num, url_doc, txt[:120]))
+
+        if not emendas:
+            # Tenta links diretos com codteor
+            for a in soup.find_all('a', href=True):
+                if 'codteor' in a['href']:
+                    txt_ctx = a.get_text(strip=True)
+                    m = re.search(r'(\d+)', txt_ctx)
+                    num = m.group(1) if m else str(len(emendas)+1)
+                    emendas.append((num, camara_url(a['href']), txt_ctx[:80]))
+
+        logger.info(f"Emendas encontradas para {id_proposicao}: {[(e[0],e[2]) for e in emendas]}")
+
+        # Seleciona a emenda correta pelo número
+        emenda_sel = None
+        if num_emenda:
+            emenda_sel = next((e for e in emendas if e[0] == num_emenda), None)
+        if not emenda_sel and emendas:
+            emenda_sel = emendas[0]  # fallback: primeira
+
+        if not emenda_sel:
+            return None, None
+
+        num_sel, url_emenda, label_sel = emenda_sel
+        logger.info(f"Emenda selecionada: nº {num_sel} — {url_emenda}")
+
+        # Extrai texto do PDF da emenda
+        url_pdf = url_emenda + ('&' if '?' in url_emenda else '?') + 'tipo=PDF'
+        rp = requests.get(url_pdf, headers=headers, timeout=20)
+        if not rp.ok or 'pdf' not in rp.headers.get('Content-Type','').lower():
+            # Tenta sem tipo=PDF
+            rp = requests.get(url_emenda, headers=headers, timeout=20)
+
+        if rp.ok and len(rp.content) > 500:
+            with pdfplumber.open(BytesIO(rp.content)) as pdf:
+                texto = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
+            if texto:
+                return texto, f"Emenda nº {num_sel}"
+
+    except Exception as e:
+        logger.warning(f"Erro ao buscar emenda {id_proposicao}: {e}")
+
+    return None, None
+
+
+@app.route('/listar_emendas/<int:id_prop>')
+@login_required
+def listar_emendas(id_prop):
+    """Lista todas as emendas disponíveis para uma proposição."""
+    from bs4 import BeautifulSoup
+    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
+    try:
+        url = f"https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao={id_prop}&subst=0"
+        r = requests.get(url, headers=headers, timeout=12)
+        if not r.ok:
+            return jsonify({'emendas': [], 'erro': f'HTTP {r.status_code}'})
+
+        soup = BeautifulSoup(r.text, 'html.parser')
+        emendas = []
+        vistos = set()
+
+        for row in soup.find_all('tr'):
+            txt = row.get_text(' ', strip=True)
+            m = re.search(r'(?:EMD|Emenda)\s*[Nn]?[º°.]?\s*(\d+)', txt, re.IGNORECASE)
+            if not m:
+                continue
+            num = m.group(1)
+            if num in vistos:
+                continue
+            vistos.add(num)
+            # Pega o link do PDF
+            link = row.find('a', href=True)
+            if link:
+                url_doc = camara_url(link['href'])
+                label = f"Emenda nº {num}"
+                # Tenta extrair mais info (autor, tipo)
+                m_tipo = re.search(r'(Aglutinativa|Substitutiva|de Plenário)', txt, re.IGNORECASE)
+                if m_tipo:
+                    label = f"Emenda {m_tipo.group(1)} nº {num}"
+                emendas.append({'num': num, 'label': label, 'url': url_doc, 'txt': txt[:100]})
+
+        # Ordena por número
+        emendas.sort(key=lambda e: int(e['num']) if e['num'].isdigit() else 0)
+        logger.info(f"Emendas para {id_prop}: {[e['label'] for e in emendas]}")
+        return jsonify({'emendas': emendas, 'total': len(emendas)})
+    except Exception as e:
+        logger.warning(f"listar_emendas {id_prop}: {e}")
+        return jsonify({'emendas': [], 'erro': str(e)})
+
+@app.route('/analisar_destaque', methods=['POST'])
+@login_required
+def analisar_destaque():
+    data         = request.get_json()
+    id_principal = data.get('id_principal', '')
+    descricao    = data.get('descricao', '')
+    numero       = data.get('numero', '')
+    projeto      = data.get('projeto', '')
+    url_doc_sel  = data.get('url_documento', '')
+    label_doc    = data.get('label_documento', '')
+    trecho_manual = data.get('trecho_manual', '')  # trecho selecionado manualmente pelo usuário
+
+    gemini_key = os.environ.get('GEMINI_API_KEY', '')
+    groq_key   = os.environ.get('GROQ_API_KEY', '')
+
+    # ── Destaque de emenda: busca e analisa o texto da emenda diretamente ──
+    descricao_upper = descricao.upper()
+    eh_emenda = any(p in descricao_upper for p in ['EMENDA', 'EMD', 'SUBEMENDA'])
+
+    # ── Destaque de emenda: usa URL passada diretamente pelo frontend ──
+    url_emenda_sel = data.get('url_emenda', '')  # URL específica da emenda selecionada
+    num_emenda_sel = data.get('num_emenda', '')
+
+    if eh_emenda and id_principal and not trecho_manual:
+        # Extrai número da emenda da descrição — sempre disponível
+        m_num_emd = re.search(r'(?:EMD|Emenda|EMENDA)\s+(?:[Aa]glutinativa\s+)?(?:[Ss]ubstitutiva\s+)?(?:n[º°.]?\s*)?(\d+)', descricao, re.IGNORECASE)
+        num_emenda_desc = m_num_emd.group(1) if m_num_emd else (num_emenda_sel or '')
+
+        # Se frontend passou URL específica, usa ela
+        if url_emenda_sel:
+            texto_emenda = extrair_texto_documento(url_emenda_sel) or ''
+            label_emenda = f"Emenda nº {num_emenda_sel}" if num_emenda_sel else 'Emenda selecionada'
+        else:
+            # Tenta buscar PDF da emenda pelo número da descrição
+            texto_emenda, label_emenda = buscar_texto_emenda(id_principal, descricao)
+
+        if texto_emenda:
+            tipo_doc = label_emenda or 'Emenda'
+            regra = ('REGRA: Voto SIM = APROVA a emenda → altera texto do relator. '
+                     'Voto NÃO = REJEITA a emenda → mantém texto do relator.')
+            prompt_emenda = f"""Você é um assessor legislativo da Câmara dos Deputados.
+
+**Proposição:** {projeto}
+**Destaque:** {numero} — {descricao}
+**Documento:** {tipo_doc}
+
+TEXTO DA EMENDA:
+{texto_emenda[:8000]}
+
+{regra}
+
+Gere análise em HTML:
+
+<p><strong>Objeto:</strong> [o que a emenda propõe alterar em 1 frase]</p>
+<br>
+<p><strong>Texto da Emenda:</strong></p>
+<blockquote style="border-left:3px solid #1A6B3A;padding-left:10px;color:#333;font-style:italic;">
+[trecho principal da emenda, literalmente]
+</blockquote>
+<br>
+<p><strong>Voto SIM (aprova a emenda):</strong><br>[efeito prático — o que muda. Máx 80 palavras.]</p>
+<br>
+<p><strong>Voto NÃO (rejeita a emenda):</strong><br>[texto do relator prevalece — impacto. Máx 60 palavras.]</p>
+
+Não use ### ou ** fora do HTML."""
+
+            if gemini_key:
+                try:
+                    r = requests.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+                        headers={"Content-Type": "application/json"},
+                        json={"contents": [{"parts": [{"text": prompt_emenda}]}],
+                              "generationConfig": {"maxOutputTokens": 512, "temperature": 0.3}},
+                        timeout=30
+                    )
+                    r.raise_for_status()
+                    texto_resp = r.json()['candidates'][0]['content']['parts'][0]['text']
+                    return jsonify({'resumo': texto_resp, 'doc_usado': tipo_doc})
+                except Exception as e:
+                    status = getattr(getattr(e, 'response', None), 'status_code', None)
+                    if status == 429:
+                        return jsonify({'error': 'Limite de requisições. Aguarde e tente novamente.'}), 429
+                    logger.warning(f"Gemini falhou (emenda): {e}")
+            return jsonify({'error': 'Falha ao analisar emenda.'}), 500
+
+        # ── Bloco else: PDF não disponível, usa avulso/PRLP ──────────────
+        else:
+            logger.info(f"PDF da emenda não disponível — usando avulso com contexto do número {num_emenda_desc}")
+            doc_base = buscar_texto_prlp_ou_sbt(id_principal)
+            texto_base = doc_base.get('texto', '') if doc_base else ''
+            label_base = f"{doc_base.get('tipo','')} nº {doc_base.get('numero','')}" if doc_base else 'texto da proposição'
+
+            if not texto_base:
+                return jsonify({'error': f'Texto da Emenda nº {num_emenda_desc} não disponível. Use o botão Debug para colar o texto manualmente.'}), 400
+
+            tipo_doc = f"Emenda nº {num_emenda_desc} — {numero}" if num_emenda_desc else descricao
+            regra = ('REGRA: Voto SIM = APROVA a emenda → altera texto do relator. '
+                     'Voto NÃO = REJEITA a emenda → mantém texto do relator.')
+            prompt_emenda = f"""Você é um assessor legislativo da Câmara dos Deputados.
+
+**Proposição:** {projeto}
+**Destaque:** {numero}
+**Descrição completa do destaque:** {descricao}
+**Emenda objeto do destaque:** nº {num_emenda_desc}
+
+ATENÇÃO: Este é especificamente o destaque referente à **Emenda nº {num_emenda_desc}**.
+O texto integral desta emenda não está disponível, mas abaixo está o texto base ({label_base}).
+Baseie sua análise na descrição do destaque acima e no número da emenda.
+
+TEXTO BASE ({label_base}):
+{texto_base[:6000]}
+
+{regra}
+
+Gere análise HTML específica para a **Emenda nº {num_emenda_desc}** ({numero}):
+
+<p><strong>Emenda nº {num_emenda_desc}:</strong> [descreva o que esta emenda específica propõe, baseado na descrição do destaque e no contexto do texto base]</p>
+<br>
+<p><strong>Voto SIM — aprova a Emenda nº {num_emenda_desc}:</strong><br>[consequência direta de aprovar esta emenda específica. Máx 80 palavras.]</p>
+<br>
+<p><strong>Voto NÃO — rejeita a Emenda nº {num_emenda_desc}:</strong><br>[o texto do relator prevalece. Máx 60 palavras.]</p>
+
+Não use ### ou ** fora do HTML. Não repita análise de outras emendas."""
+
+            if gemini_key:
+                try:
+                    r = requests.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+                        headers={"Content-Type": "application/json"},
+                        json={"contents": [{"parts": [{"text": prompt_emenda}]}],
+                              "generationConfig": {"maxOutputTokens": 600, "temperature": 0.3}},
+                        timeout=30
+                    )
+                    r.raise_for_status()
+                    texto_resp = r.json()['candidates'][0]['content']['parts'][0]['text']
+                    return jsonify({'resumo': texto_resp, 'doc_usado': tipo_doc})
+                except Exception as e:
+                    status = getattr(getattr(e, 'response', None), 'status_code', None)
+                    if status == 429:
+                        return jsonify({'error': 'Limite de requisições. Aguarde e tente novamente.'}), 429
+                    logger.warning(f"Gemini falhou (emenda fallback): {e}")
+            return jsonify({'error': 'Falha ao analisar emenda.'}), 500
+
+    # ── Fluxo normal (não emenda) ───────────────────────────────────────────
+    if trecho_manual:
+        texto_doc = trecho_manual
+        tipo_doc  = f"{label_doc} (trecho selecionado manualmente)"
+        texto_truncado = trecho_manual
+        refs_leis = re.findall(r'[Ll]ei\s+(?:n[º°.]?\s*)?([\d.]+)[/\-](\d{4})', descricao)
+        nota_refs = ''
+        if refs_leis:
+            nota_refs = f"\n**Leis referenciadas:** {', '.join([f'Lei {n}/{a}' for n,a in refs_leis])}"
+    else:
+        # Extrai texto do documento selecionado
+        texto_doc = ''
+        tipo_doc  = label_doc or 'documento selecionado'
+        if url_doc_sel:
+            texto_doc = extrair_texto_documento(url_doc_sel) or ''
+            if texto_doc.startswith('[PDF escaneado') and id_principal:
+                logger.info("PDF escaneado — tentando PRLP como fallback")
+                doc_fb = buscar_texto_prlp_ou_sbt(id_principal)
+                if doc_fb and doc_fb.get('texto'):
+                    texto_doc = doc_fb['texto']
+                    tipo_doc = f"{doc_fb.get('tipo','')} nº {doc_fb.get('numero','')} (fallback)"
+            if not texto_doc or texto_doc.startswith('[PDF escaneado'):
+                return jsonify({'error': f'O PDF selecionado não possui texto extraível. Use o botão Debug para selecionar o trecho manualmente.'}), 400
+        elif id_principal:
+            doc = buscar_texto_prlp_ou_sbt(id_principal)
+            if doc:
+                texto_doc = doc.get('texto', '')
+                tipo_doc  = f"{doc.get('tipo','')} nº {doc.get('numero','')} de {doc.get('data','')}"
+
+        # Extrai refs de leis e localiza trecho relevante
+        refs_leis = re.findall(r'[Ll]ei\s+(?:n[º°.]?\s*)?([\d.]+)[/\-](\d{4})', descricao)
+        nota_refs = ''
+        if refs_leis:
+            leis_str = ', '.join([f"Lei {n.replace('.','')}/{a}" for n, a in refs_leis])
+            nota_refs = f"\n**Leis referenciadas no destaque:** {leis_str} (busque variações como 'Lei nº {refs_leis[0][0]}, de' no texto)"
+
+        texto_relevante = ''
+        if texto_doc and refs_leis:
+            for num_lei, ano_lei in refs_leis:
+                num_limpo = num_lei.replace('.', '')
+                variacoes = list(set([num_limpo, num_lei,
+                    '.'.join([num_limpo[:-3], num_limpo[-3:]]) if len(num_limpo) >= 4 else num_limpo]))
+                logger.info(f"Buscando Lei variações {variacoes} em {len(texto_doc)} chars")
+                melhor_pos = None
+                for variacao in variacoes:
+                    padrao_flex = variacao.replace('.', r'[.\s]?')
+                    for m in re.finditer(padrao_flex, texto_doc):
+                        pos = m.start()
+                        if melhor_pos is None or pos > melhor_pos:
+                            melhor_pos = pos
+                if melhor_pos is not None:
+                    ini = max(0, melhor_pos - 500)
+                    fim = min(len(texto_doc), melhor_pos + 4000)
+                    texto_relevante = texto_doc[ini:fim]
+                    logger.info(f"Trecho: {ini}-{fim} ({len(texto_relevante)} chars)")
+                    break
+
+        texto_truncado = texto_relevante if texto_relevante else texto_doc[:12000]
+
+    prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
+
+**Proposição:** {projeto}
+**Destaque:** {numero}
+**Descrição do Destaque:** {descricao}{nota_refs}
+**Documento analisado:** {tipo_doc}
+
+TEXTO COMPLETO DO DOCUMENTO:
+{texto_truncado if texto_truncado else '(texto não disponível)'}
+
+---
+INSTRUÇÕES PARA LOCALIZAR O TRECHO:
+
+A descrição do destaque menciona leis, artigos ou dispositivos específicos. Para localizá-los:
+
+1. **Matching flexível de leis**: A descrição pode mencionar "Lei 9.096/1995" mas no texto pode aparecer como "Lei nº 9.096, de 19 de setembro de 1995" ou "Lei 9.096/95". São a mesma lei — use apenas o número para localizar.
+
+2. **Se o destaque menciona "art. X da Lei Y"**: procure no texto por:
+   - O artigo que ALTERA esse dispositivo: "Art. 2º O art. X da Lei nº Y..."
+   - Ou diretamente o artigo numerado no texto
+   - Extraia o trecho que está sendo destacado para votação em separado
+
+3. **Se o destaque menciona "art. X do substitutivo/texto"**: procure diretamente "Art. Xº" no texto
+
+4. **Copie LITERALMENTE** o trecho encontrado, incluindo caput, incisos e parágrafos relevantes
+
+Gere a análise em HTML com EXATAMENTE este formato:
+
+<p><strong>Objeto do Destaque:</strong> [descreva em uma frase o que o destaque vota em separado]</p>
+<br>
+<p><strong>Trecho do Texto:</strong></p>
+<blockquote style="border-left:3px solid #1A6B3A; padding-left:10px; color:#333; font-style:italic;">
+[Trecho literal encontrado. Se usou matching flexível, indique: "Lei X mencionada no destaque corresponde a 'Lei nº X, de DD de mês de AAAA' no documento". Se não localizar mesmo com busca flexível, explique qual número buscou.]
+</blockquote>
+<br>
+<p><strong>Análise:</strong><br>
+[Explique o que esse trecho propõe e o impacto prático de aprovar ou rejeitar este destaque. Máx 150 palavras.]
+</p>
+
+Não use ### ou ** fora do HTML."""
+
+    if gemini_key:
+        try:
+            r = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+                headers={"Content-Type": "application/json"},
+                json={"contents": [{"parts": [{"text": prompt}]}],
+                      "generationConfig": {"maxOutputTokens": 512, "temperature": 0.3}},
+                timeout=30
+            )
+            r.raise_for_status()
+            texto = r.json()['candidates'][0]['content']['parts'][0]['text']
+            return jsonify({'resumo': texto, 'doc_usado': tipo_doc})
+        except Exception as e:
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status == 429:
+                return jsonify({'error': 'Limite de requisições atingido. Aguarde alguns segundos e tente novamente.'}), 429
+            logger.warning(f"Gemini falhou em analisar_destaque: {e}")
+
+    return jsonify({'error': 'Falha ao gerar análise. Tente novamente.'}), 500
+
+@app.route('/buscar_url_prlp', methods=['POST'])
+@login_required
+def buscar_url_prlp():
+    """Encontra URL do PDF do PRLP específico pelo número."""
+    data         = request.get_json()
+    id_prop      = data.get('id_proposicao', '')
+    numero_prlp  = str(data.get('numero_prlp', ''))
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'pt-BR,pt;q=0.9',
+    }
+
+    # Estratégia 1: página de pareceres (scraping)
+    try:
+        from bs4 import BeautifulSoup
+        url_pag = f"https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao={id_prop}"
+        r = requests.get(url_pag, headers=headers, timeout=15)
+        if r.ok:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            # Procura linha que menciona PRLP + número correto
+            for row in soup.find_all('tr'):
+                txt = row.get_text(' ', strip=True).upper()
+                if f'PRLP' not in txt:
+                    continue
+                # Verifica se tem o número correto
+                m = re.search(r'PRLP\s*[Nnº°.\s]*(\d+)', txt)
+                if not m or m.group(1) != numero_prlp:
+                    continue
+                # Pega o link
+                for a in row.find_all('a', href=True):
+                    href = a['href']
+                    if 'codteor' in href.lower():
+                        url_doc = camara_url(href)
+                        url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
+                        logger.info(f"PRLP {numero_prlp} encontrado: {url_pdf}")
+                        return jsonify({'url_pdf': url_pdf})
+    except Exception as e:
+        logger.warning(f"Erro buscar_url_prlp estrategia1: {e}")
+
+    # Estratégia 2: ficha de tramitação
+    try:
+        url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_prop}"
+        r = requests.get(url_tram, headers=headers, timeout=15)
+        if r.ok:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            # Busca todos os links com PRLP no filename
+            prlps = []
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                fn_m = re.search(r'filename=([^&"]+)', href)
+                fn = (fn_m.group(1) if fn_m else '').upper()
+                if 'PRLP' in fn or 'PRLP' in href.upper():
+                    m_num = re.search(r'PRLP[^\d]*(\d+)', fn or href, re.IGNORECASE)
+                    num = int(m_num.group(1)) if m_num else 0
+                    url_doc = camara_url(href)
+                    prlps.append((num, url_doc))
+            if prlps:
+                # Pega o que tem o número correto, ou o maior
+                alvo = [p for p in prlps if str(p[0]) == numero_prlp]
+                escolhido = alvo[0] if alvo else sorted(prlps, key=lambda x: x[0], reverse=True)[0]
+                url_pdf = escolhido[1] + ('&' if '?' in escolhido[1] else '?') + 'tipo=PDF'
+                return jsonify({'url_pdf': url_pdf})
+    except Exception as e:
+        logger.warning(f"Erro buscar_url_prlp estrategia2: {e}")
+
+    return jsonify({'url_pdf': None})
+
+@app.route('/verificar_doc/<int:id_prop>')
+@login_required
+def verificar_doc(id_prop):
+    """Retorna tipo, número, data e URL do último PRLP/Substitutivo de plenário."""
+    try:
+        doc = buscar_texto_prlp_ou_sbt(id_prop)
+        if doc:
+            return jsonify({
+                'tipo':      doc.get('tipo'),
+                'numero':    doc.get('numero'),
+                'data':      doc.get('data'),
+                'tem_texto': bool(doc.get('texto')),
+                'url_pdf':   doc.get('url_pdf', '')
+            })
+        return jsonify({'tipo': None, 'data': None, 'numero': None, 'url_pdf': ''})
+    except Exception as e:
+        logger.error(f"Erro verificar_doc {id_prop}: {e}", exc_info=True)
+        return jsonify({'tipo': None, 'data': None, 'numero': None, 'url_pdf': '', 'erro': str(e)})
+
+@app.route('/debug_docs/<path:codigo>')
+@login_required
+def debug_docs(codigo):
+    """Debug dos documentos. Aceita id numérico ou 'PL-1054-2019'."""
+    headers = {'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}
+    resultado = {'codigo': codigo}
+
+    # Resolve id
+    id_prop = None
+    if '-' in str(codigo):
+        partes = str(codigo).split('-')
+        if len(partes) == 3:
+            sigla, numero, ano = partes
+            # Parâmetro correto é siglaTipo
+            url_busca = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla}&numero={numero}&ano={ano}&itens=1"
+            try:
+                r = requests.get(url_busca, headers=headers, timeout=10)
+                resultado['busca_status'] = r.status_code
+                resultado['busca_url'] = url_busca
+                if r.ok:
+                    dados = r.json().get('dados', [])
+                    resultado['busca_dados'] = dados
+                    if dados:
+                        id_prop = dados[0].get('id')
+            except Exception as e:
+                resultado['busca_erro'] = str(e)
+    else:
+        id_prop = int(codigo)
+
+    resultado['id_prop'] = id_prop
+    if not id_prop:
+        return jsonify(resultado)
+
+    # Testa vários endpoints
+    urls = [
+        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}/documentos?itens=10&ordem=DESC",
+        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}/textos",
+        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}",
+    ]
+    resultado['endpoints'] = []
+    for url in urls:
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            body = r.json() if r.ok else r.text[:200]
+            resultado['endpoints'].append({
+                'url': url.split('camara.leg.br')[1],
+                'status': r.status_code,
+                'body': body if isinstance(body, dict) else body
+            })
+        except Exception as e:
+            resultado['endpoints'].append({'url': url.split('camara.leg.br')[1], 'erro': str(e)})
+
+    resultado['parecer'] = buscar_ultimo_parecer(id_prop)
+
+    # Debug da página de tramitação
+    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
+    url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_prop}"
+    try:
+        from bs4 import BeautifulSoup
+        r_tram = requests.get(url_tram, headers=headers, timeout=12)
+        resultado['tram_status'] = r_tram.status_code
+        resultado['tram_url'] = url_tram
+        if r_tram.ok:
+            soup = BeautifulSoup(r_tram.text, 'html.parser')
+            # Todos os links com codteor
+            links_codteor = []
+            for a in soup.find_all('a', href=True):
+                href = a['href']
+                txt  = a.get_text(strip=True)
+                if 'codteor' in href.lower() or 'mostrarintegra' in href.lower():
+                    links_codteor.append({'texto': txt[:60], 'href': href[:120]})
+            resultado['links_codteor'] = links_codteor[:20]
+            # Texto bruto com PRLP ou SBT
+            texto_pag = soup.get_text()
+            prlp_mencoes = [l.strip() for l in texto_pag.split('\n') if 'PRLP' in l.upper() or 'SBT' in l.upper() or 'SUBSTITUT' in l.upper()]
+            resultado['mencoes_prlp_sbt'] = prlp_mencoes[:10]
+    except Exception as e:
+        resultado['tram_erro'] = str(e)
+
+    resultado['texto_prlp_sbt'] = buscar_texto_prlp_ou_sbt(id_prop)
+    return jsonify(resultado)
+
+@app.route('/debug_matching/<int:evento_id>')
+@login_required
+def debug_matching(evento_id):
+    """Mostra exatamente como os códigos da API batem com a ordem do PDF."""
+    itens, _ = fetch_pauta(evento_id)
+    ordem = buscar_ordem_oficial(evento_id)
+    
+    resultado = []
+    for item in itens:
+        proj_orig = item.get('projeto_original') or item.get('projeto', '')
+        proj_base = proj_orig.split(' ao ')[0].strip()
+        cod_norm  = _normalizar_codigo(proj_base)
+        pos_pdf   = ordem.get(cod_norm, 'NÃO ENCONTRADO')
+        resultado.append({
+            'ordem_app':      item.get('ordem'),
+            'projeto_orig':   proj_orig,
+            'projeto_base':   proj_base,
+            'cod_normalizado': cod_norm,
+            'posicao_pdf':    pos_pdf,
+        })
+    
+    return jsonify({
+        'ordem_pdf': ordem,
+        'itens_api': resultado
+    })
+
+@app.route('/debug_ordem/<int:evento_id>')
+@login_required
+def debug_ordem(evento_id):
+    """Debug da extração de ordem oficial do PDF por coordenadas."""
+    resultado = {'evento_id': evento_id, 'etapas': []}
+    try:
+        from bs4 import BeautifulSoup
+        import pdfplumber
+        from io import BytesIO
+
+        # 1. Página do evento
+        url = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}, timeout=12)
+        resultado['etapas'].append({'etapa': '1_evento', 'status': r.status_code})
+        if not r.ok:
+            return jsonify(resultado)
+
+        # 2. Acha PDF de Pauta
+        soup = BeautifulSoup(r.text, 'html.parser')
+        pdf_url = None
+        for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
+            if a.get_text(strip=True).lower() == 'pauta':
+                href = a['href']
+                pdf_url = (camara_url(href))
+                pdf_url += ('&' if '?' in pdf_url else '?') + 'tipo=PDF'
+                break
+        resultado['etapas'].append({'etapa': '2_pdf_url', 'url': pdf_url})
+        if not pdf_url:
+            return jsonify(resultado)
+
+        # 3. Baixa PDF
+        rp = requests.get(pdf_url, headers={'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}, timeout=20)
+        resultado['etapas'].append({'etapa': '3_download', 'status': rp.status_code, 'size': len(rp.content), 'ct': rp.headers.get('Content-Type','')})
+        if not rp.ok:
+            return jsonify(resultado)
+
+        # 4. Extrai palavras com coordenadas
+        numeros_centrais = []
+        page_width = 595.0
+        with pdfplumber.open(BytesIO(rp.content)) as pdf:
+            page_width = float(pdf.pages[0].width) if pdf.pages else 595.0
+            for pnum, page in enumerate(pdf.pages):
+                words = page.extract_words(x_tolerance=3, y_tolerance=3)
+                linhas = {}
+                for w in words:
+                    y = round(float(w['top']))
+                    linhas.setdefault(y, []).append(w)
+                ys = sorted(linhas.keys())
+                for i, y in enumerate(ys):
+                    ws = linhas[y]
+                    # Procura palavra 1-2 dígitos centralizada (ignora resto da linha)
+                    num_encontrado = None
+                    for w in ws:
+                        txt = w['text'].strip()
+                        if not re.match(r'^\d{1,2}$', txt):
+                            continue
+                        centro_w = (float(w['x0']) + float(w['x1'])) / 2
+                        if abs(centro_w - page_width / 2) <= page_width * 0.05:
+                            num_encontrado = (int(txt), float(w['x0']), float(w['x1']))
+                            break
+                    if not num_encontrado:
+                        continue
+                    num, x0, x1 = num_encontrado
+                    if num < 1 or num > 30:
+                        continue
+                    centro = (x0 + x1) / 2
+                    dist_centro = abs(centro - page_width / 2)
+                    margem = page_width * 0.20
+                    # Próximas linhas
+                    prox = ys[i+1:i+6]
+                    bloco = ' '.join(' '.join(w['text'] for w in linhas[ny]) for ny in prox if ny in linhas)
+                    # Mostra todas as palavras da linha (incluindo possíveis invisíveis)
+                    palavras_linha_raw = [{'text': w['text'], 'x0': round(float(w['x0']),1), 'x1': round(float(w['x1']),1)} for w in ws]
+                    numeros_centrais.append({
+                        'num': num, 'page': pnum+1,
+                        'centro_x': round(centro, 1),
+                        'dist_centro': round(dist_centro, 1),
+                        'margem_max': round(margem, 1),
+                        'centralizado': dist_centro <= margem,
+                        'palavras_na_linha': palavras_linha_raw,
+                        'bloco_seguinte': bloco[:120]
+                    })
+
+        resultado['page_width'] = page_width
+        resultado['numeros_encontrados'] = numeros_centrais
+
+        # 5. Resultado final
+        ordem = buscar_ordem_oficial(evento_id)
+        resultado['ordem_extraida'] = ordem
+        resultado['total'] = len(ordem)
+
+    except Exception as e:
+        import traceback
+        resultado['erro'] = str(e)
+        resultado['tb'] = traceback.format_exc()[-500:]
+    return jsonify(resultado)
+
+@app.route('/debug_pdf_texto/<int:evento_id>')
+@login_required
+def debug_pdf_texto(evento_id):
+    """Mostra o texto bruto extraído do PDF de pauta."""
+    try:
+        from bs4 import BeautifulSoup
+        import pdfplumber
+        url = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=12)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        pdf_url = None
+        for a in soup.find_all('a', href=True):
+            txt = a.get_text(strip=True).lower()
+            href = a['href']
+            if 'codteor' in href and txt == 'pauta':
+                pdf_url = camara_url(href)
+                pdf_url += ('&' if '?' in pdf_url else '?') + 'tipo=PDF'
+                break
+        if not pdf_url:
+            return jsonify({'erro': 'PDF não encontrado'})
+        rp = requests.get(pdf_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
+        with pdfplumber.open(BytesIO(rp.content)) as pdf:
+            texto = '\n'.join(p.extract_text() or '' for p in pdf.pages)
+        # Filtra só linhas relevantes (com número no início ou tipo de proposição)
+        linhas = texto.split('\n')
+        relevantes = []
+        for i, l in enumerate(linhas):
+            l2 = l.strip()
+            if re.match(r'^\d{1,2}\.', l2) or re.search(r'PROJETO|REQUERIMENTO|PROPOSTA|MEDIDA|PL |PEC |PLP |REQ ', l2, re.I):
+                relevantes.append({'i': i, 'txt': l2[:200]})
+        return jsonify({'total_linhas': len(linhas), 'relevantes': relevantes, 'primeiras_100': linhas[:100]})
+    except Exception as e:
+        import traceback
+        return jsonify({'erro': str(e), 'tb': traceback.format_exc()[-1000:]})
+
+@app.route('/debug_pauta_full/<int:evento_id>')
+@login_required
+def debug_pauta_full(evento_id):
+    """Debug completo: ordem PDF, itens API, matching e problemas."""
+    try:
+        from scraper_camara import obter_itens_pauta as _oip
+        import traceback
+
+        out = {'evento_id': evento_id, 'problemas': [], 'pdf': {}, 'api': {}, 'matching': []}
+
+        # 1. Extrai ordem do PDF
+        try:
+            ordem = buscar_ordem_oficial(evento_id)
+            out['pdf']['ordem'] = ordem
+            out['pdf']['total'] = len(ordem)
+        except Exception as e:
+            out['pdf']['erro'] = str(e)
+            ordem = {}
+
+        # 2. Itens da API
+        try:
+            itens_raw = _oip(evento_id)
+            out['api']['total'] = len(itens_raw)
+            out['api']['itens'] = [{'codigo': it['codigo'], 'norm': _normalizar_codigo(it['codigo']),
+                                    'id': it.get('id_principal',''), 'ementa': it.get('ementa','')[:60]} for it in itens_raw]
+        except Exception as e:
+            out['api']['erro'] = str(e)
+            itens_raw = []
+
+        # 3. Matching
+        api_por_codigo = {_normalizar_codigo(it['codigo']): it for it in itens_raw}
+
+        for cod_pdf, pos in sorted(ordem.items(), key=lambda x: x[1]):
+            item_api = api_por_codigo.get(cod_pdf)
+            # Fuzzy match por número
+            m_num = re.search(r'(\d{4,})', cod_pdf)
+            fuzzy = None
+            if not item_api and m_num:
+                for cod_api, it_api in api_por_codigo.items():
+                    if m_num.group(1) in cod_api:
+                        fuzzy = cod_api
+                        item_api = it_api
+                        break
+            out['matching'].append({
+                'pos': pos, 'cod_pdf': cod_pdf,
+                'match_exato': api_por_codigo.get(cod_pdf) is not None,
+                'match_fuzzy': fuzzy,
+                'cod_api': item_api['codigo'] if item_api else None,
+                'id': item_api.get('id_principal','') if item_api else None,
+                'status': 'OK' if item_api else '❌ SEM MATCH'
+            })
+            if not item_api:
+                out['problemas'].append(f"Pos {pos}: '{cod_pdf}' sem match na API → vai aparecer como 'dados não disponíveis'")
+
+        # 4. Itens da API não encontrados no PDF
+        for it in itens_raw:
+            cod = _normalizar_codigo(it['codigo'])
+            if cod not in ordem:
+                m_num = re.search(r'(\d{4,})', cod)
+                no_pdf = any(m_num and m_num.group(1) in k for k in ordem) if m_num else False
+                out['problemas'].append(
+                    f"'{it['codigo']}' (norm={cod}) não está no PDF → " +
+                    (f"fuzzy match possível" if no_pdf else "vai para o FIM da lista")
+                )
+
+        # 5. REQ s/n
+        req_sn_pdf = [(k,v) for k,v in ordem.items() if k.startswith('REQSN')]
+        req_sn_api = [it for it in itens_raw
+                      if re.match(r'(REQ|RQS|RQU|REC)', it['codigo'].upper())
+                      and not re.search(r'\d{2,}', it['codigo'].split('/')[0])]
+        out['req_sn'] = {
+            'no_pdf': req_sn_pdf,
+            'na_api': [{'codigo': it['codigo'], 'ementa': it.get('ementa','')[:80]} for it in req_sn_api],
+            'match': list(zip([k for k,v in req_sn_pdf], [it['codigo'] for it in req_sn_api]))
+        }
+
+        return jsonify(out), 200, {'Content-Type': 'application/json; charset=utf-8'}
+
+    except Exception as e:
+        return jsonify({'erro': str(e), 'tb': traceback.format_exc()}), 500
+
+@app.route('/admin/limpar_todo_cache', methods=['POST'])
+@login_required
+def limpar_todo_cache():
+    if current_user.role.lower() != 'admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute('DELETE FROM pauta_cache_db')
+    n = c.rowcount
+    conn.commit()
+    conn.close()
+    pauta_cache.clear()
+    return jsonify({'message': f'{n} eventos removidos do cache.'})
+
+@app.route('/limpar_cache/<int:evento_id>', methods=['GET', 'POST'])
+@login_required
+def limpar_cache(evento_id):
+    """Remove cache de um evento específico para forçar reprocessamento."""
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute('DELETE FROM pauta_cache_db WHERE evento_id = ?', (evento_id,))
+        c.execute('DELETE FROM resumos_ia WHERE evento_id = ?', (evento_id,))
+        conn.commit()
+        pauta_cache.pop(str(evento_id), None)
+        pauta_cache.clear()
+        logger.info(f"✅ Cache e resumos IA limpos para evento {evento_id}")
+        if request.method == 'GET':
+            return redirect(url_for('view_pauta', evento_id=evento_id, force_reload='true'))
+        return jsonify({'message': f'Cache e resumos IA do evento {evento_id} limpos.'})
+    except Exception as e:
+        logger.error(f"Erro ao limpar cache: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route('/limpar_resumos_ia/<int:evento_id>', methods=['POST'])
+@login_required
+def limpar_resumos_ia(evento_id):
+    """Remove resumos IA salvos para forçar regeração."""
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute('DELETE FROM resumos_ia WHERE evento_id=?', (evento_id,))
+        n = c.rowcount
+        conn.commit()
+        return jsonify({'message': f'{n} resumos removidos. Recarregue a pauta.'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route('/resumo_ementa', methods=['POST'])
+@login_required
+def resumo_ementa():
+    return resumo_ementa_impl(request.get_json())
+
+@app.route('/resumos_evento/<int:evento_id>')
+@login_required
+def resumos_evento(evento_id):
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
+        rows = c.fetchall()
+        return jsonify({str(r[0]): r[1] for r in rows})
+    except Exception:
+        return jsonify({})
+    finally:
+        conn.close()
+
+@app.route('/salvar_resumo_ia', methods=['POST'])
+@login_required
+def salvar_resumo_ia():
+    data      = request.get_json()
+    evento_id = data.get('evento_id')
+    id_prop   = data.get('id_principal')
+    resumo    = data.get('resumo', '')
+    if not evento_id or not id_prop or not resumo:
+        return jsonify({'ok': False})
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS resumos_ia (
+            evento_id INTEGER, id_proposicao TEXT, resumo TEXT,
+            PRIMARY KEY (evento_id, id_proposicao))''')
+        c.execute('INSERT OR REPLACE INTO resumos_ia (evento_id, id_proposicao, resumo) VALUES (?,?,?)',
+                  (evento_id, str(id_prop), resumo))
+        conn.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
+    finally:
+        conn.close()
+
+@app.route('/buscar_imagem_item', methods=['POST'])
+@login_required
+def buscar_imagem_item():
+    """Usa IA para extrair keywords e busca imagem via Wikimedia Commons (gratuito)."""
+    data      = request.get_json()
+    resumo    = data.get('resumo', '')
+    groq_key  = os.environ.get('GROQ_API_KEY', '')
+    gemini_key = os.environ.get('GEMINI_API_KEY', '')
+
+    # Extrai 2-3 palavras-chave do resumo para busca de imagem
+    keywords = ''
+    prompt_kw = f"""Extraia 2 ou 3 palavras-chave em inglês para buscar uma imagem que ilustre o tema desta proposição legislativa brasileira.
+Responda APENAS com as palavras separadas por espaço, sem explicação.
+Proposição: {resumo[:300]}"""
+
+    for key, url, body_fn in [
+        (gemini_key,
+         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+         lambda: {"contents":[{"parts":[{"text":prompt_kw}]}],"generationConfig":{"maxOutputTokens":20,"temperature":0.1}}),
+        (groq_key,
+         "https://api.groq.com/openai/v1/chat/completions",
+         lambda: {"model":"llama-3.3-70b-versatile","messages":[{"role":"user","content":prompt_kw}],"max_tokens":20,"temperature":0.1}),
+    ]:
+        if not key: continue
+        try:
+            headers = {"Content-Type": "application/json"}
+            if 'groq' in url: headers["Authorization"] = f"Bearer {key}"
+            r = requests.post(url, headers=headers, json=body_fn(), timeout=8)
+            if r.ok:
+                if 'generativelanguage' in url:
+                    keywords = r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+                else:
+                    keywords = r.json()['choices'][0]['message']['content'].strip()
+                keywords = re.sub(r'[^\w\s]', '', keywords).strip()
+                break
+        except Exception as e:
+            logger.warning(f"Erro keywords imagem: {e}")
+
+    if not keywords:
+        keywords = 'brazil congress law'
+
+    # Busca no Wikimedia Commons (API gratuita, sem key)
+    try:
+        r = requests.get(
+            'https://en.wikipedia.org/api/rest_v1/page/summary/' + keywords.replace(' ', '_'),
+            headers={'User-Agent': 'PlenarioApp/1.0'},
+            timeout=6
+        )
+        if r.ok:
+            thumb = r.json().get('thumbnail', {}).get('source', '')
+            if thumb:
+                return jsonify({'imagem_url': thumb, 'keywords': keywords})
+    except Exception:
+        pass
+
+    # Fallback: Wikimedia Commons search
+    try:
+        r = requests.get(
+            f"https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch={requests.utils.quote(keywords)}&gsrlimit=1&prop=imageinfo&iiprop=url|mime&iiurlwidth=400&format=json",
+            headers={'User-Agent': 'PlenarioApp/1.0'},
+            timeout=8
+        )
+        if r.ok:
+            pages = r.json().get('query', {}).get('pages', {})
+            for page in pages.values():
+                imgs = page.get('imageinfo', [])
+                if imgs:
+                    url_img = imgs[0].get('thumburl') or imgs[0].get('url', '')
+                    if url_img:
+                        return jsonify({'imagem_url': url_img, 'keywords': keywords})
+    except Exception:
+        pass
+
+    return jsonify({'imagem_url': None, 'keywords': keywords})
+
+def resumo_ementa_impl(data):
+    """Gera resumo de até 3 linhas da ementa. Para REQ busca dados do PL na web."""
+    projeto      = data.get('projeto', '')
+    ementa       = data.get('ementa', '')
+    autor        = data.get('autor', '')
+    id_principal = data.get('id_principal', '')
+    groq_key     = os.environ.get('GROQ_API_KEY', '')
+    gemini_key   = os.environ.get('GEMINI_API_KEY', '')
+
+    if not groq_key and not gemini_key:
+        return jsonify({'resumo': ''})
+
+    proj_base = projeto.split(' ao ')[0].strip()
+    siglas_req = ('REQ', 'RQS', 'RQU', 'REC')
+    eh_req = any(proj_base.upper().startswith(s) for s in siglas_req)
+
+    # ── Para REQ: busca ementa completa e PL referenciado ────────────────────
+    contexto_pl = ''
+    if eh_req:
+        try:
+            # Passo 1: busca ementa completa do REQ (API retorna truncada)
+            ementa_completa = ementa or ''
+            if id_principal:
+                try:
+                    r_req = requests.get(
+                        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_principal}",
+                        headers={'Accept': 'application/json'}, timeout=6
+                    )
+                    if r_req.ok:
+                        ementa_api = r_req.json().get('dados', {}).get('ementa', '')
+                        if ementa_api and len(ementa_api) > len(ementa_completa):
+                            ementa_completa = ementa_api
+                            logger.info(f"Ementa completa REQ {id_principal}: {ementa_completa[:80]}")
+                except Exception as e:
+                    logger.warning(f"Erro buscar ementa completa: {e}")
+
+            # Passo 2: extrai sigla+número+ano do PL referenciado na ementa completa
+            # Suporta tanto sigla curta (PLP 221/2024) quanto texto por extenso
+            # ("Projeto de Lei Complementar nº 221, de 2024")
+            sigla_ref = num_ref = ano_ref = ''
+
+            def _extrair_pl_ref(texto):
+                """Extrai (sigla, numero, ano) do PL referenciado no texto."""
+                padroes = [
+                    # Sigla curta: PLP 221/2024 ou PL nº 221, de 2024
+                    (r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 3),
+                    (r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+([\d.]+)[/\-](\d{4})', 3),
+                    # Texto por extenso com sigla inferida
+                    (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PLP'),
+                    (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PEC'),
+                    (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'MPV'),
+                    (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PDL'),
+                    (r'Projeto\s+de\s+Lei\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PL'),
+                ]
+                for item in padroes:
+                    padrao, n_grupos = item[0], item[1]
+                    sigla_fixa = item[2] if len(item) > 2 else None
+                    m = re.search(padrao, texto, re.IGNORECASE)
+                    if m:
+                        if n_grupos == 3:
+                            return m.group(1).upper(), m.group(2).replace('.',''), m.group(3)
+                        else:
+                            return sigla_fixa, m.group(1).replace('.',''), m.group(2)
+                return '', '', ''
+
+            for txt in [ementa_completa, projeto]:
+                sigla_ref, num_ref, ano_ref = _extrair_pl_ref(txt)
+                if sigla_ref and num_ref and ano_ref:
+                    logger.info(f"REQ {id_principal}: PL extraído de '{txt[:60]}' → {sigla_ref} {num_ref}/{ano_ref}")
+                    break
+
+            # Passo 3: se não achou sigla+número+ano completos → retorna vazio
+            # Nunca faz busca sem ano para evitar pegar PL errado
+            if not (sigla_ref and num_ref and ano_ref):
+                logger.warning(f"REQ {id_principal}: não encontrou PL com sigla+num+ano — retornando vazio")
+                return jsonify({'resumo': ''})
+
+            logger.info(f"REQ referencia: {sigla_ref} {num_ref}/{ano_ref}")
+
+            # Passo 4: busca ementa do PL referenciado com sigla+número+ano exatos
+            r_pl = requests.get(
+                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
+                f"?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
+                headers={'Accept': 'application/json'}, timeout=8
+            )
+            if not r_pl.ok:
+                logger.warning(f"API PL {sigla_ref} {num_ref}/{ano_ref}: HTTP {r_pl.status_code}")
+                return jsonify({'resumo': ''})
+
+            dados_pl = r_pl.json().get('dados', [])
+            if not dados_pl:
+                logger.warning(f"PL {sigla_ref} {num_ref}/{ano_ref} não encontrado na API")
+                return jsonify({'resumo': ''})
+
+            ementa_pl  = dados_pl[0].get('ementa', '')
+            sigla_real = dados_pl[0].get('siglaTipo', sigla_ref)
+            num_real   = dados_pl[0].get('numero', num_ref)
+            ano_real   = dados_pl[0].get('ano', ano_ref)
+
+            if not ementa_pl:
+                logger.warning(f"PL {sigla_ref} {num_ref}/{ano_ref} sem ementa")
+                return jsonify({'resumo': ''})
+
+            contexto_pl = f"\nO {sigla_real} {num_real}/{ano_real} (referenciado) trata de: {ementa_pl}"
+            logger.info(f"PL referenciado encontrado: {sigla_real} {num_real}/{ano_real}")
+
+        except Exception as e:
+            logger.error(f"Erro ao buscar PL do REQ: {e}")
+            return jsonify({'resumo': ''})
+
+    # ── Para não-REQ: busca PL mencionado na ementa se houver ────────────────
+    elif not contexto_pl:
+        try:
+            m_pl = None
+            for txt in [ementa, projeto]:
+                for padrao in [
+                    r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})',
+                    r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+([\d.]+)[/\-](\d{4})',
+                ]:
+                    m_pl = re.search(padrao, txt, re.IGNORECASE)
+                    if m_pl: break
+                if m_pl: break
+            if m_pl:
+                sigla_ref = m_pl.group(1).upper()
+                num_ref   = m_pl.group(2).replace('.', '')
+                ano_ref   = m_pl.group(3)
+                r_api = requests.get(
+                    f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
+                    f"?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
+                    headers={'Accept': 'application/json'}, timeout=8
+                )
+                if r_api.ok:
+                    dados = r_api.json().get('dados', [])
+                    if dados and dados[0].get('ementa'):
+                        ementa_pl  = dados[0]['ementa']
+                        sigla_real = dados[0].get('siglaTipo', sigla_ref)
+                        num_real   = dados[0].get('numero', num_ref)
+                        ano_real   = dados[0].get('ano', ano_ref)
+                        contexto_pl = f"\nO {sigla_real} {num_real}/{ano_real} (referenciado) trata de: {ementa_pl}"
+        except Exception as e:
+            logger.warning(f"Erro ao buscar PL mencionado: {e}")
+
+    if contexto_pl and eh_req:
+        prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
+Gere um resumo PRÓPRIO (máximo 2-3 linhas, máximo 180 caracteres) do que este REQUERIMENTO pede.
+NÃO copie a ementa. Escreva com suas próprias palavras.
+- Se for urgência: comece com "Urgência para o PL que [explique o PL em poucas palavras]"
+- Se for adiamento/retirada: comece com "Adiamento/Retirada do PL que..."
+- Seja direto. Não repita número da proposição.
+
+Requerimento: {projeto}
+Ementa: {ementa}{contexto_pl}
+
+Responda APENAS com o resumo, sem introdução, sem aspas."""
+    else:
+        prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
+Gere um resumo PRÓPRIO (máximo 2-3 linhas, máximo 180 caracteres) do que esta proposição trata na prática.
+NÃO copie a ementa. Escreva com suas próprias palavras, de forma simples e direta.
+- Explique o efeito prático para o cidadão ou para o parlamento
+- Não repita o número da proposição
+
+Proposição: {projeto}
+Autor: {autor}
+Ementa: {ementa}
+
+Responda APENAS com o resumo, sem introdução, sem aspas."""
+
+    # Tenta Gemini primeiro, depois Groq
+    for key, url, body_fn in [
+        (gemini_key,
+         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+         lambda: {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 100, "temperature": 0.4}}),
+        (groq_key,
+         "https://api.groq.com/openai/v1/chat/completions",
+         lambda: {"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "max_tokens": 100, "temperature": 0.4}),
+    ]:
+        if not key:
+            continue
+        try:
+            headers = {"Content-Type": "application/json"}
+            if 'groq' in url:
+                headers["Authorization"] = f"Bearer {key}"
+            r = requests.post(url, headers=headers, json=body_fn(), timeout=15)
+            if r.ok:
+                if 'generativelanguage' in url:
+                    texto = r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+                else:
+                    texto = r.json()['choices'][0]['message']['content'].strip()
+                # Rejeita se for igual ou muito similar à ementa
+                ementa_norm = re.sub(r'\s+', ' ', ementa.strip().lower())
+                texto_norm  = re.sub(r'\s+', ' ', texto.strip().lower())
+                if (texto_norm == ementa_norm or
+                    ementa_norm[:80] in texto_norm or
+                    texto_norm[:80] in ementa_norm):
+                    logger.warning(f"Resumo igual à ementa — descartando")
+                    return jsonify({'resumo': ''})
+                return jsonify({'resumo': texto})
+        except Exception as e:
+            logger.warning(f"Erro resumo_ementa: {e}")
+
+    return jsonify({'resumo': ''})
+
+@app.route('/enriquecer_ementa', methods=['POST'])
+@login_required
+def enriquecer_ementa():
+    """Retorna ementa original + complemento IA. Para REQ, busca ementa do PL referenciado."""
+    data     = request.get_json()
+    projeto  = data.get('projeto', '')
+    ementa   = data.get('ementa', '').strip()
+    autor    = data.get('autor', '')
+    groq_key = os.environ.get('GROQ_API_KEY')
+
+    # Para REQ/RQS/RQU/REC: busca ementa do PL referenciado
+    siglas_req = ('REQ', 'RQS', 'RQU', 'REC')
+    proj_base = projeto.split(' ao ')[0].strip()
+    if any(proj_base.upper().startswith(s) for s in siglas_req):
+        # Extrai referência ao PL na ementa
+        m_pl = re.search(
+            r'\b(PL|PEC|PLP|MPV|PDL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})',
+            ementa, re.IGNORECASE
+        )
+        if not m_pl:
+            m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL)\s+([\d.]+)[/\-](\d{4})', projeto, re.IGNORECASE)
+        if m_pl:
+            sigla_ref = m_pl.group(1).upper()
+            num_ref   = m_pl.group(2).replace('.', '')
+            ano_ref   = m_pl.group(3)
+            ementa_pl = ''
+            try:
+                r_api = requests.get(
+                    f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
+                    headers={'Accept': 'application/json'}, timeout=8
+                )
+                if r_api.ok:
+                    dados = r_api.json().get('dados', [])
+                    if dados:
+                        ementa_pl = dados[0].get('ementa', '')
+            except Exception:
+                pass
+
+            if ementa_pl and groq_key:
+                prompt = f"""Você é um especialista legislativo. Explique em UMA frase direta (máx 20 palavras) o objeto deste requerimento para os parlamentares.
+
+Requerimento: {projeto}
+Ementa do requerimento: {ementa}
+Ementa do {sigla_ref} {num_ref}/{ano_ref} referenciado: {ementa_pl}
+
+Responda APENAS com a frase, sem introdução, sem aspas, sem ponto final."""
+                try:
+                    r = requests.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                        json={"model": "llama-3.3-70b-versatile",
+                              "messages": [{"role": "user", "content": prompt}],
+                              "max_tokens": 60, "temperature": 0.2},
+                        timeout=10
+                    )
+                    if r.ok:
+                        comp = r.json()['choices'][0]['message']['content'].strip().rstrip('.')
+                        return jsonify({'ementa_enriquecida': f"{ementa} ({comp})", 'complemento': comp})
+                except Exception as e:
+                    logger.warning(f"Erro enriquecer REQ: {e}")
+            elif ementa_pl:
+                comp = ementa_pl[:120].rstrip('.')
+                return jsonify({'ementa_enriquecida': f"{ementa} ({comp})", 'complemento': comp})
+
+        return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
+
+    # Lógica original para não-REQ
+    def ementa_e_vaga(txt):
+        txt_lower = txt.lower()
+        # Padrões de ementa vaga: só referencia lei sem explicar o que faz
+        padroes_vagos = [
+            r'^altera\s+.{0,80}lei\s+n[º°.]?\s*[\d\.]+.*?(e\s+dá\s+outras\s+providências\.?)?$',
+            r'^acrescenta\s+(artigo|inciso|parágrafo).{0,80}(e\s+dá\s+outras\s+providências\.?)?$',
+            r'^revoga\s+.{0,80}(e\s+dá\s+outras\s+providências\.?)?$',
+            r'^dá\s+nova\s+redação.{0,80}(e\s+dá\s+outras\s+providências\.?)?$',
+        ]
+        # Se ementa é muito curta ou só faz referência formal
+        if len(txt) < 60:
+            return True
+        for padrao in padroes_vagos:
+            if re.match(padrao, txt_lower, re.IGNORECASE | re.DOTALL):
+                return True
+        # Se contém palavras que explicam o conteúdo, não é vaga
+        palavras_explicativas = [
+            'para', 'visando', 'com o objetivo', 'com a finalidade',
+            'destinado', 'dispõe sobre', 'institui', 'cria', 'estabelece',
+            'regulamenta', 'define', 'determina', 'proíbe', 'autoriza a',
+            'concede', 'assegura', 'garante', 'prevê'
+        ]
+        if any(p in txt_lower for p in palavras_explicativas) and len(txt) > 80:
+            return False
+        return len(txt) < 120
+
+    if not ementa_e_vaga(ementa):
+        return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
+
+    groq_key = os.environ.get('GROQ_API_KEY')
+    if not groq_key:
+        return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
+
+    prompt = f"""Você é um especialista legislativo. Em UMA frase direta (máximo 20 palavras), \
+explique de forma simples o que esta proposição trata na prática para os cidadãos.
+Não repita o número da lei. Use linguagem clara e objetiva.
+
+Proposição: {projeto}
+Autor: {autor}
+Ementa: {ementa}
+
+Responda APENAS com a frase explicativa, sem introdução, sem aspas, sem ponto final."""
+
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+            json={"model": "llama-3.3-70b-versatile",
+                  "messages": [{"role": "user", "content": prompt}],
+                  "max_tokens": 60, "temperature": 0.2},
+            timeout=10
+        )
+        if r.ok:
+            comp = r.json()['choices'][0]['message']['content'].strip().rstrip('.')
+            ementa_enriquecida = f"{ementa} ({comp})"
+            return jsonify({'ementa_enriquecida': ementa_enriquecida, 'complemento': comp})
+    except Exception as e:
+        logger.warning(f"Erro enriquecer ementa: {e}")
+
+    return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
+
+@app.route('/complementar_ementa', methods=['POST'])
+@login_required
+def complementar_ementa():
+    """Usa Groq para complementar ementa vaga com resumo do que se trata."""
+    data    = request.get_json()
+    projeto = data.get('projeto', '')
+    ementa  = data.get('ementa', '')
+    autor   = data.get('autor', '')
+
+    groq_key = os.environ.get('GROQ_API_KEY')
+    if not groq_key:
+        return jsonify({'complemento': ementa})
+
+    prompt = f"""Você é um especialista legislativo. Sobre a proposição abaixo, escreva em UMA frase direta (máximo 30 palavras) o que ela trata, de forma clara para leigos.
+Se a ementa já for clara, retorne ela resumida.
+
+Proposição: {projeto}
+Autor: {autor}
+Ementa: {ementa}
+
+Responda APENAS com a frase descritiva, sem introdução, sem aspas."""
+
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+            json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}],
+                  "max_tokens": 80, "temperature": 0.2},
+            timeout=10
+        )
+        if r.ok:
+            complemento = r.json()['choices'][0]['message']['content'].strip()
+            return jsonify({'complemento': complemento})
+    except Exception as e:
+        logger.warning(f"Erro ao complementar ementa: {e}")
+
+    return jsonify({'complemento': ementa})
+
+@app.route('/salvar_orientacoes', methods=['POST'])
+@login_required
+def salvar_orientacoes():
+    """Salva orientações por grupo (PL, NOVO, oposicao, minoria) para cada item."""
+    data      = request.get_json()
+    evento_id = data.get('evento_id')
+    orientacoes = data.get('orientacoes', [])  # [{id_principal, grupo, orientacao, comentario}]
+
+    conn = get_conn()
+    c    = conn.cursor()
+
+    # Cria tabela se não existir
+    c.execute('''CREATE TABLE IF NOT EXISTS orientacoes_grupo (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        evento_id INTEGER,
+        id_principal TEXT,
+        grupo TEXT,
+        orientacao TEXT,
+        comentario TEXT,
+        saved_by TEXT,
+        saved_at TEXT,
+        UNIQUE(evento_id, id_principal, grupo))''')
+
+    now_str  = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
+    saved_by = current_user.display_name()
+
+    for ori in orientacoes:
+        c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
+                     (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                  (evento_id, ori.get('id_principal'), ori.get('grupo'),
+                   ori.get('orientacao'), ori.get('comentario', ''), saved_by, now_str))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Orientações salvas!'})
+
+@app.route('/get_orientacoes/<int:evento_id>')
+@login_required
+def get_orientacoes(evento_id):
+    """Retorna orientações salvas para um evento."""
+    conn = get_conn()
+    c    = conn.cursor()
+    try:
+        c.execute('''SELECT id_principal, grupo, orientacao, comentario, saved_by, saved_at
+                     FROM orientacoes_grupo WHERE evento_id=?''', (evento_id,))
+        rows = c.fetchall()
+        result = [{'id_principal': str(r[0]), 'grupo': r[1], 'orientacao': r[2],
+                   'comentario': r[3], 'saved_by': r[4], 'saved_at': r[5]} for r in rows]
+    except Exception as e:
+        logger.warning(f"Erro get_orientacoes: {e}")
+        result = []
+    finally:
+        conn.close()
+    return jsonify(result)
+
+@app.route('/admin/reset_todas_senhas', methods=['POST'])
+@login_required
+def reset_todas_senhas():
+    if current_user.role.lower() != 'admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    nova_hash = bcrypt.generate_password_hash('123').decode('utf-8')
+    conn = get_conn()
+    c    = conn.cursor()
+    c.execute('UPDATE users SET password=?', (nova_hash,))
+    affected = c.rowcount
+    conn.commit()
+    conn.close()
+    return jsonify({'message': f'Senha 123 definida para {affected} usuários.'})
+
+@app.route('/admin/usuarios/reset_senha', methods=['POST'])
+@login_required
+def reset_senha():
+    if current_user.role.lower() != 'admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    data       = request.get_json()
+    user_id    = data.get('user_id')
+    nova_senha = data.get('nova_senha', '').strip()
+    if not nova_senha or len(nova_senha) < 3:
+        return jsonify({'error': 'Senha deve ter ao menos 3 caracteres.'}), 400
+    nova_hash = bcrypt.generate_password_hash(nova_senha).decode('utf-8')
+    conn = get_conn()
+    c    = conn.cursor()
+    c.execute('UPDATE users SET password=? WHERE id=?', (nova_hash, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Senha redefinida!'})
+
+@app.route('/admin/usuarios/update_categoria', methods=['POST'])
+@login_required
+def update_categoria():
+    if current_user.role.lower() != 'admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    data      = request.get_json()
+    user_id   = data.get('user_id')
+    categoria = data.get('categoria', 'geral')
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute('UPDATE users SET categoria=? WHERE id=?', (categoria, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'message': 'Categoria atualizada!'})
+
+@app.route('/admin/usuarios/delete/<int:user_id>', methods=['POST'])
+@login_required
+def delete_usuario(user_id):
+    if current_user.role.lower() != 'admin':
+        return jsonify({'error': 'Acesso negado'}), 403
+    if user_id == current_user.id:
+        return jsonify({'error': 'Não pode excluir sua própria conta'}), 400
+    try:
+        conn = get_conn()
+        c = conn.cursor()
+        # Busca username antes de deletar
+        c.execute('SELECT username FROM users WHERE id=?', (user_id,))
+        row = c.fetchone()
+        if not row:
+            return jsonify({'error': 'Usuário não encontrado'}), 404
+        username = row[0]
+        c.execute('DELETE FROM users WHERE id = ?', (user_id,))
+        # Registra na tabela de deletados para não recriar no próximo startup
+        if USE_POSTGRES:
+            c.execute('INSERT INTO usuarios_deletados (username) VALUES (%s) ON CONFLICT DO NOTHING', (username,))
+        else:
+            c.execute('INSERT OR IGNORE INTO usuarios_deletados (username) VALUES (?)', (username,))
+        conn.commit()
+        conn.close()
+        return jsonify({'message': f'Usuário {username} removido.'})
+    except Exception as e:
+        logger.error(f"Erro delete_usuario: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.errorhandler(500)
+def handle_500(e):
+    logger.error(f"500 error: {e}")
+    if request.is_json or request.path.startswith('/admin') or request.path.startswith('/atribuir'):
+        return jsonify({'error': str(e)}), 500
+    return str(e), 500
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    logger.error(f"Unhandled exception: {e}", exc_info=True)
+    if request.is_json:
+        return jsonify({'error': str(e)}), 500
+    return str(e), 500
+
+@app.route('/diagnostico')
+@login_required
+def diagnostico():
+    """Diagnóstico do banco de dados."""
+    conn = get_conn()
+    c = conn.cursor()
+    resultado = {
+        'use_postgres': USE_POSTGRES,
+        'database_url_set': bool(os.environ.get('DATABASE_URL')),
+        'pg_params_host': PG_PARAMS.get('host', 'N/A') if USE_POSTGRES else 'SQLite'
+    }
+    try:
+        # Colunas da tabela orientacoes_grupo
+        if USE_POSTGRES:
+            c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='orientacoes_grupo' ORDER BY ordinal_position")
+        else:
+            c.execute("PRAGMA table_info(orientacoes_grupo)")
+        cols = c.fetchall()
+        resultado['orientacoes_colunas'] = [r[0] for r in cols]
+
+        # Últimas orientações salvas
+        c.execute("SELECT * FROM orientacoes_grupo ORDER BY id DESC LIMIT 5")
+        rows = c.fetchall()
+        resultado['orientacoes_ultimas'] = [list(r) for r in rows]
+
+        # Contagem
+        c.execute("SELECT COUNT(*) FROM orientacoes_grupo")
+        resultado['orientacoes_total'] = c.fetchone()[0]
+    except Exception as e:
+        resultado['erro_diagnostico'] = str(e)
+    finally:
+        conn.close()
+    return jsonify(resultado)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
