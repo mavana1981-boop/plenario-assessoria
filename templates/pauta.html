@@ -155,7 +155,7 @@
               onclick="return confirm('Limpar cache desta pauta?')">
         <i class="fas fa-broom me-1"></i>Limpar Cache
       </a>
-      <a href="/exportar/exportar_pauta/{{ evento_id }}"
+      <a href="/exportar/{{ evento_id }}"
         class="btn btn-outline-success btn-sm mb-3 ms-2" target="_blank" rel="noopener">
         <i class="fas fa-file-export me-2"></i>Exportar resumo
       </a>
@@ -1962,4 +1962,4 @@
           ta1.value = jd.texto_completo || jd.primeiros_500 || ''; pd.body.appendChild(ta1);
 
           const l2 = pd.createElement('label'); l2.style.marginTop = '8px'; l2.style.display = 'block';
-          l2.textContent = 'Trech
+          l2.textContent = 'Trecho para análise:
