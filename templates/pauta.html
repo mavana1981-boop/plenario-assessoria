@@ -160,7 +160,7 @@
         <i class="fas fa-file-export me-2"></i>Exportar resumo
       </a>
       <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-iconografica"
-        onclick="window._abrirModalIconografica ? window._abrirModalIconografica() : alert('Carregando... tente novamente')"
+        onclick="window._abrirModalIconografica && window._abrirModalIconografica()"
         style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
         <i class="fas fa-th-large me-2"></i>Pauta Iconográfica
       </button>
@@ -1961,4 +1961,5 @@
           const ta1 = pd.createElement('textarea'); ta1.readOnly = true; ta1.style.height = '280px';
           ta1.value = jd.texto_completo || jd.primeiros_500 || ''; pd.body.appendChild(ta1);
 
-          const l2 = pd.createElement('label'); l2.style.marginTop = '8px'; l2.style.display = 'b
+          const l2 = pd.createElement('label'); l2.style.marginTop = '8px'; l2.style.display = 'block';
+          l2.textContent = 'Trech
