@@ -659,6 +659,22 @@
             btn.classList.remove('btn-success');
             btn.classList.add('btn-outline-success');
 
+            // Avisa se orientação não foi exportada para o quadro
+            if (orientacao && j.grupo_exportado === null) {
+              setTimeout(() => {
+                alert('⚠️ Orientação salva na pauta, mas NÃO foi exportada para o quadro de orientações.\n\nMotivo: seu usuário não tem categoria de grupo (minoria, oposicao, PL ou NOVO).\n\nContate o administrador para configurar sua categoria.');
+              }, 500);
+            } else if (orientacao && j.grupo_exportado) {
+              const infoOri = document.getElementById(`info-salvo-${ordem}`);
+              if (infoOri) {
+                const badge = document.createElement('span');
+                badge.className = 'badge bg-success ms-2';
+                badge.style.fontSize = '0.7rem';
+                badge.textContent = `→ Quadro ${j.grupo_exportado}`;
+                infoOri.appendChild(badge);
+              }
+            }
+
             // Atualiza info de salvamento ao lado do botão
             const agora = new Date();
             const horaFmt = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
@@ -2306,6 +2322,15 @@ async function carregarOrientacoes() {
   if (elConteudo) elConteudo.style.display = 'none';
   try {
     const r = await fetch(`/get_orientacoes/${EVENTO_ID_ORI}`);
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      if (r.url.includes('login') || r.status === 401) {
+        alert('Sessão expirada. Faça login novamente.');
+        window.location.href = '/login';
+        return;
+      }
+      throw new Error(`Erro do servidor (HTTP ${r.status}) — tente recarregar a página`);
+    }
     const j = await r.json();
     console.log('Orientações carregadas:', j.length, j);
     oriData = {};
