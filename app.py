@@ -1384,53 +1384,22 @@ def save_item():
         # Exporta orientação para o quadro da bancada
         if orientacao:
             try:
-                # Grupos válidos para o quadro de orientações
-                GRUPOS_VALIDOS = {'oposicao', 'minoria', 'PL', 'NOVO', 'pl', 'novo'}
-
-                # Tenta pegar responsavel_username do item (campo enviado pelo frontend)
-                responsavel_username = data.get('responsavel_username', '') or ''
-
-                # Se não veio do frontend, busca na nota
-                if not responsavel_username:
-                    c.execute('SELECT responsavel_username FROM notas WHERE item_key=?', (prop_key,))
-                    row_resp = c.fetchone()
-                    responsavel_username = (row_resp[0] if row_resp else '') or ''
-
-                # Determina o grupo a partir do responsável ou do usuário logado
-                grupo = None
-
-                if responsavel_username:
-                    c.execute('SELECT categoria FROM users WHERE username=?', (responsavel_username,))
+                grupo = current_user.categoria or 'geral'
+                c.execute('SELECT responsavel_username FROM notas WHERE item_key=?', (prop_key,))
+                row_resp = c.fetchone()
+                responsavel = (row_resp[0] if row_resp else '') or ''
+                if responsavel:
+                    c.execute('SELECT categoria FROM users WHERE username=?', (responsavel,))
                     row_cat = c.fetchone()
-                    if row_cat and row_cat[0] and row_cat[0].lower() in {g.lower() for g in GRUPOS_VALIDOS}:
+                    if row_cat and row_cat[0]:
                         grupo = row_cat[0]
-
-                if not grupo:
-                    cat = (current_user.categoria or '').strip()
-                    if cat and cat.lower() in {g.lower() for g in GRUPOS_VALIDOS}:
-                        grupo = cat
-
-                if not grupo:
-                    # Admin ou geral — salva em todos os grupos com responsavel_pauta=1
-                    c.execute('SELECT username, categoria FROM users WHERE responsavel_pauta=1')
-                    resp_rows = c.fetchall()
-                    for ru, rc in resp_rows:
-                        if rc and rc.lower() in {g.lower() for g in GRUPOS_VALIDOS}:
-                            c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
-                                         (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
-                                         VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                                      (evento_id, str(id_principal), rc, orientacao, '', saved_by, now_str))
-                    conn.commit()
-                    logger.info(f"✅ Orientação exportada para todos os grupos responsáveis: {id_principal} → {orientacao}")
-                else:
-                    logger.info(f"Exportando orientação: grupo={grupo} id={id_principal} ori={orientacao}")
-                    c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
-                                 (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                              (evento_id, str(id_principal), grupo, orientacao, '', saved_by, now_str))
-                    conn.commit()
-                    logger.info(f"✅ Orientação exportada: {grupo} / {id_principal} → {orientacao}")
-
+                logger.info(f"Exportando orientação: grupo={grupo} id={id_principal} ori={orientacao}")
+                c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
+                             (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
+                             VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                          (evento_id, str(id_principal), grupo, orientacao, '', saved_by, now_str))
+                conn.commit()
+                logger.info(f"✅ Orientação exportada: {grupo} / {id_principal} → {orientacao}")
             except Exception as e:
                 logger.error(f"Erro ao exportar orientação: {e}")
 
@@ -2140,4 +2109,45 @@ def gerar_infografico(evento_id):
             'local': d.get('localCamara', {}).get('nome', 'Plenário') if isinstance(d.get('localCamara'), dict) else 'Plenário'
         }
     except Exception:
-        event
+        evento = {'id': evento_id, 'dataHoraInicio': '', 'situacao': '', 'descricao': 'Sessão Deliberativa', 'local': 'Plenário'}
+
+    static_path = os.path.join(app.root_path, 'static')
+    # Carrega resumos IA
+    resumos_ia = {}
+    try:
+        conn_ri = get_conn()
+        c_ri = conn_ri.cursor()
+        c_ri.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
+        resumos_ia = {str(r[0]): r[1] for r in c_ri.fetchall()}
+        conn_ri.close()
+    except Exception:
+        pass
+    pdf = gerar_infografico_pdf(evento, itens,
+                                 os.path.join(static_path, 'logo_minoria.png'),
+                                 os.path.join(static_path, 'logo_oposicao.png'),
+                                 resumos_ia=resumos_ia)
+    resp = make_response(pdf)
+    resp.headers['Content-Type'] = 'application/pdf'
+    resp.headers['Content-Disposition'] = f'inline; filename="infografico_plenario_{evento_id}.pdf"'
+    return resp
+
+@app.route('/export-resumo/<int:evento_id>')
+@login_required
+def export_resumo(evento_id):
+    return redirect(url_for('exportar.exportar_pauta', evento_id=evento_id))
+
+from exportar_pauta import exportar_bp
+app.register_blueprint(exportar_bp)
+
+@app.route('/trocar-senha', methods=['GET', 'POST'])
+@login_required
+def trocar_senha():
+    if request.method == 'POST':
+        data         = request.get_json()
+        senha_atual  = data.get('senha_atual', '')
+        nova_senha   = data.get('nova_senha', '').strip()
+        confirma     = data.get('confirma', '').strip()
+        if not nova_senha or len(nova_senha) < 4:
+            return jsonify({'error': 'Nova senha deve ter ao menos 4 caracteres.'}), 400
+        if nova_senha != confirma:
+            return jsonify({'error': 'Nova senha 
