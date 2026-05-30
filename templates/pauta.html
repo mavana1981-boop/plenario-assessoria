@@ -101,7 +101,7 @@
         </a><br>
         <small style="color:#444;">{{ current_user.username }}</small>
         {% if current_user.is_authenticated and current_user.role == 'Admin' %}
-          <a href="{{ url_for('admin_usuarios') }}" 
+          <a href="/admin/usuarios" 
             class="btn btn-sm mb-1 ms-1"
             style="color: rgba(255,255,255,0.5); border: none;"
             onmouseover="this.style.color='#ffc107'" 
@@ -155,7 +155,7 @@
               onclick="return confirm('Limpar cache desta pauta?')">
         <i class="fas fa-broom me-1"></i>Limpar Cache
       </a>
-      <a href="{{ url_for('export_resumo', evento_id=evento_id) }}"
+      <a href="/exportar/{{ evento_id }}"
         class="btn btn-outline-success btn-sm mb-3 ms-2" target="_blank" rel="noopener">
         <i class="fas fa-file-export me-2"></i>Exportar resumo
       </a>
@@ -1961,4 +1961,4 @@
           const ta1 = pd.createElement('textarea'); ta1.readOnly = true; ta1.style.height = '280px';
           ta1.value = jd.texto_completo || jd.primeiros_500 || ''; pd.body.appendChild(ta1);
 
-          con
+          const l2 = pd.createElement('label'); l2.styl
