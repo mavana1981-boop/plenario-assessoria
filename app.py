@@ -76,10 +76,24 @@ def get_conn():
                     sql += (' ON CONFLICT (evento_id) DO UPDATE SET '
                             'json_pauta=EXCLUDED.json_pauta, last_updated=EXCLUDED.last_updated')
                 elif re.search(r'INSERT OR REPLACE INTO orientacoes_grupo\b', sql_orig, re.I):
-                    sql = re.sub(r'INSERT OR REPLACE INTO orientacoes_grupo\b', 'INSERT INTO orientacoes_grupo', sql, flags=re.I)
-                    sql += (' ON CONFLICT (evento_id, id_principal, grupo) DO UPDATE SET '
-                            'orientacao=EXCLUDED.orientacao, comentario=EXCLUDED.comentario, '
-                            'saved_by=EXCLUDED.saved_by, saved_at=EXCLUDED.saved_at')
+                    # Upsert manual: tenta UPDATE primeiro, depois INSERT se não existir
+                    # Extrai os valores dos params: (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
+                    if params and len(params) >= 7:
+                        p = list(params)
+                        ev_id, id_pr, grp, ori, com, sb, sa = p[0], p[1], p[2], p[3], p[4], p[5], p[6]
+                        _orig_exec(
+                            'UPDATE orientacoes_grupo SET orientacao=%s, comentario=%s, saved_by=%s, saved_at=%s '
+                            'WHERE evento_id=%s AND id_principal=%s AND grupo=%s',
+                            [ori, com, sb, sa, ev_id, id_pr, grp]
+                        )
+                        _orig_exec(
+                            'INSERT INTO orientacoes_grupo (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at) '
+                            'SELECT %s,%s,%s,%s,%s,%s,%s WHERE NOT EXISTS '
+                            '(SELECT 1 FROM orientacoes_grupo WHERE evento_id=%s AND id_principal=%s AND grupo=%s)',
+                            [ev_id, id_pr, grp, ori, com, sb, sa, ev_id, id_pr, grp]
+                        )
+                    return
+                    sql = sql  # nunca chega aqui
                 elif re.search(r'INSERT OR IGNORE INTO users\b', sql_orig, re.I):
                     sql = re.sub(r'INSERT OR IGNORE INTO users\b', 'INSERT INTO users', sql, flags=re.I)
                     sql += ' ON CONFLICT (username) DO NOTHING'
