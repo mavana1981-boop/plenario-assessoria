@@ -155,12 +155,12 @@
               onclick="return confirm('Limpar cache desta pauta?')">
         <i class="fas fa-broom me-1"></i>Limpar Cache
       </a>
-      <a href="/exportar/{{ evento_id }}"
+      <a href="/exportar/exportar_pauta/{{ evento_id }}"
         class="btn btn-outline-success btn-sm mb-3 ms-2" target="_blank" rel="noopener">
         <i class="fas fa-file-export me-2"></i>Exportar resumo
       </a>
       <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-iconografica"
-        onclick="if(window._abrirModalIconografica){ window._abrirModalIconografica(); } else { alert('Erro: ' + (window._iconograficaErro || 'fn indefinida — ver F12 Console')); }"
+        onclick="window._abrirModalIconografica ? window._abrirModalIconografica() : alert('Carregando... tente novamente')"
         style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
         <i class="fas fa-th-large me-2"></i>Pauta Iconográfica
       </button>
@@ -1961,4 +1961,4 @@
           const ta1 = pd.createElement('textarea'); ta1.readOnly = true; ta1.style.height = '280px';
           ta1.value = jd.texto_completo || jd.primeiros_500 || ''; pd.body.appendChild(ta1);
 
-          const l2 = pd.createElement('label'); l2.styl
+          const l2 = pd.createElement('label'); l2.style.marginTop = '8px'; l2.style.display = 'b
