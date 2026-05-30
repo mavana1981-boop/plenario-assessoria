@@ -161,11 +161,13 @@
       </a>
       <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-iconografica"
         onclick="
+          var info = 'Scripts: ' + document.querySelectorAll('script').length +
+                     ' | _abrirModal: ' + typeof window._abrirModalIconografica +
+                     ' | _carregada: ' + (window._iconograficaCarregada ? 'SIM' : 'NAO');
           if(typeof window._abrirModalIconografica === 'function'){
             window._abrirModalIconografica();
           } else {
-            console.error('_abrirModalIconografica nao definida. Scripts carregados:', document.querySelectorAll(\'script\').length);
-            alert('DEBUG: função não carregada. Abra F12 e veja o Console.');
+            alert('Não carregada.\n' + info);
           }
         "
         style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
@@ -1964,5 +1966,4 @@
           ins.textContent = '💡 Selecione o trecho relevante, cole abaixo e clique em Analisar.';
           pd.body.appendChild(ins);
 
-          const l1 = pd.createElement('label'); l1.textContent = 'Texto completo:'; pd.body.appendChild(l1);
-          const ta1 = pd.createElement('textare
+          const l1 = pd.createElement('label'); l1.textContent = 'Text
