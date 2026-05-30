@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from flask import Flask, jsonify, request, render_template, redirect, url_for, flash, make_response
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_bcrypt import Bcrypt
@@ -2150,4 +2151,4 @@ def trocar_senha():
         if not nova_senha or len(nova_senha) < 4:
             return jsonify({'error': 'Nova senha deve ter ao menos 4 caracteres.'}), 400
         if nova_senha != confirma:
-            return jsonify({'error': 'Nova senha 
+            return jsonif
