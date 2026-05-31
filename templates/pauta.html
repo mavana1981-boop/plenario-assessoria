@@ -1772,14 +1772,10 @@
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
     if (ehEmenda) {
-      // Extrai número diretamente do título do DTQ (numero) ou da descrição
-      // Ex: "Destaque de Emenda de Plenário n. 3" → 3
-      const mNumTitulo = numero.match(/n[º°.]\s*(\d+)/i)
-                      || numero.match(/(\d+)\s*$/);
-      const mNumDesc   = descricao.match(/n[º°.]\s*(\d+)/i)
-                      || descricao.match(/(?:EMD|Emenda)\s*(?:[^\d]*?)(\d+)/i)
-                      || descricao.match(/\b(\d+)\b/);
-      const numEmenda  = (mNumTitulo || mNumDesc) ? (mNumTitulo || mNumDesc)[1] : '';
+      // O título é "DTQ 2 Emenda de Plenário 3" — o número da emenda é SEMPRE o último
+      // Pega todos os números do título e usa o último
+      const todosNums = numero.match(/\d+/g) || [];
+      const numEmenda = todosNums.length > 0 ? todosNums[todosNums.length - 1] : '';
 
       // DIAGNÓSTICO — popup mostra o que foi extraído antes de buscar
       alert('🔍 DIAGNÓSTICO DTQ EMENDA\n\n' +
