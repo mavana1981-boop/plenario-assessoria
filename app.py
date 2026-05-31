@@ -43,8 +43,10 @@ if USE_POSTGRES:
             'database': _parsed.path.lstrip('/'),
             'user':     _parsed.username,
             'password': _parsed.password,
-            'ssl_context': True,
         }
+        # SSL: usa apenas se não for rede interna do Railway
+        if _parsed.hostname and 'railway.internal' not in _parsed.hostname:
+            PG_PARAMS['ssl_context'] = True
         logger.info(f'✅ PostgreSQL configurado: host={_parsed.hostname} db={_parsed.path.lstrip("/")}')
     except ImportError:
         USE_POSTGRES = False
