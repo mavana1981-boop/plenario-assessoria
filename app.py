@@ -3008,12 +3008,22 @@ def buscar_texto_emenda(id_proposicao, descricao):
 
         logger.info(f"Emendas encontradas para {id_proposicao}: {[(e[0],e[2][:60]) for e in emendas]}")
 
-        # Seleciona pelo número da emenda (EMP+N = num_emenda)
+        # Seleciona a emenda correta
         emenda_sel = None
         if num_emenda:
+            # 1. Tenta pelo número exato do EMP (EMP+3 → num='3')
             emenda_sel = next((e for e in emendas if e[0] == num_emenda), None)
+
+            # 2. Se não encontrou EMP+N, pega a N-ésima da lista (contagem ordinal)
+            # Ex: "Emenda n. 3" → 3ª emenda disponível (índice 2)
             if not emenda_sel:
-                logger.warning(f"EMP+{num_emenda} não encontrada. Disponíveis: {[e[0] for e in emendas]}")
+                idx = int(num_emenda) - 1
+                if 0 <= idx < len(emendas):
+                    emenda_sel = emendas[idx]
+                    logger.info(f"EMP+{num_emenda} não encontrado — usando {idx+1}ª emenda da lista: EMP+{emenda_sel[0]}")
+                else:
+                    logger.warning(f"Emenda n. {num_emenda} não encontrada. Disponíveis: {[e[0] for e in emendas]}")
+
         if not emenda_sel and emendas:
             emenda_sel = emendas[0]
 
