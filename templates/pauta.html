@@ -1766,79 +1766,85 @@
     if (!idPrincipal) { alert('ID da proposição não encontrado.'); return; }
 
     // Detecta se é destaque de emenda
-    const ehEmenda = /emenda|emd|subemenda/i.test(descricao);
+    const ehEmenda = /emenda|emd|subemenda|preferência|preferencia/i.test(descricao);
 
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
-    // ── Para emendas: busca URL da emenda no browser antes de chamar backend ──
     if (ehEmenda) {
-      const mNum = descricao.match(/(?:EMD|Emenda)\s*[Nº°.]?\s*(\d+)/i);
+      // Extrai número com múltiplos padrões
+      const mNum = descricao.match(/(?:EMD|Emenda|EMENDA)\s*(?:Aglutinativa\s*)?(?:Substitutiva\s*)?(?:n[º°.]?\s*)?(\d+)/i)
+                || descricao.match(/(?:PREFERÊNCIA|PREFERENCIA)\s+(\d+)/i)
+                || descricao.match(/\b(\d+)\b/);
       const numEmenda = mNum ? mNum[1] : '';
 
-      // Tenta buscar a URL real da emenda na página da Câmara (browser não tem restrição de CORS)
       let urlEmenda = '';
       try {
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Buscando emenda...';
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Buscando Emenda ' + (numEmenda || '') + '...';
         const urlLista = `https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao=${idPrincipal}&subst=0`;
         const rLista = await fetch(urlLista);
-        if (rLista.ok) {
-          const html = await rLista.text();
-          const parser = new DOMParser();
-          const doc2 = parser.parseFromString(html, 'text/html');
-          const links = Array.from(doc2.querySelectorAll('a[href]'));
+        if (!rLista.ok) throw new Error('HTTP ' + rLista.status);
 
-          if (numEmenda) {
-            // Estratégia 1: href contém EMP+N ou EMP N (padrão da Câmara)
-            const empPadrao = new RegExp(`EMP[+%20 ]+0*${numEmenda}(?:[^0-9]|$)`, 'i');
-            for (const a of links) {
-              const href = a.getAttribute('href') || '';
-              if (empPadrao.test(href)) {
-                urlEmenda = href.startsWith('http') ? href : 'https://www.camara.leg.br' + href;
-                console.log('[DTQ Emenda] Encontrado via EMP no href:', urlEmenda);
-                break;
-              }
+        const html = await rLista.text();
+        const parser = new DOMParser();
+        const doc2 = parser.parseFromString(html, 'text/html');
+
+        if (numEmenda) {
+          // Estratégia 1: âncora emp{N} — padrão oficial da Câmara
+          const anchor = doc2.getElementById('emp' + numEmenda)
+                      || doc2.querySelector('[name="emp' + numEmenda + '"]');
+          if (anchor) {
+            // Coleta links do bloco desta emenda (linha da âncora + próximas linhas)
+            const blocos = [anchor.closest('tr'), anchor.parentElement];
+            let next = (anchor.closest('tr') || anchor).nextElementSibling;
+            for (let i = 0; i < 8 && next; i++, next = next.nextElementSibling) {
+              // Para na próxima âncora emp
+              if (next.querySelector('[id^="emp"], [name^="emp"]')) break;
+              blocos.push(next);
             }
-
-            // Estratégia 2: âncora emp{N} na página
-            if (!urlEmenda) {
-              const anchor = doc2.getElementById('emp' + numEmenda) ||
-                             doc2.querySelector(`[name="emp${numEmenda}"]`);
-              if (anchor) {
-                const aNext = anchor.nextElementSibling?.querySelector?.('a[href]') ||
-                              anchor.closest('tr')?.querySelector('a[href]');
-                if (aNext) {
-                  const href = aNext.getAttribute('href');
-                  urlEmenda = href.startsWith('http') ? href : 'https://www.camara.leg.br' + href;
-                  console.log('[DTQ Emenda] Encontrado via âncora emp:', urlEmenda);
-                }
-              }
-            }
-
-            // Estratégia 3: texto da linha menciona o número
-            if (!urlEmenda) {
-              const reNum = new RegExp(`\\b0*${numEmenda}\\b`);
-              for (const a of links) {
+            for (const bloco of blocos) {
+              if (!bloco) continue;
+              for (const a of bloco.querySelectorAll('a[href]')) {
                 const href = a.getAttribute('href') || '';
-                const row = a.closest('tr');
-                const rowTxt = row ? row.textContent : '';
-                if ((href.includes('codteor') || href.includes('ficha')) && reNum.test(rowTxt)) {
+                const txt  = (a.textContent || '').toLowerCase();
+                // Inteiro Teor é o link correto para o PDF da emenda
+                if (txt.includes('inteiro teor') || txt.includes('texto da emenda') || href.includes('codteor')) {
                   urlEmenda = href.startsWith('http') ? href : 'https://www.camara.leg.br' + href;
-                  console.log('[DTQ Emenda] Encontrado via texto da linha:', urlEmenda);
+                  console.log('[DTQ] Emenda ' + numEmenda + ' via âncora emp:', urlEmenda);
                   break;
                 }
               }
+              if (urlEmenda) break;
+            }
+          }
+
+          // Estratégia 2: varre linhas com o padrão "EMD N" ou "Emenda N" no texto
+          if (!urlEmenda) {
+            const reNum = new RegExp('(?:EMD|Emenda)\\s*(?:n[º°.]?\\s*)?0*' + numEmenda + '(?!\\d)', 'i');
+            for (const row of doc2.querySelectorAll('tr')) {
+              if (!reNum.test(row.textContent)) continue;
+              for (const a of row.querySelectorAll('a[href]')) {
+                const href = a.getAttribute('href') || '';
+                const txt  = (a.textContent || '').toLowerCase();
+                if (txt.includes('inteiro teor') || href.includes('codteor')) {
+                  urlEmenda = href.startsWith('http') ? href : 'https://www.camara.leg.br' + href;
+                  console.log('[DTQ] Emenda ' + numEmenda + ' via varredura:', urlEmenda);
+                  break;
+                }
+              }
+              if (urlEmenda) break;
             }
           }
         }
       } catch(eBusca) {
-        console.warn('[DTQ Emenda] Não foi possível buscar URL da emenda:', eBusca.message);
+        console.warn('[DTQ] Erro ao buscar emenda:', eBusca.message);
+        alert('⚠️ Erro ao acessar lista de emendas: ' + eBusca.message + '\n\nO sistema analisará com base na descrição do destaque.');
       }
 
-      if (!urlEmenda) {
-        alert(`⚠️ Não foi possível localizar a URL da Emenda nº ${numEmenda || '?'} automaticamente.\n\nO sistema tentará analisar com base na descrição do destaque.`);
-      } else {
-        console.log('[DTQ Emenda] URL final:', urlEmenda);
+      if (!urlEmenda && numEmenda) {
+        alert('⚠️ Emenda nº ' + numEmenda + ' não localizada automaticamente.\n\nVerifique em:\nhttps://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao=' + idPrincipal + '&subst=0\n\nO sistema tentará analisar com base na descrição.');
+      } else if (urlEmenda) {
+        console.log('[DTQ] URL final da emenda:', urlEmenda);
       }
 
       _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria, num_emenda: numEmenda, url_emenda: urlEmenda});
