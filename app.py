@@ -3012,10 +3012,20 @@ def buscar_texto_emenda(id_proposicao, descricao):
 
         logger.info(f"Emendas encontradas para {id_proposicao}: {[(e[0],e[2]) for e in emendas]}")
 
-        # Seleciona a emenda correta pelo número
+        # Seleciona a emenda correta pelo número no filename (EMP+N no href)
         emenda_sel = None
         if num_emenda:
-            emenda_sel = next((e for e in emendas if e[0] == num_emenda), None)
+            # Busca pelo padrão EMP+{num} no filename/href — mais confiável que o índice da âncora
+            emenda_sel = next(
+                (e for e in emendas if re.search(
+                    r'EMP[+%20]*0*' + re.escape(num_emenda) + r'(?:[^0-9]|$)',
+                    e[1], re.IGNORECASE
+                )),
+                None
+            )
+            # Fallback: busca pelo número extraído do texto da linha
+            if not emenda_sel:
+                emenda_sel = next((e for e in emendas if e[0] == num_emenda), None)
         if not emenda_sel and emendas:
             emenda_sel = emendas[0]  # fallback: primeira
 
