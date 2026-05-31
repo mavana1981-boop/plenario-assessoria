@@ -1772,11 +1772,14 @@
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
     if (ehEmenda) {
-      // Extrai número com múltiplos padrões
-      const mNum = descricao.match(/(?:EMD|Emenda|EMENDA)\s*(?:Aglutinativa\s*)?(?:Substitutiva\s*)?(?:n[º°.]?\s*)?(\d+)/i)
+      // Extrai número — suporta "Emenda de Plenário n. 3", "EMD 5", "Emenda nº 2" etc.
+      const mNum = descricao.match(/(?:EMD|Emenda|EMENDA)\s*(?:Aglutinativa\s*)?(?:Substitutiva\s*)?(?:de\s+Plen[áa]rio\s*)?n[º°.]\s*(\d+)/i)
+                || descricao.match(/(?:EMD|Emenda|EMENDA)\s*(?:Aglutinativa\s*)?(?:Substitutiva\s*)?(?:de\s+Plen[áa]rio\s*)?(?:n[º°.]?\s*)?(\d+)/i)
                 || descricao.match(/(?:PREFERÊNCIA|PREFERENCIA)\s+(\d+)/i)
+                || descricao.match(/\bn[º°.]\s*(\d+)\b/i)
                 || descricao.match(/\b(\d+)\b/);
       const numEmenda = mNum ? mNum[1] : '';
+      console.log('[DTQ] Descrição:', descricao, '| Número extraído:', numEmenda);
 
       let urlEmenda = '';
       try {
