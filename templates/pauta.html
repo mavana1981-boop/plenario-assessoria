@@ -1782,9 +1782,6 @@
         ? todosNumsDesc[todosNumsDesc.length - 1]
         : (todosNumsTit.length > 0 ? todosNumsTit[todosNumsTit.length - 1] : '');
 
-      // DIAGNÓSTICO COMPLETO
-      alert('DIAGNÓSTICO:\n\nnumero (raw): [' + numero + ']\ndescricao (raw): [' + descricao + ']\nnumEmenda extraído: [' + numEmenda + ']');
-
       let urlEmenda = '';
       try {
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Buscando Emenda ' + (numEmenda || '') + '...';
@@ -1845,14 +1842,9 @@
         }
       } catch(eBusca) {
         console.warn('[DTQ] Erro ao buscar emenda:', eBusca.message);
-        alert('⚠️ Erro ao acessar lista de emendas: ' + eBusca.message + '\n\nO sistema analisará com base na descrição do destaque.');
       }
 
-      if (!urlEmenda && numEmenda) {
-        alert('⚠️ Emenda nº ' + numEmenda + ' não localizada automaticamente.\n\nVerifique em:\nhttps://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao=' + idPrincipal + '&subst=0\n\nO sistema tentará analisar com base na descrição.');
-      } else if (urlEmenda) {
-        console.log('[DTQ] URL final da emenda:', urlEmenda);
-      }
+      // segue para análise silenciosamente
 
       _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria, num_emenda: numEmenda, url_emenda: urlEmenda});
       return;
