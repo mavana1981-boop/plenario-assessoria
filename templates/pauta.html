@@ -1777,13 +1777,8 @@
       const todosNums = numero.match(/\d+/g) || [];
       const numEmenda = todosNums.length > 0 ? todosNums[todosNums.length - 1] : '';
 
-      // DIAGNÓSTICO — popup mostra o que foi extraído antes de buscar
-      alert('🔍 DIAGNÓSTICO DTQ EMENDA\n\n' +
-            'Título (numero): ' + numero + '\n' +
-            'Descrição: ' + descricao + '\n' +
-            'Número extraído: ' + (numEmenda || '(vazio — não encontrado!') + '\n\n' +
-            'Vai buscar: EMP+' + (numEmenda || '?') + ' em:\n' +
-            'prop_emendas?idProposicao=' + idPrincipal + '&subst=0');
+      // DIAGNÓSTICO COMPLETO
+      alert('DIAGNÓSTICO:\n\nnumero (raw): [' + numero + ']\ndescricao (raw): [' + descricao + ']\ntodosNums: [' + todosNums.join(', ') + ']\nnumEmenda extraído: [' + numEmenda + ']');
 
       let urlEmenda = '';
       try {
