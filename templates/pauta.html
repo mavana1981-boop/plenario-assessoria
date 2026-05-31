@@ -1772,14 +1772,15 @@
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
     if (ehEmenda) {
-      // Extrai número — suporta "Emenda de Plenário n. 3", "EMD 5", "Emenda nº 2" etc.
-      const mNum = descricao.match(/(?:EMD|Emenda|EMENDA)\s*(?:Aglutinativa\s*)?(?:Substitutiva\s*)?(?:de\s+Plen[áa]rio\s*)?n[º°.]\s*(\d+)/i)
-                || descricao.match(/(?:EMD|Emenda|EMENDA)\s*(?:Aglutinativa\s*)?(?:Substitutiva\s*)?(?:de\s+Plen[áa]rio\s*)?(?:n[º°.]?\s*)?(\d+)/i)
-                || descricao.match(/(?:PREFERÊNCIA|PREFERENCIA)\s+(\d+)/i)
-                || descricao.match(/\bn[º°.]\s*(\d+)\b/i)
-                || descricao.match(/\b(\d+)\b/);
-      const numEmenda = mNum ? mNum[1] : '';
-      console.log('[DTQ] Descrição:', descricao, '| Número extraído:', numEmenda);
+      // Extrai número diretamente do título do DTQ (numero) ou da descrição
+      // Ex: "Destaque de Emenda de Plenário n. 3" → 3
+      const mNumTitulo = numero.match(/n[º°.]\s*(\d+)/i)
+                      || numero.match(/(\d+)\s*$/);
+      const mNumDesc   = descricao.match(/n[º°.]\s*(\d+)/i)
+                      || descricao.match(/(?:EMD|Emenda)\s*(?:[^\d]*?)(\d+)/i)
+                      || descricao.match(/\b(\d+)\b/);
+      const numEmenda  = (mNumTitulo || mNumDesc) ? (mNumTitulo || mNumDesc)[1] : '';
+      console.log('[DTQ] Título:', numero, '| Descrição:', descricao, '| Emenda nº:', numEmenda);
 
       let urlEmenda = '';
       try {
