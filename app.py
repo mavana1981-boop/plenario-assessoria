@@ -2984,22 +2984,18 @@ def buscar_texto_emenda(id_proposicao, descricao):
                 href = link['href']
                 if 'codteor' not in href and 'mostrarintegra' not in href:
                     continue
-                # Extrai número da emenda pelo padrão EMP+N ou EMP N no href
-                m_emp = re.search(r'EMP[+%20 ]+0*(\d+)', href, re.IGNORECASE)
-                if not m_emp:
-                    # Tenta pelo texto da row
-                    txt = row.get_text(' ', strip=True)
-                    m_emp = re.search(r'(?:EMD|Emenda|EMP)\s*[Nn]?[º°.]?\s*0*(\d+)', txt, re.IGNORECASE)
+                # Extrai número SEMPRE pelo padrão EMP+N no filename/href
+                m_emp = re.search(r'EMP[+%20]+(\d+)', href, re.IGNORECASE)
                 if not m_emp:
                     continue
-                num = m_emp.group(1)
+                num = m_emp.group(1)  # número real da emenda (EMP+3 → '3')
                 if num in vistos:
                     continue
                 vistos.add(num)
                 url_doc = camara_url(href)
                 txt_row = row.get_text(' ', strip=True)[:120]
                 emendas.append((num, url_doc, txt_row))
-                logger.info(f"Emenda {num}: {href[:80]}")
+                logger.info(f"Emenda EMP+{num}: {href[:80]}")
 
         if not emendas:
             # Tenta links diretos com codteor
@@ -3010,24 +3006,16 @@ def buscar_texto_emenda(id_proposicao, descricao):
                     num = m.group(1) if m else str(len(emendas)+1)
                     emendas.append((num, camara_url(a['href']), txt_ctx[:80]))
 
-        logger.info(f"Emendas encontradas para {id_proposicao}: {[(e[0],e[2]) for e in emendas]}")
+        logger.info(f"Emendas encontradas para {id_proposicao}: {[(e[0],e[2][:60]) for e in emendas]}")
 
-        # Seleciona a emenda correta pelo número no filename (EMP+N no href)
+        # Seleciona pelo número da emenda (EMP+N = num_emenda)
         emenda_sel = None
         if num_emenda:
-            # Busca pelo padrão EMP+{num} no filename/href — mais confiável que o índice da âncora
-            emenda_sel = next(
-                (e for e in emendas if re.search(
-                    r'EMP[+%20]*0*' + re.escape(num_emenda) + r'(?:[^0-9]|$)',
-                    e[1], re.IGNORECASE
-                )),
-                None
-            )
-            # Fallback: busca pelo número extraído do texto da linha
+            emenda_sel = next((e for e in emendas if e[0] == num_emenda), None)
             if not emenda_sel:
-                emenda_sel = next((e for e in emendas if e[0] == num_emenda), None)
+                logger.warning(f"EMP+{num_emenda} não encontrada. Disponíveis: {[e[0] for e in emendas]}")
         if not emenda_sel and emendas:
-            emenda_sel = emendas[0]  # fallback: primeira
+            emenda_sel = emendas[0]
 
         if not emenda_sel:
             return None, None
