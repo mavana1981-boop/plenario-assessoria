@@ -2950,7 +2950,7 @@ def debug_destaque():
         'trecho_relevante': texto_relevante[:3000] if texto_relevante else '(não localizado)',
     })
 
-def buscar_texto_emenda(id_proposicao, descricao):
+def buscar_texto_emenda(id_proposicao, descricao, num_emenda=None):
     """
     Busca o texto da emenda referenciada na descrição do destaque.
     Acessa prop_emendas e extrai o PDF da emenda específica.
@@ -2961,10 +2961,14 @@ def buscar_texto_emenda(id_proposicao, descricao):
 
     headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
 
-    # Extrai número da emenda da descrição
-    # Ex: "Emenda nº 5", "EMD 12", "Emenda Aglutinativa nº 3"
-    m_num = re.search(r'(?:EMD|Emenda|EMENDA)\s+(?:n[º°.]?\s*)?(\d+)', descricao, re.IGNORECASE)
-    num_emenda = m_num.group(1) if m_num else None
+    # Usa o número passado diretamente; só extrai da descrição como fallback
+    if not num_emenda:
+        m_num = re.search(r'(\d+)\s*$', descricao.strip())
+        if not m_num:
+            m_num = re.search(r'(?:EMD|Emenda|EMENDA)\s*(?:[^\d]*)(\d+)', descricao, re.IGNORECASE)
+        num_emenda = m_num.group(1) if m_num else None
+
+    logger.info(f"buscar_texto_emenda: id={id_proposicao} num_emenda={num_emenda}")
 
     try:
         url = f"https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao={id_proposicao}&subst=0"
@@ -3125,17 +3129,25 @@ def analisar_destaque():
     num_emenda_sel = data.get('num_emenda', '')
 
     if eh_emenda and id_principal and not trecho_manual:
-        # Extrai número da emenda da descrição — sempre disponível
-        m_num_emd = re.search(r'(?:EMD|Emenda|EMENDA)\s+(?:[Aa]glutinativa\s+)?(?:[Ss]ubstitutiva\s+)?(?:n[º°.]?\s*)?(\d+)', descricao, re.IGNORECASE)
-        num_emenda_desc = m_num_emd.group(1) if m_num_emd else (num_emenda_sel or '')
+        # Usa o número enviado pelo frontend (já extraído corretamente do título do DTQ)
+        num_emenda_desc = num_emenda_sel or ''
+
+        # Se não veio do frontend, tenta extrair da descrição
+        if not num_emenda_desc:
+            m_num_emd = re.search(r'(\d+)\s*$', descricao.strip())
+            if not m_num_emd:
+                m_num_emd = re.search(r'(?:EMD|Emenda)\s*(?:[^\d]*)(\d+)', descricao, re.IGNORECASE)
+            num_emenda_desc = m_num_emd.group(1) if m_num_emd else ''
+
+        logger.info(f"Analisando emenda nº '{num_emenda_desc}' (frontend enviou: '{num_emenda_sel}') | descrição: {descricao}")
 
         # Se frontend passou URL específica, usa ela
         if url_emenda_sel:
             texto_emenda = extrair_texto_documento(url_emenda_sel) or ''
-            label_emenda = f"Emenda nº {num_emenda_sel}" if num_emenda_sel else 'Emenda selecionada'
+            label_emenda = f"Emenda nº {num_emenda_desc}" if num_emenda_desc else 'Emenda selecionada'
         else:
-            # Tenta buscar PDF da emenda pelo número da descrição
-            texto_emenda, label_emenda = buscar_texto_emenda(id_principal, descricao)
+            # Busca PDF pelo número da emenda
+            texto_emenda, label_emenda = buscar_texto_emenda(id_principal, descricao, num_emenda_desc)
 
         if texto_emenda:
             tipo_doc = label_emenda or 'Emenda'
