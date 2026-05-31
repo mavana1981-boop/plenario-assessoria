@@ -1780,7 +1780,14 @@
                       || descricao.match(/(?:EMD|Emenda)\s*(?:[^\d]*?)(\d+)/i)
                       || descricao.match(/\b(\d+)\b/);
       const numEmenda  = (mNumTitulo || mNumDesc) ? (mNumTitulo || mNumDesc)[1] : '';
-      console.log('[DTQ] Título:', numero, '| Descrição:', descricao, '| Emenda nº:', numEmenda);
+
+      // DIAGNÓSTICO — popup mostra o que foi extraído antes de buscar
+      alert('🔍 DIAGNÓSTICO DTQ EMENDA\n\n' +
+            'Título (numero): ' + numero + '\n' +
+            'Descrição: ' + descricao + '\n' +
+            'Número extraído: ' + (numEmenda || '(vazio — não encontrado!') + '\n\n' +
+            'Vai buscar: EMP+' + (numEmenda || '?') + ' em:\n' +
+            'prop_emendas?idProposicao=' + idPrincipal + '&subst=0');
 
       let urlEmenda = '';
       try {
