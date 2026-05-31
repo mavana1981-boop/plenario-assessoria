@@ -2978,24 +2978,29 @@ def buscar_texto_emenda(id_proposicao, descricao):
         # Coleta todas as emendas com seus links
         emendas = []
         vistos = set()
-        for row in soup.find_all('tr'):
-            links_row = row.find_all('a', href=True)
-            for link in links_row:
-                href = link['href']
-                if 'codteor' not in href and 'mostrarintegra' not in href:
-                    continue
-                # Extrai número SEMPRE pelo padrão EMP+N no filename/href
-                m_emp = re.search(r'EMP[+%20]+(\d+)', href, re.IGNORECASE)
-                if not m_emp:
-                    continue
-                num = m_emp.group(1)  # número real da emenda (EMP+3 → '3')
-                if num in vistos:
-                    continue
-                vistos.add(num)
-                url_doc = camara_url(href)
-                txt_row = row.get_text(' ', strip=True)[:120]
-                emendas.append((num, url_doc, txt_row))
-                logger.info(f"Emenda EMP+{num}: {href[:80]}")
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            if 'codteor' not in href and 'mostrarintegra' not in href:
+                continue
+            # Extrai número EXCLUSIVAMENTE pelo EMP+N no parâmetro filename
+            # Ex: filename=EMP+3+%3D%3E → num='3'
+            # Ex: filename=EMP+2+%3D%3E → num='2'  
+            m_emp = re.search(r'[?&]filename=EMP[+](\d+)', href)
+            if not m_emp:
+                # Fallback: qualquer EMP+N no href
+                m_emp = re.search(r'\bEMP[+](\d+)\b', href)
+            if not m_emp:
+                continue
+            num = m_emp.group(1)
+            if num in vistos:
+                continue
+            vistos.add(num)
+            url_doc = camara_url(href)
+            # Pega texto da linha para contexto
+            row = a.find_parent('tr')
+            txt_row = (row.get_text(' ', strip=True) if row else a.get_text(strip=True))[:120]
+            emendas.append((num, url_doc, txt_row))
+            logger.info(f"Emenda EMP+{num}: {href[:80]}")
 
         if not emendas:
             # Tenta links diretos com codteor
