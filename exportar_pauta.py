@@ -1,586 +1,3285 @@
-from flask import Blueprint, current_app, make_response
-from io import BytesIO
-import os, re, requests
-from datetime import datetime
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import cm
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
-from reportlab.platypus import (
-    BaseDocTemplate, PageTemplate, Frame, Paragraph, Spacer,
-    Table, TableStyle, PageBreak, HRFlowable, KeepTogether
-)
-from reportlab.pdfgen import canvas as pdfcanvas
-from reportlab.pdfbase.pdfmetrics import stringWidth
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Assessoria - Plenário da Câmara dos Deputados</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <link href="/static/style.css" rel="stylesheet">
+  <style>
+    .item-header {
+      display: flex; justify-content: space-between; align-items: center;
+      cursor: pointer; color: #006633; font-weight: 600; font-size: 0.95rem; padding: 0.3rem 0;
+    }
+    .item-header:hover { color: #004d26; }
+    .item-info { font-size: 0.85rem; color: #555; }
+    .collapse-toggle-icon { transition: transform 0.3s ease; }
+    .collapse.show + .item-header .collapse-toggle-icon,
+    .item-header[aria-expanded="true"] .collapse-toggle-icon { transform: rotate(180deg); }
+    .secao-badge {
+      font-size: 0.75rem;
+      padding: 0.3em 0.5em;
+      border-radius: 0.3rem;
+      margin-left: 10px;
+      color: #fff !important;
+    }
+    .secao-badge.bg-warning { color: #000 !important; }
+    .secao-badge.bg-primary { background-color: #0d6efd !important; }
+    .secao-badge.bg-info { background-color: #17a2b8 !important; }
+    .secao-badge.bg-success { background-color: #28a745 !important; }
+    .secao-badge.bg-warning { background-color: #ffc107 !important; }
+    .secao-badge.bg-secondary { background-color: #6c757d !important; }
+    .last-updated {
+      font-size: 0.75rem;
+      color: #6c757d;
+      margin-left: 10px;
+    }
 
-exportar_bp = Blueprint("exportar", __name__, url_prefix="/exportar")
+    .editor-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255,255,255,0.8);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      font-size: 0.9rem;
+      color: #333;
+      font-style: italic;
+    }
+    .editor-spinner {
+      margin: 10px auto;
+      width: 40px;
+      height: 40px;
+      border: 4px solid #ccc;
+      border-top-color: #007bff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+    .ql-container { font-size: 14px; font-family: 'Segoe UI', Arial, sans-serif; }
+    .ql-editor { min-height: 550px; }
+    .ql-toolbar.ql-snow, .ql-container.ql-snow { width: 100%; box-sizing: border-box; }
+    .logo-header { width: 80px; height: 50px; object-fit: contain; background: transparent; }
+  </style>
+</head>
 
-# ── Cores ──────────────────────────────────────────────────────────────────
-C_VERDE       = colors.HexColor("#1A6B3A")
-C_VERDE_LT    = colors.HexColor("#E8F5EE")
-C_AZUL        = colors.HexColor("#0D2B5E")
-C_AZUL_LT     = colors.HexColor("#E6EFF8")
-C_VERMELHO    = colors.HexColor("#C0392B")
-C_VERM_LT     = colors.HexColor("#FDECEA")
-C_LARANJA     = colors.HexColor("#D35400")
-C_LAR_LT      = colors.HexColor("#FEF0E7")
-C_ROXO        = colors.HexColor("#6C3483")
-C_ROXO_LT     = colors.HexColor("#F4ECF7")
-C_CINZA       = colors.HexColor("#555555")
-C_CINZA_LT    = colors.HexColor("#F5F5F5")
-C_AMARELO_LT  = colors.HexColor("#FFFDE7")
-C_AMARELO     = colors.HexColor("#B7950B")
+<body>
+  <div class="alert text-center py-1 mb-0" 
+     style="font-size:0.85rem; background-color:#b5d3bc; color:#4d5d4d; border:1px solid #dbe3da;">
+    ⚠️ Ambiente de desenvolvimento — dados e análises podem conter erros.
+  </div>
 
-# Orientação → cor
-CORES_ORI = {
-    "SIM":        (C_VERDE,    C_VERDE_LT),
-    "NÃO":        (C_VERMELHO, C_VERM_LT),
-    "NEGOCIAÇÃO": (C_AMARELO,  C_AMARELO_LT),
-    "LIBERADO":   (C_AZUL,     C_AZUL_LT),
-    "OBSTRUÇÃO":  (C_VERMELHO, C_VERM_LT),
-    "ABSTENÇÃO":  (C_CINZA,    C_CINZA_LT),
-}
+  <div class="header" style="background: #fff !important; border-bottom: 3px solid #1A6B3A; box-shadow: 0 2px 6px rgba(0,0,0,0.08);">
+    <div class="container header-wrap d-flex align-items-center justify-content-between">
+      <div class="d-flex align-items-center">
+        <div class="header-logos me-3 d-flex align-items-center gap-3">
+          <img src="/static/logo_minoria.png" alt="Liderança da Minoria"
+            style="width:90px;height:55px;object-fit:contain;background:transparent;"
+            onerror="this.style.display='none'">
+          <img src="/static/logo_oposicao.png" alt="Oposição"
+            style="width:90px;height:55px;object-fit:contain;background:transparent;"
+            onerror="this.style.display='none'">
+        </div>
+        <div class="header-text">
+          <h1 class="titulo-app mb-0" style="color:#1A6B3A !important;">Assessoria de Plenário</h1>
+          <p class="subtitulo-app mb-0" style="color:#444 !important;">Lideranças da Minoria e da Oposição — Câmara dos Deputados</p>
+        </div>
+      </div>
+      <div class="text-end">
+        <a href="{{ url_for('logout') }}" class="btn btn-outline-success btn-sm mb-1">
+          <i class="fas fa-sign-out-alt me-2"></i>Sair
+        </a>
+        <a href="/trocar-senha" class="btn btn-outline-secondary btn-sm mb-1 ms-1">
+          <i class="fas fa-key me-1"></i>Senha
+        </a><br>
+        <small style="color:#444;">{{ current_user.username }}</small>
+        {% if current_user.is_authenticated and current_user.role == 'Admin' %}
+          <a href="/admin/usuarios" 
+            class="btn btn-sm mb-1 ms-1"
+            style="color: rgba(255,255,255,0.5); border: none;"
+            onmouseover="this.style.color='#ffc107'" 
+            onmouseout="this.style.color='rgba(255,255,255,0.5)'">
+            <i class="fas fa-cog"></i>
+          </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
 
-# Tipo de proposição → (cor_texto, cor_fundo)
-# REQ urgência = vermelho escuro; tudo mais = azul escuro
-C_AZUL_TABELA = colors.HexColor("#2E5FA3")   # azul mais claro para índice
+  <div class="container my-4">
+    <div class="sessao-info p-3 bg-light border rounded mb-3">
+      <h5 class="mb-2"><i class="fas fa-users text-success me-2"></i>Sessão Deliberativa</h5>
+      {% if from_cache %}
+      <div class="alert alert-warning text-center py-2 mb-3" style="font-size: 0.9rem;">
+        🔁 Exibindo versão em cache — dados indisponíveis ou instáveis no momento.
+      </div>
+      {% endif %}
+      <div class="small text-muted">
+        <strong><i class="far fa-clock me-1"></i>Data/Hora:</strong>
+        <span data-evento-data="{{ evento.dataHoraInicio | datetimeformat('%d/%m/%Y') if evento.dataHoraInicio and evento.dataHoraInicio != 'N/D' else '' }}">
+        {{ evento.dataHoraInicio | default('N/D') | replace('T', ' ') | datetimeformat('%d/%m/%Y %H:%M') if evento.dataHoraInicio != 'N/D' else 'N/D' }}
+        </span><br>
+        <strong><i class="fas fa-info-circle me-1"></i>Situação:</strong>
+        <span class="badge {{ 'bg-success' if evento.situacao|default('')|lower == 'em andamento' else 'bg-secondary' }}">
+          {{ evento.situacao | default('N/D') }}
+        </span><br>
+        <strong><i class="fas fa-align-left me-1"></i>Descrição:</strong> {{ evento.descricao | default('Sem descrição') }}<br>
+        <strong><i class="fas fa-map-marker-alt me-1"></i>Local:</strong> {{ evento.local | default('N/D') }}<br>
+        <strong><i class="fas fa-save me-1"></i>Última atualização:</strong>
+        <span id="ultimo-salvamento">
+          {% if last_updated %}{{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}{% else %}Nenhum registro{% endif %}
+        </span>
+        <span id="ultimo-usuario" class="text-muted">
+          {% if last_saved_user %} — por <strong>{{ last_saved_user }}</strong>{% endif %}
+        </span>
+      </div>
+    </div>
 
-def cor_tipo(projeto):
-    proj_upper = (projeto or "").upper()
-    p = proj_upper.split()[0] if proj_upper else ""
-    if any(p.startswith(s) for s in ("REQ","RQS","RQU","REC")):
-        if any(x in proj_upper for x in ("URGÊN","URGENCIA","URGÊNCIA")):
-            return C_VERMELHO, C_VERM_LT   # vermelho escuro
-    return C_AZUL, C_AZUL_LT              # azul escuro para tudo mais
+    <div class="d-flex align-items-center flex-wrap mb-2">
+      <!-- Quadro de boas-vindas -->
+      <div style="width:100%;background:#fffde7;border:1px solid #ffe082;border-radius:8px;padding:10px 16px;margin-bottom:10px;display:flex;align-items:center;gap:14px;">
+        {% if user_foto %}
+        <img src="{{ user_foto }}" alt="foto" style="width:44px;height:44px;border-radius:50%;object-fit:cover;border:2px solid #ffe082;flex-shrink:0;">
+        {% else %}
+        <div style="width:44px;height:44px;border-radius:50%;background:#ffe082;display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0;">
+          <i class="fas fa-user" style="color:#b8860b;"></i>
+        </div>
+        {% endif %}
+        <div>
+          <div style="font-weight:700;font-size:1rem;color:#5d4037;">
+            Olá, {{ user_nome_display.split()[0] if user_nome_display else current_user.username }} 👋
+          </div>
+          {% if itens_atribuidos %}
+          <div style="font-size:0.82rem;color:#5d4037;margin-top:2px;">
+            Há pauta publicada e foram atribuídos a você os itens:
+            <strong>{{ itens_atribuidos | map(attribute='projeto') | join(', ') }}</strong>
+          </div>
+          {% else %}
+          <div style="font-size:0.82rem;color:#8d6e63;margin-top:2px;font-style:italic;">
+            Não foram atribuídos itens de pauta para você.
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
 
-MESES_PT = {
-    "January":"Janeiro","February":"Fevereiro","March":"Março",
-    "April":"Abril","May":"Maio","June":"Junho","July":"Julho",
-    "August":"Agosto","September":"Setembro","October":"Outubro",
-    "November":"Novembro","December":"Dezembro"
-}
-def data_ptbr(dt_str):
-    try:
-        dt = datetime.fromisoformat(dt_str)
-        mes_pt = MESES_PT.get(dt.strftime("%B"), dt.strftime("%B"))
-        return f"{dt.day:02d} DE {mes_pt.upper()} DE {dt.year}"
-    except Exception:
-        return "DATA DESCONHECIDA"
+    <div class="d-flex align-items-center flex-wrap">
+      {% if user_categoria != 'restrito' %}
+      <a href="{{ url_for('selecionar_data') }}" class="btn btn-outline-secondary btn-sm mb-3">
+        <i class="fas fa-arrow-left me-2"></i>Voltar para Seleção de Data
+      </a>
+      <a href="{{ url_for('view_pauta', evento_id=evento_id, force_reload='true') }}" class="btn btn-outline-primary btn-sm mb-3 ms-2">
+        <i class="fas fa-sync-alt me-2"></i>Atualizar Pauta
+      </a>
+      <a href="/limpar_cache/{{ evento_id }}" class="btn btn-outline-warning btn-sm mb-3 ms-2"
+              title="Remove cache e reprocessa a pauta"
+              onclick="return confirm('Limpar cache desta pauta?')">
+        <i class="fas fa-broom me-1"></i>Limpar Cache
+      </a>
+      <a href="/exportar/{{ evento_id }}"
+        class="btn btn-outline-success btn-sm mb-3 ms-2" target="_blank" rel="noopener">
+        <i class="fas fa-file-export me-2"></i>Exportar resumo
+      </a>
+      <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-iconografica"
+        onclick="
+          var info = 'Scripts: ' + document.querySelectorAll('script').length +
+                     ' | _abrirModal: ' + typeof window._abrirModalIconografica +
+                     ' | _carregada: ' + (window._iconograficaCarregada ? 'SIM' : 'NAO');
+          if(typeof window._abrirModalIconografica === 'function'){
+            window._abrirModalIconografica();
+          } else {
+            alert('Não carregada.\n' + info);
+          }
+        "
+        style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
+        <i class="fas fa-th-large me-2"></i>Pauta Iconográfica
+      </button>
+      <button class="btn btn-sm mb-3 ms-2 text-white"
+        style="background:linear-gradient(135deg,#25D366,#128C7E);"
+        data-bs-toggle="modal" data-bs-target="#modalMensagens">
+        <i class="fab fa-whatsapp me-2"></i>Mensagens Plenário
+      </button>
+      {% if current_user.role == 'Admin' %}
+      <span class="d-inline-flex align-items-center gap-1 mb-3 ms-2">
+        <button class="btn btn-sm text-white" id="btn-monitorar"
+          onclick="toggleMonitoramento()"
+          style="background:linear-gradient(135deg,#6c757d,#495057);">
+          <i class="fas fa-satellite-dish me-2"></i><span id="btn-monitorar-label">Monitorar</span>
+        </button>
+        <small id="monitor-status-txt" class="text-muted" style="font-size:0.72rem;white-space:nowrap;min-width:80px;display:inline-block;"></small>
+      </span>
+      {% endif %}
+      {% endif %}
+      <button class="btn btn-sm mb-3 ms-2 text-white"
+        style="background:linear-gradient(135deg,#B8860B,#DAA520);"
+        data-bs-toggle="modal" data-bs-target="#modalOrientacoes"
+        onclick="carregarOrientacoes()">
+        <i class="fas fa-vote-yea me-2"></i>Orientações
+      </button>
 
-def _hex(color):
-    """Retorna string hex pura ex: '1a6b3a' para uso em tags XML do ReportLab"""
-    try:
-        r = int(round(color.red * 255))
-        g = int(round(color.green * 255))
-        b = int(round(color.blue * 255))
-        return '%02x%02x%02x' % (r, g, b)
-    except Exception:
-        return '000000'
+      {% if last_updated and user_categoria != 'restrito' %}
+      <small class="last-updated mb-3">Atualizado em {{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</small>
+      {% endif %}
+    </div>
 
-def _strip_html(s):
-    txt = re.sub(r"<[^>]+>", " ", str(s or ""))
-    txt = re.sub(r"&nbsp;", " ", txt)
-    txt = re.sub(r"&amp;", "&", txt)
-    txt = re.sub(r"\s+", " ", txt)
-    return txt.strip()
+    {% if user_categoria == 'restrito' %}
+    <!-- Visão restrita: apenas itens, situação, relator, ementa, resumo IA e orientações -->
+    <div class="alert alert-info mt-2 mb-2 d-flex align-items-center gap-3">
+      <div>
+        <i class="fas fa-info-circle me-2"></i>
+        Acesso restrito. Registre a orientação do seu grupo clicando no botão:
+      </div>
+      <button class="btn btn-warning btn-sm fw-bold ms-auto"
+        data-bs-toggle="modal" data-bs-target="#modalOrientacoes"
+        onclick="carregarOrientacoes()">
+        <i class="fas fa-vote-yea me-1"></i>Registrar Orientação
+      </button>
+    </div>
+    {% if itens %}
+      {% for item in itens %}
+      <div class="card mb-2 shadow-sm">
+        <div class="card-body py-2 px-3">
+          <div class="d-flex align-items-start gap-2">
+            <span class="badge bg-secondary" style="min-width:28px;text-align:center;">{{ item.ordem }}</span>
+            <div style="flex:1;">
+              <strong>{{ item.projeto }}</strong>
+              <div class="text-muted" style="font-size:0.82rem;">
+                {% if item.relator and item.relator != 'Não atribuído' %}
+                  <span><strong>Relator:</strong> {{ item.relator }}</span> &nbsp;
+                {% endif %}
+                {% if item.situacao and item.situacao != 'N/D' %}
+                  <span><strong>Situação:</strong> {{ item.situacao }}</span>
+                {% endif %}
+              </div>
+              <div style="font-size:0.85rem;margin-top:2px;">{{ item.ementa }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="alert alert-info">Nenhum item encontrado na pauta para este evento.</div>
+    {% endif %}
+    {% else %}
+    {% if itens %}
+      {% for item in itens %}
+      <div class="item-card mb-3">
+        <div class="card-body">
+          <div class="item-header" data-bs-toggle="collapse" data-bs-target="#col-{{ item.ordem }}-{{ item.id_principal }}" aria-expanded="false">
+            <div>
+              <i class="fas fa-file-alt text-primary me-2"></i>
+              Item {{ item.ordem }} — <strong>{{ item.projeto }}</strong> — <strong>Autor:</strong>
+              <span class="span-autor" id="autor-{{ item.id_principal }}" data-id="{{ item.id_principal }}">{% set partes = item.autor.split(', ') %}{% if partes|length > 2 %}{{ partes[:2]|join(', ') }} e outros.{% else %}{{ item.autor }}{% endif %}</span>
+              <span class="badge secao-badge 
+                {{ 'bg-primary' if item.status in ['Proposta em Análise', 'Propostas em Análise'] else 
+                   'bg-info' if item.status in ['Proposta Prevista', 'Propostas Previstas'] else 
+                   'bg-success' if item.status in ['Proposta Analisada', 'Propostas Analisadas'] else 
+                   'bg-warning text-dark' if item.status in ['Proposta Não Analisada', 'Propostas Não Analisadas'] else 
+                   'bg-secondary' }}">
+                {{ item.status | default('N/D') }}
+              </span>
+              <div class="item-info mt-1">
+                <strong>Situação:</strong> {{ item.situacao | default('N/D') }} &nbsp;&nbsp;
+                <strong>Relator:</strong>
+                <span class="span-relator" id="relator-{{ item.id_principal }}" data-id="{{ item.id_principal }}">{{ item.relator }}</span>
+              </div>
+              <div class="item-info mt-1 text-muted fst-italic"
+                   style="font-size:0.82rem; width:100%; white-space:normal; word-break:break-word;"
+                   data-ementa-id="{{ item.id_principal }}"
+                   data-projeto="{{ item.projeto }}"
+                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
+                   data-autor="{{ item.autor | replace('"','&quot;')  }}">
+                {{ item.ementa }}
+              </div>
+              <div class="resumo-ia-ementa mt-1"
+                   id="resumo-ia-{{ item.id_principal }}"
+                   data-id="{{ item.id_principal }}"
+                   data-projeto="{{ item.projeto | replace('"','&quot;') }}"
+                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
+                   data-autor="{{ item.autor | replace('"','&quot;') }}"
+                   style="font-size:0.82rem; color:#1A6B3A; font-weight:500; white-space:normal; word-break:break-word; display:none;">
+              </div>
+            </div>
+            <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
+          </div>
 
-def _html_para_paragrafos(html, estilo):
-    """
-    Converte HTML do editor Quill em lista de Paragraphs ReportLab.
-    Preserva quebras de linha, ícones/emojis e estrutura de listas.
-    Detecta cabeçalhos de seção:
-      - Linhas com ✅ / POSITIV → verde, caps, negrito, maior
-      - Linhas com ❌ / NEGATIV → vermelho, caps, negrito, maior
-    """
-    from reportlab.platypus import Paragraph, Spacer
-    from reportlab.lib.styles import ParagraphStyle
-    import html as _html_mod
+          <div class="collapse" id="col-{{ item.ordem }}-{{ item.id_principal }}">
+            <hr class="mt-2 mb-2">
 
-    C_VERDE_NT   = colors.HexColor("#1A6B3A")
-    C_VERMELHO_NT = colors.HexColor("#C0392B")
+            <!-- ASSESSOR RESPONSÁVEL -->
+            <div class="mb-3 d-flex align-items-center gap-2 flex-wrap" id="resp-container-{{ item.ordem }}">
+              {% set resp = assessores | selectattr('username', 'equalto', item.responsavel_username) | list %}
+              {% if resp %}
+                {% set r = resp[0] %}
+                {# Logo da bancada SEMPRE primeiro #}
+                {% if r.categoria == 'minoria' %}
+                  <img src="/static/logo_minoria.png" style="height:22px;object-fit:contain;" alt="Minoria">
+                {% elif r.categoria == 'oposicao' %}
+                  <img src="/static/logo_oposicao.png" style="height:22px;object-fit:contain;" alt="Oposição">
+                {% endif %}
+                {# Depois a foto do usuário se houver #}
+                {% if r.foto %}
+                  <img src="{{ r.foto }}" alt="{{ r.nome }}" style="width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
+                {% endif %}
+                <small class="text-muted">Responsável: <strong>{{ r.nome }}</strong></small>
+              {% else %}
+                <small class="text-muted fst-italic">Sem responsável atribuído</small>
+              {% endif %}
+              {% if eh_responsavel_pauta %}
+              <select class="form-select form-select-sm w-auto select-responsavel"
+                      data-item-key="PROP_{{ item.id_principal }}"
+                      data-evento-id="{{ evento_id }}"
+                      style="font-size:0.78rem; max-width:180px;">
+                <option value="">— Sem responsável —</option>
+                {% for a in assessores %}
+                  {% if a.username not in ['admin','PL','NOVO'] %}
+                    <option value="{{ a.username }}" {% if a.username == item.responsavel_username %}selected{% endif %}>
+                      {{ a.nome }}
+                    </option>
+                  {% endif %}
+                {% endfor %}
+              </select>
+              {% endif %}
+            </div>
 
-    s = str(html or "")
-    s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"</p>",      "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"</li>",     "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"<li[^>]*>", "• ", s, flags=re.IGNORECASE)
-    s = re.sub(r"<[^>]+>",   "",   s)
-    s = _html_mod.unescape(s)
+            {% if user_role == 'Assessor' %}
+              <!-- 🟡 MODO LEITURA -->
 
-    linhas = [l.strip() for l in s.split("\n")]
-    paragrafos = []
+              {# Aviso de item remanescente #}
+              {% if item.eh_remanescente and item.resumo_materia %}
+              <div class="alert alert-warning py-1 px-2 mb-2" style="font-size:0.82rem;">
+                <i class="fas fa-clock me-1"></i>
+                <strong>Item remanescente.</strong>
+                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
+                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
+              </div>
+              {% endif %}
 
-    for linha in linhas:
-        if not linha:
-            if paragrafos:
-                paragrafos.append(Spacer(1, 3))
-            continue
+              {# Aviso de REQ com PL na mesma pauta #}
+              {% if item.req_pl_mesmo_dia and item.resumo_materia %}
+              <div class="alert alert-info py-1 px-2 mb-2" style="font-size:0.82rem;">
+                <i class="fas fa-link me-1"></i>
+                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
+                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
+              </div>
+              {% endif %}
+              <div class="mt-2">
+                <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
+                <div class="p-2 border rounded bg-light" style="min-height:150px; white-space:pre-wrap;">
+                  {{ item.resumo_materia | safe }}
+                </div>
+              </div>
 
-        linha_upper = linha.upper()
+              <div class="mt-2">
+                <label class="form-label small"><strong>Orientação:</strong></label><br>
+                <span class="badge bg-secondary">{{ item.orientacao or '—' }}</span>
+              </div>
 
-        # Detecta cabeçalho de seção pelo emoji ou palavra-chave
-        eh_positivo = (
-            linha.startswith('🟢') or
-            'PONTOS POSITIVOS' in linha_upper or
-            'PONTO POSITIVO' in linha_upper or
-            (('POSITIV' in linha_upper) and len(linha) < 80)
-        )
-        eh_negativo = (
-            linha.startswith('🔴') or
-            'PONTOS NEGATIVOS' in linha_upper or
-            'PONTO NEGATIVO' in linha_upper or
-            (('NEGATIV' in linha_upper or 'CRÍTICA' in linha_upper or 'CRITICA' in linha_upper) and len(linha) < 80)
-        )
-        eh_neutro = (
-            linha.startswith('📘') or
-            linha.startswith('⚖️') or
-            linha.startswith('↔️') or
-            linha.startswith('⚠️') or
-            ('RESUMO TÉCNICO' in linha_upper or
-             'RISCOS POLÍTICOS' in linha_upper or
-             'ORIENTAÇÃO SUGERIDA' in linha_upper or
-             'CRÍTICAS E PONTOS' in linha_upper) and len(linha) < 80
-        )
+              {% if item.destaques_emendas %}
+              <div class="mt-4">
+                <h6><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
+                <div class="table-responsive">
+                  <table class="table table-sm table-striped align-middle">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo Destaque</th><th>Situação</th><th>Resumo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for d in item.destaques_emendas %}
+                      <tr>
+                        <td><strong>{{ d.numero }}</strong></td>
+                        <td>{{ d.autoria }}</td>
+                        <td>{{ d.descricao }}</td>
+                        <td>{{ d.tipo_destaque }}</td>
+                        <td><span class="badge {{ 'bg-warning' if d.situacao|lower == 'em tramitação' else 'bg-secondary' }}">{{ d.situacao }}</span></td>
+                        <td style="white-space:pre-wrap;">{{ d.resumo_nota | safe }}</td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {% endif %}
 
-        if eh_positivo:
-            st = ParagraphStyle("sNotaPos", parent=estilo,
-                fontName="Helvetica-Bold", fontSize=10, leading=14,
-                textColor=C_VERDE_NT, spaceBefore=6)
-            paragrafos.append(Paragraph(linha.upper(), st))
-        elif eh_negativo:
-            st = ParagraphStyle("sNotaNeg", parent=estilo,
-                fontName="Helvetica-Bold", fontSize=10, leading=14,
-                textColor=C_VERMELHO_NT, spaceBefore=6)
-            paragrafos.append(Paragraph(linha.upper(), st))
-        elif eh_neutro:
-            st = ParagraphStyle("sNotaNeu", parent=estilo,
-                fontName="Helvetica-Bold", fontSize=10, leading=14,
-                textColor=colors.HexColor("#1a1a2e"), spaceBefore=6)
-            paragrafos.append(Paragraph(linha, st))
-        else:
-            paragrafos.append(Paragraph(linha, estilo))
+            {% else %}
+              <!-- 🔵 EDIÇÃO PARA ADMIN E ASSESSOR PLENÁRIO -->
 
-    return paragrafos if paragrafos else [Paragraph("", estilo)]
+              {# Aviso de item remanescente #}
+              {% if item.eh_remanescente and item.resumo_materia %}
+              <div class="alert alert-warning py-1 px-2 mb-2" style="font-size:0.82rem;">
+                <i class="fas fa-clock me-1"></i>
+                <strong>Item remanescente.</strong>
+                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
+                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
+              </div>
+              {% endif %}
 
-# ── Cabeçalho / Rodapé ─────────────────────────────────────────────────────
-def _header_footer(canvas, doc, logos, header_text):
-    w, h = A4
-    logo_min, logo_opo, logo_novo, logo_pl = logos
-    canvas.saveState()
+              {# Aviso de REQ com PL na mesma pauta #}
+              {% if item.req_pl_mesmo_dia and item.resumo_materia %}
+              <div class="alert alert-info py-1 px-2 mb-2" style="font-size:0.82rem;">
+                <i class="fas fa-link me-1"></i>
+                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
+                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
+              </div>
+              {% endif %}
+              <div class="mt-2">
+                <label class="form-label small"><strong>Gerar sugestão de análise (Projeto principal):</strong></label>
 
-    # ── Cabeçalho ──
-    cab_h = 1.8*cm
-    canvas.setFillColor(colors.white)
-    canvas.rect(0, h - cab_h, w, cab_h, fill=1, stroke=0)
-    canvas.setStrokeColor(C_VERDE)
-    canvas.setLineWidth(1.5)
-    canvas.line(0, h - cab_h, w, h - cab_h)
+                <!-- Botão procurar último parecer -->
+                <div class="mb-2">
+                  <button class="btn btn-outline-info btn-sm" type="button"
+                    id="btn-ultimo-doc-{{ item.ordem }}"
+                    data-id-principal="{{ item.id_principal }}"
+                    data-projeto="{{ item.projeto }}"
+                    data-ordem="{{ item.ordem }}"
+                    onclick="verificarUltimoDoc(this)">
+                    <i class="fas fa-search me-1"></i>Procurar último parecer (PRLP/Substitutivo)
+                  </button>
+                  <div id="ultimo-doc-resultado-{{ item.ordem }}" class="mt-1" style="display:none;">
+                    <small class="text-info fw-bold" id="ultimo-doc-texto-{{ item.ordem }}"></small>
+                  </div>
+                </div>
 
-    # 4 logos lado a lado — tamanho fixo rigoroso (sem preserveAspectRatio)
-    lw, lh = 1.8*cm, 1.1*cm
-    gap = 0.15*cm
-    x_start = 0.5*cm
-    y_logo = h - cab_h + (cab_h - lh) / 2
-    for path, xpos in [
-        (logo_min,  x_start),
-        (logo_opo,  x_start + (lw + gap)),
-        (logo_novo, x_start + (lw + gap) * 2),
-        (logo_pl,   x_start + (lw + gap) * 3),
-    ]:
-        if path and os.path.exists(path):
-            try:
-                canvas.drawImage(path, xpos, y_logo, width=lw, height=lh,
-                                 preserveAspectRatio=False, mask='auto')
-            except Exception:
-                pass
+                <!-- Campo: Análise baseada em -->
+                <div class="mb-2">
+                  <div class="input-group input-group-sm">
+                    <span class="input-group-text text-muted" style="font-size:0.75rem;white-space:nowrap;">
+                      <i class="fas fa-file-alt me-1"></i>Análise baseada em
+                    </span>
+                    <input type="text" class="form-control campo-baseada-em"
+                      id="baseada-em-{{ item.ordem }}"
+                      data-ordem="{{ item.ordem }}"
+                      placeholder="Ex: PRLP 7 — 21/05/2025"
+                      style="font-size:0.8rem;">
+                  </div>
+                </div>
 
-    # texto central
-    canvas.setFillColor(C_AZUL)
-    canvas.setFont("Helvetica-Bold", 9)
-    tw = stringWidth(header_text, "Helvetica-Bold", 9)
-    canvas.drawString((w - tw)/2, h - cab_h + 0.55*cm, header_text)
+                <div class="mb-2">
+                  <button class="btn btn-outline-primary btn-gerar-analise" type="button"
+                    data-ordem="{{ item.ordem }}"
+                    data-projeto="{{ item.projeto }}"
+                    data-ementa="{{ item.ementa | replace('"', '') | replace("'", '')  }}"
+                    data-autor="{{ item.autor }}"
+                    data-relator="{{ item.relator }}"
+                    data-id-principal="{{ item.id_principal }}"
+                    onclick="gerarAnalise('{{ item.ordem }}', this)">
+                    <img src="/static/logo_gemini.svg" alt="Gemini" style="width:16px;height:16px;vertical-align:middle;" class="me-2">
+                    Gerar Análise
+                  </button>
+                </div>
+                <small class="text-muted">A análise será inserida automaticamente no campo de Resumo/Nota Técnica.</small>
+              </div>
 
-    # ── Rodapé ──
-    rod_h = 1.5*cm
-    canvas.setFillColor(colors.white)
-    canvas.rect(0, 0, w, rod_h, fill=1, stroke=0)
-    canvas.setStrokeColor(C_VERDE)
-    canvas.setLineWidth(1)
-    canvas.line(0, rod_h, w, rod_h)
+              <div class="mt-2 position-relative" style="width:100%;">
+                <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
+                <textarea id="editor-resumo-materia-{{ item.ordem }}" class="d-none">{% if item.resumo_materia %}{{ item.resumo_materia | safe }}{% endif %}</textarea>
+                <div id="quill-editor-{{ item.ordem }}" data-ordem="{{ item.ordem }}" style="width:100%; background:#fff; min-height:500px;"></div>
+                <div id="overlay-{{ item.ordem }}" class="editor-overlay" style="display:none;">
+                  <div class="editor-spinner"></div>
+                  <p>📄 Modelo analisando a Proposição...<br>🧠 Gerando sugestão de nota técnica...</p>
+                </div>
+              </div>
 
-    lw_r, lh_r = 1.6*cm, 1.0*cm
-    y_rod = (rod_h - lh_r) / 2
-    for path, xpos in [
-        (logo_min,  0.4*cm),
-        (logo_opo,  0.4*cm + (lw_r + gap)),
-        (logo_novo, 0.4*cm + (lw_r + gap) * 2),
-        (logo_pl,   0.4*cm + (lw_r + gap) * 3),
-    ]:
-        if path and os.path.exists(path):
-            try:
-                canvas.drawImage(path, xpos, y_rod, width=lw_r, height=lh_r,
-                                 preserveAspectRatio=False, mask='auto')
-            except Exception:
-                pass
+              <div class="mt-2">
+                <label class="form-label small"><strong>Orientação:</strong></label>
+                <select class="form-control editable-field orientacao" data-ordem="{{ item.ordem }}">
+                  <option value="" {% if not item.orientacao %}selected{% endif %}>Selecione</option>
+                  <option value="NEGOCIAÇÃO" {% if item.orientacao == 'NEGOCIAÇÃO' %}selected{% endif %}>NEGOCIAÇÃO</option>
+                  <option value="SIM" {% if item.orientacao == 'SIM' %}selected{% endif %}>SIM</option>
+                  <option value="NÃO" {% if item.orientacao == 'NÃO' %}selected{% endif %}>NÃO</option>
+                  <option value="LIBERADO" {% if item.orientacao == 'LIBERADO' %}selected{% endif %}>LIBERADO</option>
+                  <option value="OBSTRUÇÃO" {% if item.orientacao == 'OBSTRUÇÃO' %}selected{% endif %}>OBSTRUÇÃO</option>
+                  <option value="ABSTENÇÃO" {% if item.orientacao == 'ABSTENÇÃO' %}selected{% endif %}>ABSTENÇÃO</option>
+                </select>
+              </div>
 
-    canvas.setFillColor(C_CINZA)
-    canvas.setFont("Helvetica", 7.5)
-    canvas.drawCentredString(w/2, 0.55*cm,
-        "Lideranças da Minoria e da Oposição — Plenário / Câmara dos Deputados")
-    canvas.setFont("Helvetica-Bold", 8)
-    canvas.setFillColor(C_AZUL)
-    canvas.drawRightString(w - 0.8*cm, 0.55*cm, str(doc.page))
+              {% if item.destaques_emendas %}
+              <div class="mt-4">
+                <h6><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
+                <div class="table-responsive">
+                  <table class="table table-sm table-striped align-middle">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo Destaque</th><th>Situação</th><th>IA</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for d in item.destaques_emendas %}
+                      <tr>
+                        <td><strong>{{ d.numero }}</strong></td>
+                        <td>{{ d.autoria }}</td>
+                        <td>{{ d.descricao }}</td>
+                        <td>{{ d.tipo_destaque }}</td>
+                        <td><span class="badge {{ 'bg-warning' if d.situacao|lower == 'em tramitação' else 'bg-secondary' }}">{{ d.situacao }}</span></td>
+                        <td>
+                          <button class="btn btn-outline-primary btn-sm"
+                            onclick="analisarDestaque(this)"
+                            data-id-principal="{{ item.id_principal }}"
+                            data-descricao="{{ d.descricao | replace('"','') }}"
+                            data-numero="{{ d.numero }}"
+                            data-autoria="{{ d.autoria | replace('"','') }}"
+                            data-projeto="{{ item.projeto }}">
+                            <i class="fas fa-robot"></i>
+                          </button>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td colspan="6">
+                          <div id="analise-destaque-{{ d.numero | replace(' ','-') }}" class="mt-1" style="display:none;">
+                            <div class="p-2 border rounded bg-light" style="font-size:0.85rem;"></div>
+                          </div>
+                          <label class="form-label small mt-2"><strong>Resumo/Nota Técnica — {{ d.numero }}:</strong></label>
+                          <textarea id="editor-resumo-destaque-{{ item.ordem }}-{{ loop.index }}" class="editable-field" data-numero="{{ d.numero }}">{% if d.resumo_nota %}{{ d.resumo_nota | safe }}{% endif %}</textarea>
+                        </td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {% endif %}
 
-    canvas.restoreState()
+              <div class="d-flex align-items-center gap-3 mt-3 flex-wrap">
+                <button class="btn btn-primary btn-sm save-btn"
+                        data-ordem="{{ item.ordem }}"
+                        data-id-principal="{{ item.id_principal }}">Salvar</button>
+                <small class="text-muted" id="info-salvo-{{ item.ordem }}" style="font-size:0.8rem;">
+                  {% if item.saved_by and item.saved_at %}
+                    <i class="fas fa-check-circle text-success me-1"></i>
+                    Salvo por <strong>{{ item.saved_by }}</strong> em {{ item.saved_at | datetimeformat('%d/%m/%Y %H:%M') }}
+                  {% endif %}
+                </small>
+              </div>
 
-# ── Doc template ───────────────────────────────────────────────────────────
-class PautaDocTemplate(BaseDocTemplate):
-    def __init__(self, *args, **kwargs):
-        self.pdf_title = kwargs.pop("pdf_title", None)
-        super().__init__(*args, **kwargs)
-    def build(self, flowables, **kwargs):
-        def canvasmaker(*args, **kw):
-            c = pdfcanvas.Canvas(*args, **kw)
-            if self.pdf_title:
-                c.setTitle(self.pdf_title)
-            return c
-        super().build(flowables, canvasmaker=canvasmaker)
+              <!-- DESTAQUES -->
+              <div class="mt-4">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                  <h6 class="mb-0"><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
+                  <button class="btn btn-outline-warning btn-sm btn-buscar-destaques"
+                          data-id-proposicao="{{ item.id_principal }}"
+                          data-ordem="{{ item.ordem }}"
+                          data-projeto="{{ item.projeto }}">
+                    <i class="fas fa-search me-1"></i>Buscar Destaques
+                  </button>
+                  <span class="spinner-busca-{{ item.ordem }}" style="display:none;">
+                    <span class="spinner-border spinner-border-sm text-warning"></span>
+                    Buscando...
+                  </span>
+                </div>
+                <div id="tabela-destaques-{{ item.ordem }}" style="display:none;">
+                  <div class="table-responsive">
+                    <table class="table table-sm table-striped align-middle">
+                      <thead class="table-warning">
+                        <tr>
+                          <th>Número</th>
+                          <th>Autoria</th>
+                          <th>Descrição</th>
+                          <th>Tipo</th>
+                          <th>Situação</th>
+                          <th>IA</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tbody-destaques-{{ item.ordem }}"></tbody>
+                    </table>
+                  </div>
+                  <div id="sem-destaques-{{ item.ordem }}" class="alert alert-info py-2" style="display:none;">
+                    <i class="fas fa-info-circle me-2"></i>Nenhum destaque em tramitação encontrado para esta proposição.
+                  </div>
+                </div>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="alert alert-info">Nenhum item encontrado na pauta para este evento.</div>
+    {% endif %}
+    {% endif %} {# fecha o else do restrito #}
+  </div>
 
-# ── Dados ──────────────────────────────────────────────────────────────────
-def _get_evento(evento_id):
-    try:
-        r = requests.get(f"https://dadosabertos.camara.leg.br/api/v2/eventos/{evento_id}", timeout=10)
-        d = r.json().get("dados", {})
-        return {
-            "descricao": d.get("descricao",""),
-            "dataHoraInicio": d.get("dataHoraInicio",""),
-            "local": d.get("localCamara",{}).get("nome","Plenário")
-                     if isinstance(d.get("localCamara"), dict) else d.get("localCamara","Plenário")
+    <!-- JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+  <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+  <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
+
+  <script>
+    const quillInstances = {};
+
+    // Inicializa Quill quando collapse abre
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('.collapse').forEach(collapseEl => {
+        collapseEl.addEventListener('shown.bs.collapse', () => {
+          const quillDiv = collapseEl.querySelector('[id^="quill-editor-"]');
+          if (!quillDiv) return;
+          const ordem = quillDiv.dataset.ordem;
+          if (quillInstances[ordem]) return;
+
+          const textarea = collapseEl.querySelector(`#editor-resumo-materia-${ordem}`);
+          const conteudo = textarea ? textarea.value : '';
+
+          const quill = new Quill(`#quill-editor-${ordem}`, {
+            theme: 'snow',
+            modules: {
+              toolbar: [
+                ['bold', 'italic', 'underline'],
+                [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                ['clean']
+              ]
+            }
+          });
+
+          if (conteudo) quill.clipboard.dangerouslyPasteHTML(conteudo);
+          quillInstances[ordem] = quill;
+        });
+      });
+
+      // Botão SALVAR
+      document.querySelectorAll('.save-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const ordem = btn.dataset.ordem;
+          const idPrincipal = btn.dataset.idPrincipal;
+
+          const quill = quillInstances[ordem];
+          const resumoMateria = quill ? quill.root.innerHTML : '';
+
+          const orientacaoEl = document.querySelector(`.orientacao[data-ordem="${ordem}"]`);
+          const orientacao = orientacaoEl ? orientacaoEl.value : '';
+
+          const dataToSend = {
+            evento_id: {{ evento_id|safe }},
+            ordem,
+            id_principal: idPrincipal,
+            resumo_materia: resumoMateria,
+            orientacao,
+            resumo_parecer: '',
+            destaques: []
+          };
+
+          const originalHtml = btn.innerHTML;
+          btn.disabled = true;
+          btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Salvando...';
+
+          // Lê campo "baseada em" e atualiza no Quill se preenchido
+          const campoBaseada = document.getElementById('baseada-em-' + ordem);
+          if (campoBaseada && campoBaseada.value.trim()) {
+            atualizarBaseadaEm(ordem, campoBaseada.value.trim());
+            // Re-lê o resumo já com a linha atualizada
+            dataToSend.resumo_materia = quillInstances[ordem] ? quillInstances[ordem].root.innerHTML : dataToSend.resumo_materia;
+          }
+
+          try {
+            const r = await fetch('/save_item', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(dataToSend)
+            });
+            const j = await r.json();
+            btn.innerHTML = '<i class="fas fa-check me-1"></i>Salvo!';
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-outline-success');
+
+            // Avisa se orientação não foi exportada para o quadro
+            if (orientacao && j.grupo_exportado === null) {
+              setTimeout(() => {
+                alert('⚠️ Orientação salva na pauta, mas NÃO foi exportada para o quadro de orientações.\n\nMotivo: seu usuário não tem categoria de grupo (minoria, oposicao, PL ou NOVO).\n\nContate o administrador para configurar sua categoria.');
+              }, 500);
+            } else if (orientacao && j.grupo_exportado) {
+              const infoOri = document.getElementById(`info-salvo-${ordem}`);
+              if (infoOri) {
+                const badge = document.createElement('span');
+                badge.className = 'badge bg-success ms-2';
+                badge.style.fontSize = '0.7rem';
+                badge.textContent = `→ Quadro ${j.grupo_exportado}`;
+                infoOri.appendChild(badge);
+              }
+            }
+
+            // Atualiza info de salvamento ao lado do botão
+            const agora = new Date();
+            const horaFmt = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
+            const infoEl = document.getElementById(`info-salvo-${ordem}`);
+            if (infoEl) infoEl.innerHTML = `<i class="fas fa-check-circle text-success me-1"></i>Salvo por <strong>{{ current_user.username }}</strong> em ${horaFmt}`;
+
+            // Atualiza cabeçalho da sessão
+            const ultimoEl = document.getElementById('ultimo-salvamento');
+            const usuarioEl = document.getElementById('ultimo-usuario');
+            if (ultimoEl) ultimoEl.textContent = horaFmt;
+            if (usuarioEl) usuarioEl.innerHTML = ` — por <strong>{{ current_user.username }}</strong>`;
+
+            setTimeout(() => {
+              btn.innerHTML = originalHtml;
+              btn.classList.remove('btn-outline-success');
+              btn.classList.add('btn-success');
+              btn.disabled = false;
+            }, 2500);
+          } catch (error) {
+            alert('Erro ao salvar: falha na conexão.');
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+          }
+        });
+      });
+
+      // Cache de resumos IA (global para uso em orientações e iconográfico)
+      window.resumoCache = window.resumoCache || {};
+      const resumoCache = window.resumoCache;
+
+    async function carregarResumoIA(el) {
+      const id     = el.dataset.id;
+      const proj   = el.dataset.projeto;
+      const ementa = el.dataset.ementa;
+      const autor  = el.dataset.autor;
+      if (resumoCache[id]) {
+        el.textContent = resumoCache[id];
+        el.style.display = 'block';
+        return;
+      }
+      try {
+        const r = await fetch('/resumo_ementa', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({id_principal: id, projeto: proj, ementa, autor})
+        });
+        const j = await r.json();
+        if (j.resumo) {
+          // Rejeita resumo igual (ou quase igual) à ementa — força branco
+          const resumoLimpo = j.resumo.trim();
+          const ementaLimpa = (ementa || '').trim();
+          const muitoSimilar = resumoLimpo.length > 20 &&
+            (resumoLimpo === ementaLimpa ||
+             ementaLimpa.startsWith(resumoLimpo.substring(0, Math.min(80, resumoLimpo.length))) ||
+             resumoLimpo.startsWith(ementaLimpa.substring(0, Math.min(80, ementaLimpa.length))));
+          if (muitoSimilar) return; // deixa em branco
+          resumoCache[id] = resumoLimpo;
+          el.textContent = j.resumo;
+          el.style.display = 'block';
+          // Salva no backend para exportar/infográfico
+          fetch('/salvar_resumo_ia', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({evento_id: window.EVENTO_ID, id_principal: id, resumo: j.resumo})
+          }).catch(()=>{});
         }
-    except Exception:
-        return {"descricao":"","dataHoraInicio":"","local":"Plenário"}
+      } catch(e) { /* silencioso */ }
+    }
 
-def _get_itens(evento_id):
-    try:
-        from app import fetch_pauta, get_conn
-        itens, _ = fetch_pauta(evento_id, force_reload=False)
-        # Carrega resumos IA
-        resumos = {}
-        try:
-            conn = get_conn()
-            c = conn.cursor()
-            c.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
-            resumos = {str(r[0]): r[1] for r in c.fetchall()}
-            conn.close()
-        except Exception:
-            pass
-        for item in itens:
-            rid = str(item.get('id_principal',''))
-            if rid in resumos:
-                item['resumo_ia'] = resumos[rid]
-        return itens
-    except Exception as e:
-        current_app.logger.error(f"Erro ao obter itens: {e}")
-        return []
+    // Carrega resumos e popula ITENS_DATA com resumo_ia
+    async function carregarTodosResumos() {
+      // 1. Pré-carrega resumos já salvos no banco (evita chamadas IA desnecessárias)
+      try {
+        const rCache = await fetch('/resumos_evento/' + window.EVENTO_ID);
+        if (rCache.ok) {
+          const cached = await rCache.json();
+          Object.entries(cached).forEach(([id, resumo]) => {
+            if (resumo) {
+              resumoCache[id] = resumo;
+              const el = document.getElementById('resumo-ia-' + id);
+              if (el) { el.textContent = resumo; el.style.display = 'block'; }
+              if (window.ITENS_DATA) {
+                const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
+                if (item) item.resumo_ia = resumo;
+              }
+            }
+          });
+        }
+      } catch(e) {}
 
-# ── Rota ──────────────────────────────────────────────────────────────────
-@exportar_bp.route("/<int:evento_id>")
-def exportar_pauta(evento_id):
-    try:
-        evento = _get_evento(evento_id)
-        itens  = _get_itens(evento_id)
-        if not itens:
-            return "Nenhum item encontrado para esta pauta.", 200
+      // 2. Para itens sem resumo em cache, gera via IA
+      const els = document.querySelectorAll('.resumo-ia-ementa');
+      for (const el of els) {
+        await carregarResumoIA(el);
+        const id = el.dataset.id;
+        if (window.ITENS_DATA) {
+          const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
+          if (item && resumoCache[id]) item.resumo_ia = resumoCache[id];
+        }
+      }
+    }
+    // Enriquece autor e relator com partido via API da Câmara (no browser)
+    async function enriquecerPartidos() {
+      const itens = window.ITENS_DATA || [];
+      const temPartido = txt => /\([A-Z]{2,}-[A-Z]{2}\)/.test(txt || '');
 
-        static_path = os.path.join(current_app.root_path, "static")
-        logo_min  = os.path.join(static_path, "logo_minoria.png")
-        logo_opo  = os.path.join(static_path, "logo_oposicao.png")
-        logo_novo = os.path.join(static_path, "logo_novo.png")
-        logo_pl   = os.path.join(static_path, "logo_pl.png")
+      for (const item of itens) {
+        const id = item.id_principal;
+        const spanAutor   = document.getElementById('autor-' + id);
+        const spanRelator = document.getElementById('relator-' + id);
 
-        # ── Estilos ──
-        SS = getSampleStyleSheet()
+        // Sempre busca autores para garantir limite de 2 e partido
+        if (spanAutor) {
+          try {
+            const r = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${id}/autores`,
+              {headers: {'Accept': 'application/json'}});
+            if (r.ok) {
+              const dados = (await r.json()).dados || [];
+              const autores = dados.map(a => {
+                const p = a.siglaPartido || ''; const uf = a.siglaUf || '';
+                const suf = p && uf ? `(${p}-${uf})` : p ? `(${p})` : '';
+                return a.nome ? (suf ? `${a.nome} ${suf}` : a.nome) : null;
+              }).filter(Boolean);
+              if (autores.length > 0) {
+                spanAutor.textContent = autores.length > 2
+                  ? autores.slice(0,2).join(', ') + ' e outros.'
+                  : autores.join(', ');
+              }
+            }
+          } catch(e) {}
+        }
 
-        sTitle = ParagraphStyle("sTitle", parent=SS["Title"],
-            fontSize=16, leading=20, alignment=TA_CENTER,
-            textColor=C_AZUL, spaceAfter=6)
-        sSubtitle = ParagraphStyle("sSubtitle", parent=SS["Normal"],
-            fontSize=10, leading=13, alignment=TA_CENTER,
-            textColor=C_CINZA, spaceAfter=12)
-        sNormal = ParagraphStyle("sNormal", parent=SS["Normal"],
-            fontSize=9.5, leading=13, wordWrap="CJK")
-        sBold = ParagraphStyle("sBold", parent=SS["Normal"],
-            fontName="Helvetica-Bold", fontSize=10, leading=13)
-        # Nota técnica: Helvetica legível, preta
-        sNota = ParagraphStyle("sNota", parent=SS["Normal"],
-            fontName="Helvetica", fontSize=9, leading=14,
-            textColor=colors.black, wordWrap="CJK",
-            leftIndent=6, rightIndent=6)
-        sOri = ParagraphStyle("sOri", parent=SS["Normal"],
-            fontName="Helvetica-Bold", fontSize=13, leading=16,
-            alignment=TA_CENTER)
-        sResumoIA = ParagraphStyle("sResumoIA", parent=SS["Normal"],
-            fontName="Helvetica-Oblique", fontSize=9, leading=12,
-            textColor=C_VERDE, leftIndent=6)
+        if (spanRelator && !temPartido(spanRelator.textContent)) {
+          try {
+            const r = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${id}/tramitacoes?itens=10&ordem=DESC`,
+              {headers: {'Accept': 'application/json'}});
+            if (r.ok) {
+              const trams = (await r.json()).dados || [];
+              for (const t of trams) {
+                const desp = (t.despacho || '').toLowerCase();
+                if (desp.includes('relator')) {
+                  const mNome = t.despacho.match(/Dep\.\s+([A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+)+)/);
+                  if (mNome) {
+                    const nome = mNome[1];
+                    const rDep = await fetch(`https://dadosabertos.camara.leg.br/api/v2/deputados?nome=${encodeURIComponent(nome)}&itens=1`,
+                      {headers: {'Accept': 'application/json'}});
+                    if (rDep.ok) {
+                      const deps = (await rDep.json()).dados || [];
+                      if (deps[0]) {
+                        const p = deps[0].siglaPartido || ''; const uf = deps[0].siglaUf || '';
+                        const suf = p && uf ? `(${p}-${uf})` : '';
+                        spanRelator.textContent = suf ? `${nome} ${suf}` : nome;
+                      }
+                    }
+                  }
+                  break;
+                }
+              }
+            }
+          } catch(e) {}
+        }
+      }
+    }
+    setTimeout(enriquecerPartidos, 1500);
+    setTimeout(carregarTodosResumos, 1000);
+      document.addEventListener('change', async (e) => {
+        const sel = e.target.closest('.select-responsavel');
+        if (!sel) return;
+        const itemKey  = sel.dataset.itemKey;
+        const eventoId = sel.dataset.eventoId;
+        const username = sel.value;
+        try {
+          const r = await fetch('/atribuir_responsavel', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({item_key: itemKey, evento_id: eventoId, responsavel_username: username})
+          });
+          // Verifica se sessão expirou (retornou HTML de login)
+          const ct = r.headers.get('content-type') || '';
+          if (!ct.includes('application/json')) {
+            if (r.status === 401 || r.url.includes('login')) {
+              alert('Sessão expirada. Faça login novamente.');
+              window.location.href = '/login';
+              return;
+            }
+            const txt = await r.text();
+            alert('Erro inesperado: ' + txt.substring(0, 200));
+            return;
+          }
+          const j = await r.json();
+          if (j.error) { alert(j.error); return; }
+          // Atualiza container com logo + foto + nome
+          const container = sel.closest('[id^="resp-container-"]');
+          if (container) {
+            // Remove elementos antigos (logo, foto, small)
+            container.querySelectorAll('img:not(select img), small').forEach(el => el.remove());
+            if (!username) {
+              const sm = document.createElement('small');
+              sm.className = 'text-muted fst-italic';
+              sm.textContent = 'Sem responsável atribuído';
+              sel.before(sm);
+            } else {
+              const r2 = await fetch('/listar_assessores');
+              const j2 = await r2.json();
+              const assessor = j2.assessores.find(a => a.username === username);
+              if (assessor) {
+                // Logo da bancada primeiro
+                if (assessor.categoria === 'minoria') {
+                  const logo = document.createElement('img');
+                  logo.src = '/static/logo_minoria.png';
+                  logo.style.cssText = 'height:22px;object-fit:contain;';
+                  logo.alt = 'Minoria';
+                  sel.before(logo);
+                } else if (assessor.categoria === 'oposicao') {
+                  const logo = document.createElement('img');
+                  logo.src = '/static/logo_oposicao.png';
+                  logo.style.cssText = 'height:22px;object-fit:contain;';
+                  logo.alt = 'Oposição';
+                  sel.before(logo);
+                }
+                // Foto do usuário
+                if (assessor.foto) {
+                  const foto = document.createElement('img');
+                  foto.src = assessor.foto;
+                  foto.alt = assessor.nome;
+                  foto.style.cssText = 'width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid #ccc;';
+                  sel.before(foto);
+                }
+                // Nome
+                const sm = document.createElement('small');
+                sm.className = 'text-muted';
+                sm.innerHTML = 'Responsável: <strong>' + assessor.nome + '</strong>';
+                sel.before(sm);
+              }
+            }
+          }
+        } catch(err) { alert('Erro: ' + err.message); }
+      });
+      document.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.btn-buscar-destaques');
+        if (!btn) return;
+        const idProp  = btn.dataset.idProposicao;
+        const ordem   = btn.dataset.ordem;
+        const spinner = document.querySelector(`.spinner-busca-${ordem}`);
+        const tabela  = document.getElementById(`tabela-destaques-${ordem}`);
+        const tbody   = document.getElementById(`tbody-destaques-${ordem}`);
+        const semMsg  = document.getElementById(`sem-destaques-${ordem}`);
+        if (!tabela || !tbody) return;
 
-        buffer = BytesIO()
-        data_txt = data_ptbr(evento.get("dataHoraInicio",""))
-        header_text = f"Sessão Deliberativa — Plenário  |  {data_txt}"
+        btn.disabled = true;
+        if (spinner) spinner.style.display = 'inline-flex';
+        tabela.style.display = 'none';
+        tbody.innerHTML = '';
+        if (semMsg) semMsg.style.display = 'none';
 
-        doc = PautaDocTemplate(buffer,
-            pdf_title=f"Pauta_{evento_id}",
-            pagesize=A4,
-            leftMargin=1.8*cm, rightMargin=1.8*cm,
-            topMargin=2.4*cm, bottomMargin=2.2*cm)
-        frame = Frame(doc.leftMargin, doc.bottomMargin,
-                      doc.width, doc.height - 0.3*cm, id="normal")
-        doc.addPageTemplates([PageTemplate(
-            id="main", frames=[frame],
-            onPage=lambda c, d: _header_footer(c, d, (logo_min, logo_opo, logo_novo, logo_pl), header_text)
-        )])
+        try {
+          // Busca direto no browser (sem passar pelo Railway que é bloqueado)
+          let destaques = [];
+          try {
+            const urlDtq = `https://www.camara.leg.br/pplen/destaques.html?codOrgao=180&codProposicao=${idProp}`;
+            const rDtq = await fetch(urlDtq, {headers: {'Accept': 'text/html'}});
+            if (rDtq.ok) {
+              const html = await rDtq.text();
+              // Parser manual do HTML de destaques
+              const parser = new DOMParser();
+              const doc2   = parser.parseFromString(html, 'text/html');
+              doc2.querySelectorAll('tr').forEach(tr => {
+                const cols = tr.querySelectorAll('td');
+                if (cols.length < 5) return;
+                const numero = cols[0].textContent.trim();
+                if (!numero.toUpperCase().includes('DTQ')) return;
+                destaques.push({
+                  numero:       numero,
+                  autoria:      cols[1].textContent.trim(),
+                  descricao:    cols[2].textContent.trim(),
+                  tipo_destaque:cols[3].textContent.trim(),
+                  situacao:     cols[4].textContent.trim(),
+                });
+              });
+            }
+          } catch(eCors) {
+            // CORS bloqueado — fallback para rota do servidor
+            const r = await fetch(`/destaques/${idProp}`);
+            const j = await r.json();
+            destaques = j.destaques || [];
+          }
 
-        story = []
+          // Se frontend também falhou, tenta servidor como fallback
+          if (destaques.length === 0) {
+            const r = await fetch(`/destaques/${idProp}`);
+            const j = await r.json();
+            destaques = j.destaques || [];
+          }
 
-        # ── Capa ──
-        story.append(Spacer(1, 0.5*cm))
-        story.append(Paragraph("PAUTA DO PLENÁRIO", sTitle))
-        story.append(Paragraph(
-            f"{evento.get('descricao','')}  |  {data_txt}  |  {evento.get('local','Plenário')}",
-            sSubtitle))
-        story.append(HRFlowable(width="100%", thickness=1.5, color=C_VERDE, spaceAfter=8))
+          tabela.style.display = 'block';
+          if (destaques.length > 0) {
+            // Salva em memória global por idProp para uso posterior na análise
+            if (!window._destaquesMem) window._destaquesMem = {};
+            window._destaquesMem[idProp] = destaques;
+            const projeto = btn.dataset.projeto || '';
+            destaques.forEach(d => {
+              const badge = d.situacao.toLowerCase().includes('tramitação')
+                ? `<span class="badge bg-warning text-dark">${d.situacao}</span>`
+                : `<span class="badge bg-secondary">${d.situacao}</span>`;
+              tbody.innerHTML += `<tr>
+                <td><strong>${d.numero}</strong></td>
+                <td>${d.autoria}</td>
+                <td>${d.descricao}</td>
+                <td>${d.tipo_destaque}</td>
+                <td>${badge}</td>
+                <td>
+                  <button class="btn btn-outline-primary btn-sm"
+                    onclick="analisarDestaque(this)"
+                    data-id-principal="${idProp}"
+                    data-descricao="${d.descricao.replace(/"/g,"'")}"
+                    data-numero="${d.numero}"
+                    data-autoria="${(d.autoria||'').replace(/"/g,"'")}"
+                    data-projeto="${projeto}">
+                    <i class="fas fa-robot"></i>
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td colspan="6">
+                  <div id="analise-destaque-${d.numero.replace(/\s/g,'-')}" class="mt-1" style="display:none;">
+                    <div class="p-2 border rounded bg-light" style="font-size:0.85rem;"></div>
+                  </div>
+                </td>
+              </tr>`;
+            });
+          } else {
+            if (semMsg) semMsg.style.display = 'block';
+          }
+        } catch(err) {
+          tabela.style.display = 'block';
+          if (semMsg) { semMsg.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>Erro: ${err.message}`; semMsg.style.display = 'block'; }
+        } finally {
+          if (spinner) spinner.style.display = 'none';
+          btn.disabled = false;
+        }
+      });
 
-        # ── Estilos da tabela resumo ──
-        sThead = ParagraphStyle("sThead", parent=SS["Normal"],
-            fontName="Helvetica-Bold", fontSize=9, leading=11,
-            alignment=TA_CENTER, textColor=C_AZUL_TABELA)
-        sNum = ParagraphStyle("sNum", parent=SS["Normal"],
-            fontSize=9, leading=11, alignment=TA_CENTER)
-        sObjeto = ParagraphStyle("sObjeto", parent=SS["Normal"],
-            fontSize=8.5, leading=12, alignment=TA_CENTER, wordWrap="CJK",
-            textColor=colors.black)
-        sOri_tab = ParagraphStyle("sOri_tab", parent=SS["Normal"],
-            fontName="Helvetica-Bold", fontSize=9, leading=11,
-            alignment=TA_CENTER)
-        sProjTitulo = ParagraphStyle("sProjTitulo", parent=SS["Normal"],
-            fontName="Helvetica-Bold", fontSize=9.5, leading=12,
-            alignment=TA_CENTER)
+    });
 
-        # ── Tabela resumo ──
-        story.append(Paragraph("Itens da Pauta", sBold))
-        story.append(Spacer(1, 4))
+    // Botão Gerar Análise — usa ementa da proposição via Groq
+    async function gerarAnalise(ordem, btn) {
+      const ementa       = btn.dataset.ementa || '';
+      const projeto      = btn.dataset.projeto || '';
+      const autor        = btn.dataset.autor || '';
+      const relator      = btn.dataset.relator || '';
+      const id_principal = btn.dataset.idPrincipal || '';
 
-        thead = [
-            Paragraph("<b>#</b>", sThead),
-            Paragraph("<b>Proposição</b>", sThead),
-            Paragraph("<b>Objeto</b>", sThead),
-            Paragraph("<b>Orientação</b>", sThead),
-        ]
-        tdata = [thead]
-        for it in itens:
-            cor_t, cor_bg = cor_tipo(it.get("projeto",""))
-            ori = (it.get("orientacao","") or "").strip().upper()
-            cor_ori, _ = CORES_ORI.get(ori, (C_CINZA, C_CINZA_LT))
+      // Primeiro lista documentos disponíveis
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando documentos...';
 
-            # Coluna proposição: título + ementa num único Paragraph (resolve split entre páginas)
-            proj_titulo  = it.get("projeto","—")
-            ementa_curta = _strip_html(it.get("ementa","") or "")
+      let docs = [];
+      try {
+        const rDocs = await fetch('/listar_documentos/' + id_principal);
+        if (rDocs.ok) { const jDocs = await rDocs.json(); docs = jDocs.documentos || []; }
+      } catch(e) {}
 
-            try:
-                cor_hex = '#' + ''.join(f'{int(x*255):02X}' for x in cor_t.rgb())
-            except Exception:
-                cor_hex = '#0D2B5E'
+      btn.disabled = false;
+      btn.innerHTML = '<img src="/static/logo_gemini.svg" alt="Gemini" style="width:16px;height:16px;vertical-align:middle;" class="me-2">Gerar Análise';
 
-            # Escapa caracteres XML especiais no título e ementa
-            import xml.sax.saxutils as _xml
-            proj_titulo_esc  = _xml.escape(proj_titulo)
-            ementa_curta_esc = _xml.escape(ementa_curta) if ementa_curta else ''
+      // Abre modal de seleção de documento
+      await selecionarDocEAnalisar(ordem, btn, id_principal, projeto, ementa, autor, relator, docs);
+    }
 
-            proj_xml = f'<b><font color="{cor_hex}" size="9.5">{proj_titulo_esc}</font></b>'
-            if ementa_curta_esc:
-                proj_xml += f'<br/><font color="{cor_hex}" size="7"><i>{ementa_curta_esc}</i></font>'
+    async function selecionarDocEAnalisar(ordem, btnOrig, id_principal, projeto, ementa, autor, relator, docs) {
+      return new Promise((resolve) => {
+        document.getElementById('modal-sel-analise')?.remove();
+        const modalEl = document.createElement('div');
+        modalEl.id = 'modal-sel-analise';
+        modalEl.className = 'modal fade';
+        modalEl.setAttribute('tabindex','-1');
 
-            proj_para = Paragraph(proj_xml,
-                ParagraphStyle("pm"+str(it.get("ordem",0)),
-                    parent=SS["Normal"], alignment=TA_CENTER, wordWrap="CJK"))
+        const mDialog  = document.createElement('div'); mDialog.className = 'modal-dialog';
+        const mContent = document.createElement('div'); mContent.className = 'modal-content';
+        const mHeader  = document.createElement('div'); mHeader.className = 'modal-header bg-primary text-white';
+        const mTitle   = document.createElement('h6');  mTitle.className = 'modal-title';
+        mTitle.textContent = 'Selecione o documento para análise IA';
+        const mClose = document.createElement('button'); mClose.type='button'; mClose.className='btn-close btn-close-white'; mClose.setAttribute('data-bs-dismiss','modal');
+        mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
 
-            # Coluna objeto: resumo IA em preto sem itálico
-            resumo_ia_tab = _strip_html(it.get("resumo_ia","") or "")
+        const mBody = document.createElement('div'); mBody.className = 'modal-body';
+        const mInfo = document.createElement('p'); mInfo.className = 'small text-muted mb-2';
+        mInfo.textContent = docs.length > 0
+          ? 'A IA usará o documento selecionado como base. A linha "Análise baseada em" será atualizada.'
+          : 'Nenhum documento encontrado — a análise usará a ementa.';
+        mBody.appendChild(mInfo);
 
-            tdata.append([
-                Paragraph(str(it.get("ordem","—")), sNum),
-                proj_para,
-                Paragraph(resumo_ia_tab or "—", sObjeto),
-                Paragraph(ori or "—",
-                    ParagraphStyle("ot"+str(it.get("ordem",0)),
-                        parent=sOri_tab, textColor=cor_ori)),
-            ])
+        if (docs.length > 0) {
+          docs.forEach((d, i) => {
+            const wrap = document.createElement('div'); wrap.className = 'form-check mb-1 d-flex align-items-start gap-2';
+            const inp = document.createElement('input'); inp.className='form-check-input mt-1'; inp.type='radio'; inp.name='doc_analise'; inp.id='dan_'+i; inp.value=String(i);
+            if (i === 0) inp.checked = true;
+            const lbl = document.createElement('label'); lbl.className='form-check-label small flex-grow-1'; lbl.setAttribute('for','dan_'+i); lbl.textContent=d.label;
+            const btnVer = document.createElement('button'); btnVer.type='button'; btnVer.className='btn btn-outline-secondary btn-sm py-0 px-1'; btnVer.style.fontSize='0.7rem'; btnVer.textContent='👁 Ver';
+            btnVer.addEventListener('click', () => verTextoDoc(d.url, d.label));
+            wrap.appendChild(inp); wrap.appendChild(lbl); wrap.appendChild(btnVer);
+            mBody.appendChild(wrap);
+          });
+        }
 
-        tbl = Table(tdata, colWidths=[1.0*cm, 4.0*cm, 9.2*cm, 2.4*cm],
-                    repeatRows=1, splitByRow=True)
-        tbl_style = [
-            # Cabeçalho
-            ("BACKGROUND",    (0,0), (-1,0), colors.white),
-            ("LINEBELOW",     (0,0), (-1,0), 1.5, C_AZUL_TABELA),
-            # Grid
-            ("GRID",          (0,0), (-1,-1), 0.3, colors.HexColor("#cccccc")),
-            ("ROWBACKGROUNDS",(0,1), (-1,-1), [colors.white, C_CINZA_LT]),
-            # Alinhamento vertical MIDDLE para todas as células
-            ("VALIGN",        (0,0), (-1,-1), "MIDDLE"),
-            # Centralização horizontal (via Paragraph com TA_CENTER)
-            ("ALIGN",         (0,0), (-1,-1), "CENTER"),
-            # Padding
-            ("TOPPADDING",    (0,0), (-1,-1), 5),
-            ("BOTTOMPADDING", (0,0), (-1,-1), 5),
-            ("LEFTPADDING",   (0,0), (-1,-1), 4),
-            ("RIGHTPADDING",  (0,0), (-1,-1), 4),
-        ]
-        tbl.setStyle(TableStyle(tbl_style))
-        story.append(tbl)
-        story.append(PageBreak())
+        const mFooter = document.createElement('div'); mFooter.className = 'modal-footer';
+        const btnCancelar = document.createElement('button'); btnCancelar.type='button'; btnCancelar.className='btn btn-secondary btn-sm'; btnCancelar.setAttribute('data-bs-dismiss','modal'); btnCancelar.textContent='Cancelar';
+        const btnOk = document.createElement('button'); btnOk.type='button'; btnOk.className='btn btn-primary btn-sm';
+        btnOk.innerHTML = '<i class="fas fa-robot me-1"></i>Analisar';
+        mFooter.appendChild(btnCancelar); mFooter.appendChild(btnOk);
 
-        # ── Itens detalhados ──
-        for it in itens:
-            projeto = it.get("projeto","")
-            cor_t, cor_bg = cor_tipo(projeto)
-            ori = (it.get("orientacao","") or "").strip().upper()
-            cor_ori, cor_ori_bg = CORES_ORI.get(ori, (C_CINZA, C_CINZA_LT))
-            resumo_materia = _strip_html(it.get("resumo_materia",""))
-            resumo_ia      = it.get("resumo_ia","") or ""
+        mContent.appendChild(mHeader); mContent.appendChild(mBody); mContent.appendChild(mFooter);
+        mDialog.appendChild(mContent); modalEl.appendChild(mDialog);
+        document.body.appendChild(modalEl);
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
 
-            bloco = []
-            import xml.sax.saxutils as _xml2
+        btnOk.addEventListener('click', async () => {
+          const sel = mBody.querySelector('input[name="doc_analise"]:checked');
+          const docSel = sel && docs.length > 0 ? docs[parseInt(sel.value)] : null;
+          modal.hide();
 
-            # Cabeçalho do item: fundo colorido por tipo
-            hdr_data = [[
-                Paragraph(f'<b>Item {it.get("ordem","—")} — {_xml2.escape(projeto)}</b>',
-                           ParagraphStyle("hdr", parent=SS["Normal"],
-                               fontName="Helvetica-Bold", fontSize=11, leading=14,
-                               textColor=cor_t)),
-            ]]
-            hdr_tbl = Table(hdr_data, colWidths=[doc.width])
-            hdr_tbl.setStyle(TableStyle([
-                ("BACKGROUND",    (0,0), (-1,-1), colors.white),
-                ("LINEBELOW",     (0,0), (-1,-1), 2, cor_t),
-                ("TOPPADDING",    (0,0), (-1,-1), 6),
-                ("BOTTOMPADDING", (0,0), (-1,-1), 6),
-                ("LEFTPADDING",   (0,0), (-1,-1), 8),
-                ]))
-            bloco.append(hdr_tbl)
+          // Gera análise IA com o documento selecionado
+          const overlay = document.getElementById("overlay-" + ordem);
+          if (btnOrig) { btnOrig.disabled=true; btnOrig.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Gerando...'; }
+          if (overlay) overlay.style.display = "flex";
 
-            # Info autor/relator/situação — fundo claro, autor truncado
-            def _trunc_autor(txt, max_chars=120):
-                if not txt: return 'N/D'
-                partes = txt.split(',')
-                out = []
-                for p in partes:
-                    if sum(len(x) for x in out) + len(p) > max_chars:
-                        out.append(' e outros.')
-                        break
-                    out.append(p)
-                return ','.join(out).strip()
+          try {
+            const body = { projeto, ementa, autor, relator, id_principal };
+            if (docSel) { body.url_documento = docSel.url; body.label_documento = docSel.label; }
+            const r = await fetch('/analisar_ia', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+            if (!r.ok) { alert('Erro do servidor: ' + await r.text()); return; }
+            const j = await r.json();
+            if (j.resumo) {
+              if (!quillInstances[ordem]) {
+                const quill = new Quill(`#quill-editor-${ordem}`, { theme:'snow', modules:{toolbar:[['bold','italic','underline'],[{'list':'ordered'},{'list':'bullet'}],['clean']]} });
+                quillInstances[ordem] = quill;
+              }
+              quillInstances[ordem].clipboard.dangerouslyPasteHTML(j.resumo);
+              // Preenche campo "baseada em" com o doc usado
+              const labelDoc = docSel ? docSel.label.replace(/📋|📄|👁/g,'').trim() : 'texto original da proposição';
+              const campoBaseada = document.getElementById('baseada-em-' + ordem);
+              if (campoBaseada) campoBaseada.value = labelDoc;
+              atualizarBaseadaEm(ordem, labelDoc);
+            } else {
+              alert('Erro da IA: ' + (j.error || 'Resposta vazia'));
+            }
+          } catch(e) {
+            alert('Erro ao conectar com a IA: ' + e.message);
+          } finally {
+            if (overlay) overlay.style.display = "none";
+            if (btnOrig) { btnOrig.disabled=false; btnOrig.innerHTML='<img src="/static/logo_gemini.svg" alt="Gemini" style="width:16px;height:16px;vertical-align:middle;" class="me-2">Gerar Análise'; }
+            resolve(docSel);
+          }
+        });
 
-            autor_txt  = _trunc_autor(it.get('autor','N/D'))
-            relator_txt = (it.get('relator','') or 'N/D')[:80]
-            sit_txt    = it.get('situacao','') or ''
+        modalEl.addEventListener('hidden.bs.modal', () => resolve(null));
+      });
+    }
 
-            sInfo = ParagraphStyle("sInfo"+str(it.get('ordem',0)),
-                parent=sNormal, fontSize=8.5, leading=11, wordWrap='CJK')
+    function atualizarBaseadaEm(ordem, label) {
+      // Procura linha "baseada em" no Quill e atualiza, ou insere no topo
+      const quill = quillInstances[ordem];
+      if (!quill) return;
+      const html = quill.root.innerHTML;
+      const labelClean = label.replace(/📋|📄|👁/g,'').trim();
+      const novaLinha = `<p><em style="color:red;">Análise baseada em: ${labelClean}</em></p>`;
+      if (html.includes('Análise baseada em')) {
+        quill.root.innerHTML = html.replace(/<p><em[^>]*>Análise baseada em:.*?<\/em><\/p>/i, novaLinha);
+      } else {
+        quill.root.innerHTML = novaLinha + html;
+      }
+    }
+  </script>
 
-            info_rows = [[
-                Paragraph(f"<b>Autor:</b> {autor_txt}", sInfo),
-                Paragraph(f"<b>Relator:</b> {relator_txt}", sInfo),
-            ]]
-            if sit_txt and sit_txt != "N/D":
-                info_rows.append([
-                    Paragraph(f"<b>Situação:</b> {sit_txt}", sInfo),
-                    Paragraph("", sInfo),
-                ])
-            info_tbl = Table(info_rows, colWidths=[doc.width/2, doc.width/2])
-            info_tbl.setStyle(TableStyle([
-                ("BACKGROUND",    (0,0), (-1,-1), colors.white),
-                ("TOPPADDING",    (0,0), (-1,-1), 3),
-                ("BOTTOMPADDING", (0,0), (-1,-1), 3),
-                ("LEFTPADDING",   (0,0), (-1,-1), 8),
-                ("LINEBELOW",     (0,-1), (-1,-1), 0.5, cor_t),
-            ]))
-            bloco.append(info_tbl)
+<!-- MODAL MENSAGENS PLENÁRIO -->
+<div class="modal fade" id="modalMensagens" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#25D366,#128C7E);">
+        <h5 class="modal-title text-white">
+          <i class="fab fa-whatsapp me-2"></i>Mensagens para o Plenário
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
 
-            # Ementa
-            ementa = _strip_html(it.get("ementa",""))
-            if ementa:
-                bloco.append(Spacer(1, 3))
-                bloco.append(Paragraph(ementa, sNormal))
+        <div class="mb-3" id="select-item-container">
+          <label class="form-label fw-bold">Selecione o Item:</label>
+          <select class="form-select" id="select-item-msg">
+            <option value="">-- Selecione --</option>
+            {% for item in itens %}
+            <option value="{{ loop.index0 }}"
+              data-projeto="{{ item.projeto }}"
+              data-ementa="{{ item.ementa | replace('"','')  }}"
+              data-autor="{{ item.autor }}"
+              data-relator="{{ item.relator }}"
+              data-orientacao="{{ item.orientacao or '' }}">
+              Item {{ item.ordem }} — {{ item.projeto }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
 
-            # Resumo IA em verde itálico
-            if resumo_ia:
-                bloco.append(Spacer(1, 2))
-                bloco.append(Paragraph(f"<i>Resumo: {resumo_ia}</i>", sResumoIA))
+        <div class="mb-3">
+          <label class="form-label fw-bold">Tipo de Mensagem:</label>
+          <div class="d-flex gap-2 flex-wrap">
 
-            # Orientação — destaque grande
-            if ori:
-                bloco.append(Spacer(1, 5))
-                ori_tbl = Table([[
-                    Paragraph(f"ORIENTAÇÃO: {ori}",
-                        ParagraphStyle("sOri2", parent=sOri, textColor=cor_ori))
-                ]], colWidths=[doc.width])
-                ori_tbl.setStyle(TableStyle([
-                    ("BACKGROUND",    (0,0), (-1,-1), colors.white),
-                    ("TOPPADDING",    (0,0), (-1,-1), 4),
-                    ("BOTTOMPADDING", (0,0), (-1,-1), 4),
-                    ("LINEABOVE",     (0,0), (-1,0), 0.5, cor_ori),
-                    ("LINEBELOW",     (0,0), (-1,0), 0.5, cor_ori),
-                ]))
-                bloco.append(ori_tbl)
+            <button class="btn btn-outline-primary btn-sm btn-tipo-msg" data-tipo="apresentacao">
+              <i class="fas fa-file-alt me-1"></i>Apresentação
+            </button>
 
-            # Nota técnica — Helvetica preta, preservando ícones e quebras de linha
-            if resumo_materia:
-                bloco.append(Spacer(1, 5))
-                nota_hdr = Table([[Paragraph("<b>NOTA TÉCNICA</b>",
-                    ParagraphStyle("nh", parent=SS["Normal"], fontName="Helvetica-Bold",
-                        fontSize=8, textColor=colors.white))]],
-                    colWidths=[doc.width])
-                nota_hdr.setStyle(TableStyle([
-                    ("BACKGROUND",(0,0),(-1,-1), C_CINZA),
-                    ("TOPPADDING",(0,0),(-1,-1), 3),
-                    ("BOTTOMPADDING",(0,0),(-1,-1), 3),
-                    ("LEFTPADDING",(0,0),(-1,-1), 8),
-                ]))
-                bloco.append(nota_hdr)
+            <!-- Votação Nominal com opções -->
+            <div class="dropdown d-inline-block">
+              <button class="btn btn-outline-danger btn-sm dropdown-toggle" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="fas fa-vote-yea me-1"></i>Votação Nominal
+              </button>
+              <ul class="dropdown-menu">
+                <li><h6 class="dropdown-header">Mérito</h6></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Mérito">⚖️ Mérito</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Substitutivo">📄 Substitutivo</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Emenda Substitutiva">📝 Emenda Substitutiva</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Subemenda Substitutiva">📋 Subemenda Substitutiva</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="">✏️ Outro (digitar)</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><h6 class="dropdown-header">Requerimento</h6></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Requerimento de Urgência">🚨 Urgência</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Requerimento de Retirada de Pauta">↩️ Retirada de Pauta</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Requerimento de Adiamento de Discussão">🕐 Adiamento de Discussão</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Requerimento de Adiamento de Votação">🕑 Adiamento de Votação</a></li>
+              </ul>
+            </div>
 
-                # Converte HTML preservando ícones e quebras de linha
-                raw_html = it.get("resumo_materia", "") or ""
-                paras_nota = _html_para_paragrafos(raw_html, sNota)
+            <!-- Resultado Final -->
+            <div class="dropdown d-inline-block">
+              <button class="btn btn-success btn-sm dropdown-toggle" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="fas fa-flag-checkered me-1"></i>Resultado Final
+              </button>
+              <ul class="dropdown-menu">
+                <li><a class="dropdown-item btn-aprovado-tipo" href="#" data-tipo="aprovado_simbolico">
+                  ✅ Aprovado Simbolicamente
+                </a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item btn-aprovado-tipo" href="#" data-tipo="aprovado_nominal">
+                  🗳️ Aprovado — buscar votos
+                </a></li>
+                <li><a class="dropdown-item btn-aprovado-tipo" href="#" data-tipo="rejeitado_nominal">
+                  ❌ Rejeitado — buscar votos
+                </a></li>
+              </ul>
+            </div>
 
-                # Monta tabela com todos os parágrafos
-                rows = [[p] for p in paras_nota]
-                nota_tbl = Table(rows, colWidths=[doc.width])
-                nota_tbl.setStyle(TableStyle([
-                    ("BACKGROUND",(0,0),(-1,-1), colors.HexColor("#F8F8F8")),
-                    ("TOPPADDING",(0,0),(-1,-1), 3),
-                    ("BOTTOMPADDING",(0,0),(-1,-1), 3),
-                    ("LEFTPADDING",(0,0),(-1,-1), 8),
-                    ("RIGHTPADDING",(0,0),(-1,-1), 8),
-                    ("BOX",(0,0),(-1,-1), 0.5, C_CINZA),
-                    ("TOPPADDING",(0,0),(-1,0), 6),
-                    ("BOTTOMPADDING",(0,-1),(-1,-1), 6),
-                ]))
-                bloco.append(nota_tbl)
+            <!-- Resultado Requerimento -->
+            <div class="dropdown d-inline-block">
+              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="fas fa-clipboard-check me-1"></i>Resultado Requerimento
+              </button>
+              <ul class="dropdown-menu">
+                <li><h6 class="dropdown-header">Urgência</h6></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Urgência" data-tipo="aprovado_simbolico">✅ Aprovado Simbolicamente</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Urgência" data-tipo="aprovado_nominal">🗳️ Aprovado — buscar votos</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Urgência" data-tipo="rejeitado_nominal">❌ Rejeitado — buscar votos</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><h6 class="dropdown-header">Retirada de Pauta</h6></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Retirada de Pauta" data-tipo="aprovado_simbolico">✅ Aprovado Simbolicamente</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Retirada de Pauta" data-tipo="aprovado_nominal">🗳️ Aprovado — buscar votos</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Retirada de Pauta" data-tipo="rejeitado_nominal">❌ Rejeitado — buscar votos</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><h6 class="dropdown-header">Adiamento de Discussão</h6></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Discussão" data-tipo="aprovado_simbolico">✅ Aprovado Simbolicamente</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Discussão" data-tipo="aprovado_nominal">🗳️ Aprovado — buscar votos</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Discussão" data-tipo="rejeitado_nominal">❌ Rejeitado — buscar votos</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><h6 class="dropdown-header">Adiamento de Votação</h6></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Votação" data-tipo="aprovado_simbolico">✅ Aprovado Simbolicamente</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Votação" data-tipo="aprovado_nominal">🗳️ Aprovado — buscar votos</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Votação" data-tipo="rejeitado_nominal">❌ Rejeitado — buscar votos</a></li>
+              </ul>
+            </div>
 
-            bloco.append(Spacer(1, 14))
-            story.append(KeepTogether(bloco[:4]))  # cabeçalho junto
-            story.extend(bloco[4:])
+            <button class="btn btn-outline-success btn-sm btn-tipo-msg" data-tipo="iniciada">
+              <i class="fas fa-play-circle me-1"></i>Iniciada
+            </button>
+            <button class="btn btn-outline-warning btn-sm btn-tipo-msg" data-tipo="encerrada_ordem">
+              <i class="fas fa-stop-circle me-1"></i>Encerrada Ordem
+            </button>
+            <button class="btn btn-outline-dark btn-sm btn-tipo-msg" data-tipo="encerrada_sessao">
+              <i class="fas fa-flag-checkered me-1"></i>Encerrada Sessão
+            </button>
 
-        doc.build(story)
-        pdf = buffer.getvalue()
-        buffer.close()
+          </div>
+        </div>
 
-        resp = make_response(pdf)
-        resp.headers["Content-Type"] = "application/pdf"
-        resp.headers["Content-Disposition"] = f'inline; filename="Pauta_{evento_id}.pdf"'
-        return resp
+        <div class="mb-3" id="campo-objeto" style="display:none;">
+          <label class="form-label fw-bold">Objeto da Votação:</label>
+          <div class="d-flex gap-2 flex-wrap mb-2">
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Mérito">Mérito</button>
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Substitutivo">Substitutivo</button>
+            <div class="dropdown">
+              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="btnRequerimento" data-bs-toggle="dropdown" aria-expanded="false">
+                Requerimento
+              </button>
+              <ul class="dropdown-menu" aria-labelledby="btnRequerimento">
+                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Urgência">De Urgência</a></li>
+                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Adiamento de Discussão">Adiamento de Discussão</a></li>
+                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Adiamento de Votação">Adiamento de Votação</a></li>
+              </ul>
+            </div>
+            <div class="dropdown" id="dropdown-dtq-container">
+              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                id="btnDTQ" data-bs-toggle="dropdown" aria-expanded="false"
+                onclick="carregarDestaquesDTQ()">
+                DTQ
+              </button>
+              <ul class="dropdown-menu" id="menu-dtq" aria-labelledby="btnDTQ">
+                <li><span class="dropdown-item text-muted fst-italic" id="dtq-loading">
+                  <span class="spinner-border spinner-border-sm me-1"></span>Buscando destaques...
+                </span></li>
+              </ul>
+            </div>
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Redação Final">Redação Final</button>
+          </div>
+          <input type="text" class="form-control" id="input-objeto" placeholder="Ou digite o objeto manualmente...">
+        </div>
 
-    except Exception as e:
-        import traceback
-        current_app.logger.error(f"Erro exportar_pauta {evento_id}: {e}")
-        return f"Erro ao gerar PDF: {e}<br><pre>{traceback.format_exc()}</pre>", 200
+        <div id="preview-msg-container" style="display:none;">
+          <label class="form-label fw-bold">Mensagem Gerada:</label>
+          <textarea id="preview-msg" class="form-control" rows="12"
+            style="font-family:monospace;font-size:0.88rem;background:#f0fdf4;border:2px solid #25D366;resize:vertical;"></textarea>
+          <div class="d-flex gap-2 mt-2">
+            <button class="btn btn-success btn-sm" id="btn-copiar-msg">
+              <i class="fas fa-copy me-1"></i>Copiar Mensagem
+            </button>
+            <span id="copiado-msg" class="text-success align-self-center" style="display:none;font-size:0.85rem;">✅ Copiado!</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Dados dinâmicos para o modal de mensagens (gerados pelo servidor)
+  window.EVENTO_ID  = {{ evento_id|safe }};
+  window.ITENS_DATA = [
+    {% for item in itens %}
+    {
+      ordem:        {{ item.ordem | tojson }},
+      id_principal: {{ item.id_principal | tojson }},
+      projeto:      {{ item.projeto | tojson }},
+      ementa:       {{ item.ementa | tojson }},
+      autor:        {{ item.autor | tojson }},
+      relator:      {{ item.relator | tojson }},
+      orientacao:   {{ (item.orientacao or '') | tojson }},
+      resumo_ia:    ''
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ];
+</script>
+<script src="/static/mensagens.js"></script>
+
+<script>
+  async function verificarUltimoDoc(btn) {
+    const idPrincipal = btn.dataset.idPrincipal;
+    if (!idPrincipal) { alert('ID da proposição não encontrado.'); return; }
+
+    const resultadoDiv = btn.parentElement.querySelector('[id^="ultimo-doc-resultado-"]');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando...';
+
+    try {
+      const r = await fetch(`/verificar_doc/${idPrincipal}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+
+      let html = '';
+      const btnVerDocs = ` <button class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;"
+            onclick="verDocumentosUltimoParecer(this, '${idPrincipal}')">
+            <i class="fas fa-folder-open me-1"></i>Ver documentos
+          </button>`;
+
+      if (j.tipo) {
+        const numStr  = j.numero ? ` nº ${j.numero}` : '';
+        const dataStr = j.data   ? ` — ${j.data}` : '';
+        html = `<i class="fas fa-check-circle text-success me-1"></i>` +
+               `Último documento: <strong>${j.tipo}${numStr}</strong>${dataStr} ` +
+               `<span class="text-success">(texto disponível para análise)</span>${btnVerDocs}`;
+      } else {
+        html = `<i class="fas fa-info-circle text-warning me-1"></i>` +
+               `Nenhum PRLP ou Substitutivo encontrado — use o texto original.${btnVerDocs}`;
+      }
+
+      if (resultadoDiv) {
+        resultadoDiv.querySelector('small').innerHTML = html;
+        resultadoDiv.style.display = 'block';
+      } else {
+        const span = document.createElement('div');
+        span.className = 'mt-1';
+        span.innerHTML = `<small class="fw-bold">${html}</small>`;
+        btn.parentElement.appendChild(span);
+      }
+    } catch(e) {
+      alert('Erro ao buscar documento: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-search me-1"></i>Procurar último parecer (PRLP/Substitutivo)';
+    }
+  }
+
+  async function buscarUrlPrlp(btn, idProp, numeroPrlp) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    const urlFallback = `https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao=${idProp}`;
+    try {
+      const rRel = await fetch(
+        `https://dadosabertos.camara.leg.br/api/v2/proposicoes/${idProp}/relacionadas`,
+        {headers: {'Accept': 'application/json'}}
+      );
+      if (!rRel.ok) throw new Error('relacionadas ' + rRel.status);
+      const jRel = await rRel.json();
+      const prlps = (jRel.dados || [])
+        .filter(p => (p.siglaTipo||'').toUpperCase() === 'PRLP')
+        .sort((a,b) => (b.numero||0)-(a.numero||0));
+      const alvo = prlps.find(p => String(p.numero) === String(numeroPrlp)) || prlps[0];
+      if (!alvo) throw new Error('PRLP não encontrado');
+      const url = `https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao=${alvo.id}`;
+      window.open(url, '_blank');
+      btn.outerHTML = `<a href="${url}" target="_blank" rel="noopener"
+        class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;">
+        <i class="fas fa-file-alt me-1"></i>Ver PRLP ${alvo.numero}</a>`;
+    } catch(e) {
+      console.warn('buscarUrlPrlp:', e);
+      window.open(urlFallback, '_blank');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-external-link-alt me-1"></i>Ver Pareceres';
+    }
+  }
+
+    async function verDocumentosUltimoParecer(btn, idPrincipal) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    try {
+      const r = await fetch('/listar_documentos/' + idPrincipal);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      const docs = j.documentos || [];
+      if (docs.length === 0) {
+        alert('Nenhum documento encontrado.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-folder-open me-1"></i>Ver documentos';
+        return;
+      }
+
+      document.getElementById('modal-docs-parecer')?.remove();
+      const modalEl = document.createElement('div');
+      modalEl.id = 'modal-docs-parecer';
+      modalEl.className = 'modal fade';
+      modalEl.setAttribute('tabindex', '-1');
+
+      const mDialog  = document.createElement('div'); mDialog.className = 'modal-dialog';
+      const mContent = document.createElement('div'); mContent.className = 'modal-content';
+      const mHeader  = document.createElement('div'); mHeader.className = 'modal-header bg-primary text-white';
+      const mTitle   = document.createElement('h6');  mTitle.className = 'modal-title';
+      mTitle.textContent = 'Pareceres e Substitutivos disponíveis';
+      const mClose = document.createElement('button');
+      mClose.type = 'button'; mClose.className = 'btn-close btn-close-white';
+      mClose.setAttribute('data-bs-dismiss', 'modal');
+      mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
+
+      const mBody = document.createElement('div'); mBody.className = 'modal-body';
+      const mInfo = document.createElement('p'); mInfo.className = 'small text-muted mb-2';
+      mInfo.textContent = docs.length + ' documento(s). Use 👁 Ver para visualizar o texto do PDF.';
+      mBody.appendChild(mInfo);
+      mBody.appendChild(document.createElement('hr'));
+
+      // Lista de documentos com radio + botão Ver (igual ao dos destaques)
+      docs.forEach((d, i) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'form-check mb-1 d-flex align-items-start gap-2';
+
+        const inp = document.createElement('input');
+        inp.className = 'form-check-input mt-1';
+        inp.type = 'radio'; inp.name = 'doc_par'; inp.id = 'dpar_' + i;
+        inp.value = String(i);
+        if (i === 0) inp.checked = true;
+
+        const lbl = document.createElement('label');
+        lbl.className = 'form-check-label small flex-grow-1';
+        lbl.setAttribute('for', 'dpar_' + i);
+        lbl.textContent = d.label;
+
+        const btnVer = document.createElement('button');
+        btnVer.type = 'button';
+        btnVer.className = 'btn btn-outline-secondary btn-sm py-0 px-1';
+        btnVer.style.fontSize = '0.7rem';
+        btnVer.textContent = '👁 Ver';
+        btnVer.addEventListener('click', () => verTextoDoc(d.url, d.label));
+
+        const btnPdf = document.createElement('a');
+        btnPdf.className = 'btn btn-outline-danger btn-sm py-0 px-1';
+        btnPdf.style.fontSize = '0.7rem';
+        btnPdf.textContent = '📄 PDF';
+        btnPdf.href = d.url;
+        btnPdf.target = '_blank';
+        btnPdf.rel = 'noopener';
+
+        wrap.appendChild(inp); wrap.appendChild(lbl); wrap.appendChild(btnVer); wrap.appendChild(btnPdf);
+        mBody.appendChild(wrap);
+      });
+
+      const mFooter = document.createElement('div'); mFooter.className = 'modal-footer';
+      const btnFechar = document.createElement('button');
+      btnFechar.type = 'button'; btnFechar.className = 'btn btn-secondary btn-sm';
+      btnFechar.setAttribute('data-bs-dismiss', 'modal'); btnFechar.textContent = 'Fechar';
+      mFooter.appendChild(btnFechar);
+
+      mContent.appendChild(mHeader); mContent.appendChild(mBody); mContent.appendChild(mFooter);
+      mDialog.appendChild(mContent); modalEl.appendChild(mDialog);
+      document.body.appendChild(modalEl);
+      new bootstrap.Modal(modalEl).show();
+
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-folder-open me-1"></i>Ver documentos';
+    } catch(e) {
+      alert('Erro: ' + e.message);
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-folder-open me-1"></i>Ver documentos';
+    }
+  }
+
+  function gerarTabelaDestaques(projetoFiltro) {
+    // Coleta todos os destaques analisados na página
+    const destaques = [];
+    document.querySelectorAll('[id^="analise-destaque-"]').forEach(box => {
+      if (box.style.display === 'none' || !box.innerHTML.trim()) return;
+      const tr = box.closest('tr');
+      const btnOrigem = tr ? tr.querySelector('[data-numero]') : null;
+      const numero    = btnOrigem ? btnOrigem.dataset.numero    : '';
+      const descricao = btnOrigem ? btnOrigem.dataset.descricao : '';
+      const autoria   = btnOrigem ? btnOrigem.dataset.autoria   : '';
+      const projeto   = btnOrigem ? btnOrigem.dataset.projeto   : (projetoFiltro || '');
+      const analise   = box.querySelector('div') ? box.querySelector('div').innerText : box.innerText;
+      if (numero) destaques.push({ numero, descricao, autoria, projeto, analise });
+    });
+
+    // Se não encontrou pela div, coleta pelos botões de quadro
+    if (destaques.length === 0) {
+      document.querySelectorAll('[data-numero][onclick*="gerarQuadroDTQ"], .btn-dark[data-numero]').forEach(bq => {
+        destaques.push({
+          numero:    bq.dataset.numero    || '',
+          descricao: bq.dataset.descricao || '',
+          autoria:   bq.dataset.autoria   || '',
+          projeto:   bq.dataset.projeto   || '',
+          analise:   bq.dataset.analise   ? bq.dataset.analise.replace(/<[^>]+>/g,'').substring(0,200) : '',
+        });
+      });
+    }
+
+    const popup = window.open('', '_blank', 'width=1000,height=700,scrollbars=yes,resizable=yes');
+    const pd = popup.document;
+    pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Tabela de Destaques</title></head><body></body></html>'); pd.close();
+    const st = pd.createElement('style');
+    st.textContent = `body{font-family:Arial,sans-serif;padding:24px;background:#fff}
+      h2{color:#1a1a2e;border-bottom:3px solid #1a1a2e;padding-bottom:8px;margin-bottom:16px}
+      table{width:100%;border-collapse:collapse;font-size:12px}
+      th{background:#1a1a2e;color:#fff;padding:8px 10px;text-align:left}
+      td{border:1px solid #ccc;padding:8px 10px;vertical-align:top}
+      tr:nth-child(even){background:#f5f7ff}
+      .num{font-weight:bold;color:#2c3e6b;white-space:nowrap}
+      .analise{font-size:11px;color:#444;max-width:400px}
+      .btn-print{margin-top:16px;padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px}
+      @media print{.btn-print{display:none}}`;
+    pd.head.appendChild(st);
+
+    const h2 = pd.createElement('h2');
+    h2.textContent = `Tabela de Destaques — ${projetoFiltro || 'Todos'}`;
+    pd.body.appendChild(h2);
+
+    if (destaques.length === 0) {
+      const p = pd.createElement('p'); p.textContent = 'Nenhum destaque analisado encontrado.';
+      pd.body.appendChild(p);
+    } else {
+      const tbl = pd.createElement('table');
+      const thead = pd.createElement('thead');
+      thead.innerHTML = '<tr><th>#</th><th>Número</th><th>Autoria</th><th>Descrição</th><th>Análise resumida</th></tr>';
+      tbl.appendChild(thead);
+      const tbody = pd.createElement('tbody');
+      destaques.forEach((d, i) => {
+        const tr = pd.createElement('tr');
+        tr.innerHTML = `<td>${i+1}</td>
+          <td class="num">${d.numero}</td>
+          <td>${d.autoria||'—'}</td>
+          <td>${d.descricao||'—'}</td>
+          <td class="analise">${d.analise||'—'}</td>`;
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      pd.body.appendChild(tbl);
+    }
+
+    const btnPr = pd.createElement('button'); btnPr.className = 'btn-print';
+    btnPr.textContent = '🖨️ Imprimir / Salvar PDF';
+    btnPr.onclick = () => popup.print();
+    pd.body.appendChild(btnPr);
+  }
+
+  async function gerarQuadroDTQ(btn) {
+    const projeto   = btn.dataset.projeto;
+    const numero    = btn.dataset.numero;
+    const autoria   = btn.dataset.autoria || '';
+    const descricao = btn.dataset.descricao;
+    const analise   = btn.dataset.analise;
+    const urlDoc    = btn.dataset.urlDoc;
+    const labelDoc  = btn.dataset.labelDoc;
+
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Gerando quadro...';
+
+    try {
+      const r = await fetch('/gerar_quadro_dtq', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ projeto, numero, descricao, analise_html: analise, url_documento: urlDoc, label_documento: labelDoc })
+      });
+      const j = await r.json();
+      if (!j.ok) { alert('Erro: ' + j.error); return; }
+      const d = j.dados;
+
+      // Constrói popup via DOM — sem document.write com template literal
+      const popup = window.open('', '_blank', 'width=900,height=700,scrollbars=yes,resizable=yes');
+      const pd = popup.document;
+      pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Quadro DTQ</title></head><body></body></html>'); pd.close();
+
+      const st = pd.createElement('style');
+      st.textContent = '* {box-sizing:border-box;margin:0;padding:0} body{font-family:Arial,sans-serif;padding:30px;background:#fff} .quadro{border:2px solid #1a1a2e;border-radius:4px;overflow:hidden;max-width:820px;margin:0 auto} .header{background:#1a1a2e;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center} .header-titulo{font-size:14px;font-weight:bold;flex:1} .header-logos{background:#fff;padding:4px 8px;border-radius:3px;display:flex;align-items:center;gap:8px} .header-logos img{height:34px;width:100px;object-fit:contain} .dtq-bar{background:#2c3e6b;color:#fff;text-align:center;padding:6px;font-size:13px;font-weight:bold} .descricao{background:#f0f4ff;text-align:center;padding:8px 16px;font-size:12px;color:#333;border-bottom:1px solid #ccc} .votos{display:grid;grid-template-columns:1fr 1fr} .voto-sim{border-right:1px solid #ccc;padding:12px} .voto-nao{padding:12px} .voto-label-sim{color:#1A6B3A;font-weight:bold;font-size:12px;margin-bottom:6px} .voto-label-nao{color:#cc0000;font-weight:bold;font-size:12px;margin-bottom:6px} .voto-conteudo-sim{color:#1A6B3A;font-size:13px;font-weight:bold;line-height:1.4} .voto-conteudo-nao{color:#cc0000;font-size:13px;font-weight:bold;line-height:1.4} .explicacao{background:#f9f9f9;border-top:2px solid #1a1a2e;padding:12px 16px} .explicacao-titulo{text-align:center;font-weight:bold;font-size:12px;color:#1a1a2e;margin-bottom:8px;letter-spacing:1px} .explicacao-texto{font-size:12px;color:#333;line-height:1.6} .btn-imprimir{display:block;margin:16px auto 0;padding:8px 24px;background:#1a1a2e;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px} @media print{.btn-imprimir{display:none}body{padding:0}}';
+      pd.head.appendChild(st);
+
+      const origin = window.location.origin;
+
+      // Monta quadro via DOM para evitar XSS e facilitar edição
+      const quadro = pd.createElement('div'); quadro.className = 'quadro';
+
+      // Header — proposição + DTQ + autoria
+      const header = pd.createElement('div'); header.className = 'header';
+      const hTitulo = pd.createElement('div'); hTitulo.className = 'header-titulo';
+      const hProj = pd.createElement('div');
+      hProj.style.cssText = 'font-size:13px;font-weight:400;opacity:.8;margin-bottom:2px;';
+      hProj.contentEditable = 'false';
+      hProj.textContent = projeto;
+      const hNum = pd.createElement('div');
+      hNum.style.cssText = 'font-size:15px;font-weight:900;letter-spacing:.5px;';
+      hNum.contentEditable = 'false';
+      hNum.textContent = numero + (autoria ? ' — ' + autoria : '');
+      const hDesc = pd.createElement('div');
+      hDesc.style.cssText = 'font-size:12px;font-weight:400;margin-top:4px;opacity:.9;';
+      hDesc.contentEditable = 'false';
+      hDesc.textContent = descricao;
+      hTitulo.appendChild(hProj); hTitulo.appendChild(hNum); hTitulo.appendChild(hDesc);
+
+      const hLogos = pd.createElement('div'); hLogos.className = 'header-logos';
+      ['logo_oposicao.png','logo_minoria.png'].forEach(fn => {
+        const img = pd.createElement('img');
+        img.src = origin + '/static/' + fn;
+        img.onerror = function(){ this.style.display='none'; };
+        hLogos.appendChild(img);
+      });
+      header.appendChild(hTitulo); header.appendChild(hLogos);
+      quadro.appendChild(header);
+
+      // Votos
+      const votos = pd.createElement('div'); votos.className = 'votos';
+      const vSim = pd.createElement('div'); vSim.className = 'voto-sim';
+      const vSimLabel = pd.createElement('div'); vSimLabel.className = 'voto-label-sim';
+      vSimLabel.contentEditable = 'false';
+      vSimLabel.textContent = 'Voto SIM: ' + (d.sim_label||'');
+      const vSimCont = pd.createElement('div'); vSimCont.className = 'voto-conteudo-sim';
+      vSimCont.contentEditable = 'false';
+      vSimCont.textContent = d.sim_conteudo||'';
+      vSim.appendChild(vSimLabel); vSim.appendChild(vSimCont);
+
+      const vNao = pd.createElement('div'); vNao.className = 'voto-nao';
+      const vNaoLabel = pd.createElement('div'); vNaoLabel.className = 'voto-label-nao';
+      vNaoLabel.contentEditable = 'false';
+      vNaoLabel.textContent = 'Voto NÃO: ' + (d.nao_label||'');
+      const vNaoCont = pd.createElement('div'); vNaoCont.className = 'voto-conteudo-nao';
+      vNaoCont.contentEditable = 'false';
+      vNaoCont.textContent = d.nao_conteudo||'';
+      vNao.appendChild(vNaoLabel); vNao.appendChild(vNaoCont);
+      votos.appendChild(vSim); votos.appendChild(vNao);
+      quadro.appendChild(votos);
+
+      // Orientação (nova seção editável)
+      const ori = pd.createElement('div');
+      ori.style.cssText = 'background:#eaf4ea;border-top:2px solid #1A6B3A;padding:10px 16px;';
+      const oriTit = pd.createElement('div');
+      oriTit.style.cssText = 'text-align:center;font-weight:bold;font-size:12px;color:#1A6B3A;margin-bottom:6px;letter-spacing:1px;';
+      oriTit.textContent = 'ORIENTAÇÃO';
+      const oriTxt = pd.createElement('div'); oriTxt.className = 'orientacao-texto';
+      oriTxt.style.cssText = 'font-size:13px;font-weight:bold;color:#1A6B3A;text-align:center;';
+      oriTxt.contentEditable = 'false';
+      oriTxt.textContent = d.orientacao || '';
+      ori.appendChild(oriTit); ori.appendChild(oriTxt);
+      quadro.appendChild(ori);
+
+      // Explicação
+      const expl = pd.createElement('div'); expl.className = 'explicacao';
+      const explTit = pd.createElement('div'); explTit.className = 'explicacao-titulo';
+      explTit.textContent = 'EXPLICAÇÃO';
+      const explTxt = pd.createElement('div'); explTxt.className = 'explicacao-texto';
+      explTxt.contentEditable = 'false';
+      explTxt.textContent = d.explicacao||'';
+      expl.appendChild(explTit); expl.appendChild(explTxt);
+      quadro.appendChild(expl);
+
+      pd.body.appendChild(quadro);
+
+      const btnPrint = pd.createElement('button');
+      btnPrint.className = 'btn-imprimir';
+      btnPrint.textContent = '🖨️ Imprimir / Salvar PDF';
+      btnPrint.onclick = function() { popup.print(); };
+      pd.body.appendChild(btnPrint);
+
+      // Botão editar — torna TODOS os campos editáveis
+      const btnEdit = pd.createElement('button');
+      btnEdit.className = 'btn-imprimir';
+      btnEdit.style.marginLeft = '8px';
+      btnEdit.style.background = '#2c3e6b';
+      btnEdit.textContent = '✏️ Editar Quadro';
+      btnEdit.onclick = function() {
+        const editing = btnEdit.textContent.includes('Editar');
+        pd.querySelectorAll(
+          '.header-titulo div, .voto-label-sim, .voto-conteudo-sim, ' +
+          '.voto-label-nao, .voto-conteudo-nao, ' +
+          '.orientacao-texto, .explicacao-texto'
+        ).forEach(el => {
+          el.contentEditable = editing ? 'true' : 'false';
+          el.style.outline = editing ? '2px dashed #f90' : '';
+          el.style.minHeight = editing ? '1.2em' : '';
+        });
+        btnEdit.textContent = editing ? '✅ Concluir edição' : '✏️ Editar Quadro';
+      };
+      pd.body.appendChild(btnEdit);
+
+    } catch(e) {
+      alert('Erro: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '🖼️ Criar Quadro do DTQ';
+    }
+  }
+
+  async function verTextoDoc(urlDoc, label) {
+    const popup = window.open('', '_blank', 'width=800,height=700,scrollbars=yes,resizable=yes');
+    const pd = popup.document;
+    pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body></body></html>'); pd.close();
+    const st = pd.createElement('style');
+    st.textContent = 'body{font-family:monospace;font-size:13px;padding:20px;line-height:1.6;color:#222} h3{color:#1A6B3A;border-bottom:2px solid #1A6B3A;padding-bottom:8px;margin-bottom:12px} pre{white-space:pre-wrap;word-break:break-word;background:#f8f8f8;padding:15px;border-radius:4px}';
+    pd.head.appendChild(st);
+    const h3 = pd.createElement('h3'); h3.textContent = label; pd.body.appendChild(h3);
+    const loading = pd.createElement('p'); loading.textContent = '⏳ Extraindo texto do PDF...'; loading.style.color = '#666'; pd.body.appendChild(loading);
+    try {
+      const r = await fetch('/extrair_texto_doc', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url_documento: urlDoc})
+      });
+      const j = await r.json();
+      const texto = j.texto || '(texto não extraído — verifique se o PDF está acessível)';
+      loading.remove();
+      const info = pd.createElement('p'); info.style.fontSize = '0.8rem'; info.style.color = '#666';
+      info.textContent = 'Total: ' + texto.length + ' caracteres';
+      pd.body.appendChild(info);
+      const pre = pd.createElement('pre'); pre.textContent = texto; pd.body.appendChild(pre);
+    } catch(e) {
+      loading.textContent = 'Erro: ' + e.message; loading.style.color = 'red';
+    }
+  }
+
+  async function analisarDestaque(btn) {
+    const idPrincipal = btn.dataset.idPrincipal;
+    const descricao   = btn.dataset.descricao || '';
+    const numero      = btn.dataset.numero    || '';
+    const projeto     = btn.dataset.projeto   || '';
+    const autoria     = btn.dataset.autoria   || '';
+
+    if (!idPrincipal) { alert('ID da proposição não encontrado.'); return; }
+
+    // Detecta se é destaque de emenda
+    const ehEmenda = /emenda|emd|subemenda|preferência|preferencia/i.test(descricao);
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+    if (ehEmenda) {
+      // número do DTQ (ex: "DTQ 2") — descarta
+      // número da emenda está na descrição (ex: "Emenda de Plenário 3" → 3)
+      // Pega o último número da descrição
+      const todosNumsDesc = descricao.match(/\d+/g) || [];
+      const todosNumsTit  = numero.match(/\d+/g) || [];
+      // Prefere último número da descrição; fallback último do título
+      const numEmenda = todosNumsDesc.length > 0
+        ? todosNumsDesc[todosNumsDesc.length - 1]
+        : (todosNumsTit.length > 0 ? todosNumsTit[todosNumsTit.length - 1] : '');
+
+      let urlEmenda = '';
+      try {
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Buscando Emenda ' + (numEmenda || '') + '...';
+        const urlLista = `https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao=${idPrincipal}&subst=0`;
+        const rLista = await fetch(urlLista);
+        if (!rLista.ok) throw new Error('HTTP ' + rLista.status);
+
+        const html = await rLista.text();
+        const parser = new DOMParser();
+        const doc2 = parser.parseFromString(html, 'text/html');
+
+        if (numEmenda) {
+          // Estratégia 1: âncora emp{N} — padrão oficial da Câmara
+          const anchor = doc2.getElementById('emp' + numEmenda)
+                      || doc2.querySelector('[name="emp' + numEmenda + '"]');
+          if (anchor) {
+            // Coleta links do bloco desta emenda (linha da âncora + próximas linhas)
+            const blocos = [anchor.closest('tr'), anchor.parentElement];
+            let next = (anchor.closest('tr') || anchor).nextElementSibling;
+            for (let i = 0; i < 8 && next; i++, next = next.nextElementSibling) {
+              // Para na próxima âncora emp
+              if (next.querySelector('[id^="emp"], [name^="emp"]')) break;
+              blocos.push(next);
+            }
+            for (const bloco of blocos) {
+              if (!bloco) continue;
+              for (const a of bloco.querySelectorAll('a[href]')) {
+                const href = a.getAttribute('href') || '';
+                const txt  = (a.textContent || '').toLowerCase();
+                // Inteiro Teor é o link correto para o PDF da emenda
+                if (txt.includes('inteiro teor') || txt.includes('texto da emenda') || href.includes('codteor')) {
+                  urlEmenda = href.startsWith('http') ? href : 'https://www.camara.leg.br' + href;
+                  console.log('[DTQ] Emenda ' + numEmenda + ' via âncora emp:', urlEmenda);
+                  break;
+                }
+              }
+              if (urlEmenda) break;
+            }
+          }
+
+          // Estratégia 2: varre linhas com o padrão "EMD N" ou "Emenda N" no texto
+          if (!urlEmenda) {
+            const reNum = new RegExp('(?:EMD|Emenda)\\s*(?:n[º°.]?\\s*)?0*' + numEmenda + '(?!\\d)', 'i');
+            for (const row of doc2.querySelectorAll('tr')) {
+              if (!reNum.test(row.textContent)) continue;
+              for (const a of row.querySelectorAll('a[href]')) {
+                const href = a.getAttribute('href') || '';
+                const txt  = (a.textContent || '').toLowerCase();
+                if (txt.includes('inteiro teor') || href.includes('codteor')) {
+                  urlEmenda = href.startsWith('http') ? href : 'https://www.camara.leg.br' + href;
+                  console.log('[DTQ] Emenda ' + numEmenda + ' via varredura:', urlEmenda);
+                  break;
+                }
+              }
+              if (urlEmenda) break;
+            }
+          }
+        }
+      } catch(eBusca) {
+        console.warn('[DTQ] Erro ao buscar emenda:', eBusca.message);
+      }
+
+      // segue para análise silenciosamente
+
+      _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria, num_emenda: numEmenda, url_emenda: urlEmenda});
+      return;
+    }
+    _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria, ehEmenda});
+  }
+
+  async function _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, extraParams) {
+    const autoria    = (extraParams && extraParams.autoria)    || '';
+    const numEmenda  = (extraParams && extraParams.num_emenda) || '';
+    const urlEmenda  = (extraParams && extraParams.url_emenda) || '';
+    const ehEmenda   = /emenda|emd|subemenda/i.test(descricao);
+
+    // Para emenda: vai direto para análise sem modal de seleção de documento
+    if (ehEmenda) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      try {
+        const r = await fetch('/analisar_destaque', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            id_principal: idPrincipal, descricao, numero, projeto,
+            num_emenda: numEmenda, url_emenda: urlEmenda,
+          })
+        });
+        const j = await r.json();
+        if (j.resumo) {
+          const numKey = numero.replace(/\s/g, '-');
+          let box = document.getElementById('analise-destaque-' + numKey);
+          if (!box) {
+            const tr = btn.closest('tr');
+            const ntr = tr ? tr.nextElementSibling : null;
+            if (ntr) box = ntr.querySelector('[id^="analise-destaque-"]');
+          }
+          if (!box) {
+            box = document.createElement('div');
+            box.className = 'mt-2 p-2 border rounded bg-light';
+            btn.closest('td')?.appendChild(box);
+          }
+          box.style.display = 'block';
+          box.innerHTML = j.resumo;
+          // Botão criar quadro
+          const dBtn = document.createElement('div'); dBtn.className = 'mt-2 d-flex gap-2 flex-wrap';
+          const bq = document.createElement('button'); bq.className = 'btn btn-sm btn-dark';
+          bq.textContent = '🖼️ Criar Quadro do DTQ';
+          bq.dataset.projeto = projeto; bq.dataset.numero = numero; bq.dataset.autoria = autoria;
+          bq.dataset.descricao = descricao; bq.dataset.analise = j.resumo;
+          bq.dataset.urlDoc = ''; bq.dataset.labelDoc = j.doc_usado || '';
+          bq.onclick = function() { window.gerarQuadroDTQ(this); };
+          dBtn.appendChild(bq); box.appendChild(dBtn);
+        } else {
+          alert('Erro: ' + (j.error || 'Falha na análise'));
+        }
+      } catch(e) {
+        alert('Erro: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-robot"></i>';
+      }
+      return;
+    }
+
+    try {
+      const r = await fetch('/listar_documentos/' + idPrincipal);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      const docs = j.documentos || [];
+      if (docs.length === 0) { alert('Nenhum documento encontrado.'); return; }
+
+      // === MONTA MODAL VIA DOM (sem innerHTML com dados dinâmicos) ===
+      document.getElementById('modal-sel-doc')?.remove();
+
+      const modalEl  = document.createElement('div');
+      modalEl.id     = 'modal-sel-doc';
+      modalEl.className = 'modal fade';
+      modalEl.setAttribute('tabindex', '-1');
+
+      const mDialog  = document.createElement('div');
+      mDialog.className = 'modal-dialog';
+      const mContent = document.createElement('div');
+      mContent.className = 'modal-content';
+
+      // Header
+      const mHeader = document.createElement('div');
+      mHeader.className = 'modal-header bg-primary text-white';
+      const mTitle = document.createElement('h6');
+      mTitle.className = 'modal-title';
+      mTitle.textContent = 'Selecione o documento para análise';
+      const mClose = document.createElement('button');
+      mClose.type = 'button';
+      mClose.className = 'btn-close btn-close-white';
+      mClose.setAttribute('data-bs-dismiss', 'modal');
+      mHeader.appendChild(mTitle);
+      mHeader.appendChild(mClose);
+
+      // Body
+      const mBody = document.createElement('div');
+      mBody.className = 'modal-body';
+      const mInfo = document.createElement('p');
+      mInfo.className = 'small text-muted mb-2';
+      const mStrong = document.createElement('strong');
+      mStrong.textContent = numero;
+      mInfo.appendChild(mStrong);
+      mInfo.appendChild(document.createTextNode(' — ' + descricao));
+      mBody.appendChild(mInfo);
+      mBody.appendChild(document.createElement('hr'));
+
+      // Opções de documentos
+      docs.forEach((d, i) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'form-check mb-1 d-flex align-items-start gap-2';
+
+        const inp = document.createElement('input');
+        inp.className = 'form-check-input mt-1';
+        inp.type = 'radio';
+        inp.name = 'doc_sel';
+        inp.id   = 'doc_' + i;
+        inp.value = String(i);
+        if (i === 0) inp.checked = true;
+
+        const lbl = document.createElement('label');
+        lbl.className = 'form-check-label small flex-grow-1';
+        lbl.setAttribute('for', 'doc_' + i);
+        lbl.textContent = d.label;
+
+        const btnVer = document.createElement('button');
+        btnVer.type = 'button';
+        btnVer.className = 'btn btn-outline-secondary btn-sm py-0 px-1';
+        btnVer.style.fontSize = '0.7rem';
+        btnVer.textContent = '👁 Ver';
+        btnVer.addEventListener('click', () => verTextoDoc(d.url, d.label));
+
+        wrap.appendChild(inp);
+        wrap.appendChild(lbl);
+        wrap.appendChild(btnVer);
+        mBody.appendChild(wrap);
+      });
+
+      // Footer
+      const mFooter = document.createElement('div');
+      mFooter.className = 'modal-footer';
+
+      const btnCancelar = document.createElement('button');
+      btnCancelar.type = 'button';
+      btnCancelar.className = 'btn btn-secondary btn-sm';
+      btnCancelar.setAttribute('data-bs-dismiss', 'modal');
+      btnCancelar.textContent = 'Cancelar';
+
+      const btnDebug = document.createElement('button');
+      btnDebug.type = 'button';
+      btnDebug.className = 'btn btn-outline-warning btn-sm';
+      btnDebug.innerHTML = '<i class="fas fa-search me-1"></i>Procurar no texto';
+
+      const btnConfirmar = document.createElement('button');
+      btnConfirmar.type = 'button';
+      btnConfirmar.className = 'btn btn-primary btn-sm';
+      btnConfirmar.innerHTML = '<i class="fas fa-robot me-1"></i>Analisar';
+
+      mFooter.appendChild(btnCancelar);
+      mFooter.appendChild(btnDebug);
+      mFooter.appendChild(btnConfirmar);
+
+      mContent.appendChild(mHeader);
+      mContent.appendChild(mBody);
+      mContent.appendChild(mFooter);
+      mDialog.appendChild(mContent);
+      modalEl.appendChild(mDialog);
+      document.body.appendChild(modalEl);
+
+      const modal = new bootstrap.Modal(modalEl);
+      modal.show();
+
+      // === BOTÃO DEBUG ===
+      btnDebug.addEventListener('click', async () => {
+        const sel = mBody.querySelector('input[name="doc_sel"]:checked');
+        if (!sel) return;
+        const doc = docs[parseInt(sel.value)];
+        btnDebug.disabled = true;
+        btnDebug.textContent = '⏳ Carregando...';
+        try {
+          const rd = await fetch('/debug_destaque', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url_documento: doc.url, descricao: descricao})
+          });
+          const jd = await rd.json();
+
+          // Popup via DOM
+          const pu = window.open('', '_blank', 'width=950,height=750,scrollbars=yes,resizable=yes');
+          const pd = pu.document;
+          pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body></body></html>'); pd.close();
+
+          const st = pd.createElement('style');
+          st.textContent = 'body{font-family:Arial,sans-serif;font-size:13px;padding:20px}h3{color:#1A6B3A;margin-bottom:8px}.info{background:#f0f8f0;border-left:3px solid #1A6B3A;padding:8px;margin:8px 0;font-size:12px}.instrucao{background:#fff3cd;border:1px solid #ffc107;padding:10px;border-radius:4px;margin:10px 0}textarea{width:100%;font-family:monospace;font-size:12px;border:1px solid #ccc;padding:8px;resize:vertical}#btn-an{background:#1A6B3A;color:#fff;border:none;padding:8px 20px;border-radius:4px;cursor:pointer;margin-top:8px}#btn-an:disabled{background:#aaa}#res{margin-top:12px;padding:10px;border:1px solid #ccc;border-radius:4px;display:none;background:#f9f9f9}.ok{color:green}.err{color:red}';
+          pd.head.appendChild(st);
+
+          const h3 = pd.createElement('h3'); h3.textContent = '📄 ' + doc.label; pd.body.appendChild(h3);
+          const inf = pd.createElement('div'); inf.className = 'info';
+          inf.innerHTML = 'Chars: ' + jd.total_chars + ' | Refs: ' + JSON.stringify(jd.refs_extraidas) + ' | ' +
+            (jd.busca_info||[]).map(l => '<span class="' + (l.startsWith('✅')?'ok':'err') + '">' + l + '</span>').join(' | ');
+          pd.body.appendChild(inf);
+
+          const ins = pd.createElement('div'); ins.className = 'instrucao';
+          ins.textContent = '💡 Selecione o trecho relevante, cole abaixo e clique em Analisar.';
+          pd.body.appendChild(ins);
+
+          const l1 = pd.createElement('label'); l1.textContent = 'Texto completo:'; pd.body.appendChild(l1);
+          const ta1 = pd.createElement('textarea'); ta1.readOnly = true; ta1.style.height = '280px';
+          ta1.value = jd.texto_completo || jd.primeiros_500 || ''; pd.body.appendChild(ta1);
+
+          const l2 = pd.createElement('label'); l2.style.marginTop = '8px'; l2.style.display = 'block';
+          l2.textContent = 'Trecho para análise:'; pd.body.appendChild(l2);
+          const ta2 = pd.createElement('textarea'); ta2.style.height = '100px';
+          ta2.placeholder = 'Cole o trecho aqui...';
+          ta2.value = (jd.trecho_relevante && !jd.trecho_relevante.startsWith('(não')) ? jd.trecho_relevante : '';
+          pd.body.appendChild(ta2);
+
+          const bAn = pd.createElement('button'); bAn.id = 'btn-an'; bAn.textContent = '🤖 Analisar com IA';
+          pd.body.appendChild(bAn);
+          const divRes = pd.createElement('div'); divRes.id = 'res'; pd.body.appendChild(divRes);
+
+          // Botão salvar no DTQ (aparece após análise)
+          const bSalvar = pd.createElement('button');
+          bSalvar.id = 'btn-salvar-dtq';
+          bSalvar.textContent = '💾 Salvar análise no DTQ';
+          bSalvar.style.cssText = 'display:none;margin-top:8px;margin-left:8px;background:#0d2b5e;color:#fff;border:none;padding:8px 20px;border-radius:4px;cursor:pointer;';
+          pd.body.appendChild(bSalvar);
+
+          bAn.addEventListener('click', async () => {
+            const trecho = ta2.value.trim();
+            if (!trecho) { pu.alert('Cole o trecho antes de analisar.'); return; }
+            bAn.disabled = true; bAn.textContent = '⏳ Analisando...';
+            try {
+              const rr = await fetch('/analisar_destaque', {
+                method: 'POST', credentials: 'same-origin',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id_principal: idPrincipal, descricao, numero, projeto,
+                  url_documento: doc.url, label_documento: doc.label, trecho_manual: trecho})
+              });
+              const jj = await rr.json();
+              divRes.style.display = 'block';
+              divRes.innerHTML = jj.resumo || ('<span style="color:red">Erro: ' + (jj.error||'') + '</span>');
+              if (jj.resumo) bSalvar.style.display = 'inline-block';
+            } catch(err) { pu.alert('Erro: ' + err.message); }
+            finally { bAn.disabled = false; bAn.textContent = '🤖 Analisar com IA'; }
+          });
+
+          bSalvar.addEventListener('click', () => {
+            const analiseHtml = divRes.innerHTML;
+            // Injeta no box de análise na janela principal
+            let box = window.document.getElementById('analise-destaque-' + numero.replace(/\s/g,'-'));
+            if (!box) {
+              // Cria o box e injeta na tabela
+              const trs = window.document.querySelectorAll(`[data-numero="${numero}"]`);
+              const trOrig = trs.length ? trs[0].closest('tr') : null;
+              if (trOrig) {
+                const ntr = trOrig.nextElementSibling;
+                if (ntr) box = ntr.querySelector('[id^="analise-destaque-"]');
+              }
+            }
+            if (!box) {
+              box = window.document.createElement('div');
+              box.id = 'analise-destaque-' + numero.replace(/\s/g,'-');
+              box.className = 'mt-2 p-2 border rounded bg-light';
+              // Tenta adicionar na célula IA
+              const btnOrig = window.document.querySelector(`[data-numero="${numero}"]`);
+              if (btnOrig) btnOrig.closest('td').appendChild(box);
+            }
+            // Monta o conteúdo com botões
+            const inner = box.querySelector('div') || (() => { const d = window.document.createElement('div'); box.appendChild(d); return d; })();
+            inner.innerHTML = '';
+            const dRes = window.document.createElement('div'); dRes.innerHTML = analiseHtml; inner.appendChild(dRes);
+            // Botões criar quadro + editar análise + tabela
+            const dBtn = window.document.createElement('div'); dBtn.className = 'mt-2 d-flex gap-2 flex-wrap';
+            const bq = window.document.createElement('button'); bq.className = 'btn btn-sm btn-dark';
+            bq.textContent = '🖼️ Criar Quadro do DTQ';
+            bq.dataset.projeto = projeto; bq.dataset.numero = numero; bq.dataset.autoria = autoria;
+            bq.dataset.descricao = descricao; bq.dataset.analise = analiseHtml;
+            bq.dataset.urlDoc = doc.url; bq.dataset.labelDoc = doc.label;
+            bq.onclick = function() { window.gerarQuadroDTQ(this); };
+            dBtn.appendChild(bq);
+            const bEdit = window.document.createElement('button'); bEdit.className = 'btn btn-sm btn-outline-secondary';
+            bEdit.textContent = '✏️ Editar Análise';
+            bEdit.onclick = function() {
+              const ta = window.document.createElement('textarea');
+              ta.className = 'form-control mt-1'; ta.rows = 6; ta.style.fontSize = '0.8rem'; ta.value = dRes.innerHTML;
+              const bSv = window.document.createElement('button'); bSv.className = 'btn btn-sm btn-success mt-1'; bSv.textContent = '💾 Salvar edição';
+              bSv.onclick = () => { dRes.innerHTML = ta.value; bq.dataset.analise = ta.value; ta.remove(); bSv.remove(); };
+              inner.appendChild(ta); inner.appendChild(bSv);
+            };
+            dBtn.appendChild(bEdit);
+            const bTab = window.document.createElement('button'); bTab.className = 'btn btn-sm btn-outline-primary';
+            bTab.textContent = '📋 Tabela de Destaques';
+            bTab.onclick = function() { window.gerarTabelaDestaques(projeto); };
+            dBtn.appendChild(bTab);
+            inner.appendChild(dBtn);
+            box.style.display = 'block';
+            bSalvar.textContent = '✅ Salvo!';
+            bSalvar.style.background = '#1A6B3A';
+            setTimeout(() => pu.close(), 1500);
+          });
+
+        } catch(e) { alert('Erro: ' + e.message); }
+        finally { btnDebug.disabled = false; btnDebug.innerHTML = '<i class="fas fa-search me-1"></i>Procurar no texto'; }
+      });
+
+      // === BOTÃO ANALISAR ===
+      btnConfirmar.addEventListener('click', async () => {
+        const sel = mBody.querySelector('input[name="doc_sel"]:checked');
+        if (!sel) return;
+        const doc = docs[parseInt(sel.value)];
+        modal.hide();
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        try {
+          const r2 = await fetch('/analisar_destaque', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({id_principal: idPrincipal, descricao, numero, projeto,
+              url_documento: doc.url, label_documento: doc.label,
+              ...(extraParams || {})})
+          });
+          const j2 = await r2.json();
+          if (j2.resumo) {
+            // Encontra container de resultado
+            const numKey = numero.replace(/\s/g, '-');
+            let box = document.getElementById('analise-destaque-' + numKey);
+            if (!box) {
+              const tr = btn.closest('tr');
+              const ntr = tr ? tr.nextElementSibling : null;
+              if (ntr) box = ntr.querySelector('[id^="analise-destaque-"]');
+            }
+            if (!box) {
+              box = document.createElement('div');
+              box.className = 'mt-2 p-2 border rounded bg-light';
+              btn.closest('td').appendChild(box);
+            }
+            // Insere resultado
+            const inner = box.querySelector('div') || box;
+            inner.innerHTML = '';
+            const dRes = document.createElement('div');
+            dRes.innerHTML = j2.resumo;
+            inner.appendChild(dRes);
+            // Botão criar quadro + editar análise + tabela global
+            const dBtn = document.createElement('div');
+            dBtn.className = 'mt-2 d-flex gap-2 flex-wrap';
+
+            // Botão Criar Quadro DTQ
+            const bq = document.createElement('button');
+            bq.className = 'btn btn-sm btn-dark';
+            bq.textContent = '🖼️ Criar Quadro do DTQ';
+            bq.dataset.projeto   = projeto;
+            bq.dataset.numero    = numero;
+            bq.dataset.autoria   = autoria;
+            bq.dataset.descricao = descricao;
+            bq.dataset.analise   = j2.resumo;
+            bq.dataset.urlDoc    = doc.url;
+            bq.dataset.labelDoc  = doc.label;
+            bq.onclick = function() { gerarQuadroDTQ(this); };
+            dBtn.appendChild(bq);
+
+            // Botão Editar Análise
+            const bEdit = document.createElement('button');
+            bEdit.className = 'btn btn-sm btn-outline-secondary';
+            bEdit.textContent = '✏️ Editar Análise';
+            bEdit.onclick = function() {
+              const dRes2 = inner.querySelector('div');
+              if (!dRes2) return;
+              const ta = document.createElement('textarea');
+              ta.className = 'form-control mt-1'; ta.rows = 8; ta.style.fontSize = '0.8rem';
+              ta.value = dRes2.innerHTML;
+              const bSave = document.createElement('button');
+              bSave.className = 'btn btn-sm btn-success mt-1'; bSave.textContent = '💾 Salvar edição';
+              bSave.onclick = () => {
+                dRes2.innerHTML = ta.value;
+                bq.dataset.analise = ta.value;
+                ta.remove(); bSave.remove(); bEdit.textContent = '✏️ Editar Análise';
+              };
+              inner.appendChild(ta); inner.appendChild(bSave);
+              bEdit.textContent = '↩️ Cancelar';
+            };
+            dBtn.appendChild(bEdit);
+
+            // Botão Tabela de Destaques
+            const bTab = document.createElement('button');
+            bTab.className = 'btn btn-sm btn-outline-primary';
+            bTab.textContent = '📋 Tabela de Destaques';
+            bTab.onclick = function() { gerarTabelaDestaques(projeto); };
+            dBtn.appendChild(bTab);
+
+            inner.appendChild(dBtn);
+            box.style.display = 'block';
+          } else {
+            alert('Erro: ' + (j2.error || 'Resposta vazia'));
+          }
+        } catch(e) { alert('Erro: ' + e.message); }
+        finally { btn.disabled = false; btn.innerHTML = '<i class="fas fa-robot"></i>'; }
+      });
+
+      // Limpa ao fechar
+      modalEl.addEventListener('hidden.bs.modal', () => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-robot"></i>';
+        modalEl.remove();
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('padding-right');
+      });
+
+    } catch(e) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-robot"></i>';
+    }
+  } // fim _executarAnaliseDestaque
+
+  async function limparResumosIA(eventoId) {
+    if (!confirm("Remover resumos IA salvos? Serão regenerados ao recarregar.")) return;
+    const r = await fetch(`/limpar_resumos_ia/${eventoId}`, {method:'POST', credentials:'same-origin'});
+    const j = await r.json();
+    alert(j.message || j.error);
+    if (j.message) location.reload();
+  }
+
+  async function limparCacheEvento(eventoId) {
+    if (!confirm("Limpar cache desta pauta? Os títulos de REQ serão reprocessados ao atualizar.")) return;
+    const r = await fetch(`/limpar_cache/${eventoId}`, {
+      method: 'POST',
+      credentials: 'same-origin'
+    });
+    if (!r.ok) {
+      alert('Erro HTTP: ' + r.status);
+      return;
+    }
+    const j = await r.json();
+    if (j.message) {
+      window.location.href = window.location.href.split('?')[0] + '?force_reload=true';
+    } else {
+      alert(j.error || 'Erro ao limpar cache');
+    }
+  }
+</script>
+
+<!-- MODAL ORIENTAÇÕES v2 -->
+<div class="modal fade" id="modalOrientacoes" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#B8860B,#DAA520);">
+        <h5 class="modal-title text-white">
+          <i class="fas fa-vote-yea me-2"></i>Orientações — Pauta do Plenário
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div id="ori-loading" class="text-center p-4">
+          <div class="spinner-border text-warning"></div>
+          <p class="mt-2">Carregando orientações...</p>
+        </div>
+        <div id="ori-conteudo" style="display:none; overflow-x:auto;">
+          <table class="table table-bordered table-sm mb-0" id="tabela-orientacoes"
+                 style="font-size:0.82rem; min-width:1000px;">
+            <thead>
+              <tr style="background:#f0f0f0;">
+                <th style="width:35px;">#</th>
+                <th style="width:130px;">Proposição</th>
+                <th>Ementa</th>
+                <th style="width:150px;">Orientação PL</th>
+                <th style="width:150px;">Orientação NOVO</th>
+                <th style="width:150px;">Orientação Oposição</th>
+                <th style="width:150px;">Orientação Minoria</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-orientacoes"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <small class="text-muted me-auto">
+          <i class="fas fa-info-circle me-1"></i>
+          Cada grupo edita apenas sua coluna. Salvo automaticamente ao selecionar.
+        </small>
+        <button class="btn btn-outline-danger btn-sm" onclick="exportarOrientacoesPDF()">
+          <i class="fas fa-file-pdf me-2"></i>Exportar PDF
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// MODAL ORIENTAÇÕES
+// ============================================================
+const USER_CATEGORIA = "{{ user_categoria }}";
+const EVENTO_ID_ORI  = {{ evento_id|safe }};
+
+const ITENS_ORI = [
+  {% for item in itens %}
+  {
+    ordem:                "{{ item.ordem }}",
+    id_principal:         "{{ item.id_principal }}",
+    projeto:              "{{ item.projeto | replace('"','') | replace("'",'') }}",
+    ementa:               {{ item.ementa | tojson }},
+    responsavel_username: "{{ item.responsavel_username or '' }}",
+    responsavel_nome:     "{{ (assessores | selectattr('username','equalto', item.responsavel_username) | list | first).nome if item.responsavel_username else '' }}",
+    responsavel_foto:     "{{ (assessores | selectattr('username','equalto', item.responsavel_username) | list | first).foto if item.responsavel_username else '' }}"
+  }{% if not loop.last %},{% endif %}
+  {% endfor %}
+];
+
+const ORI_OPCOES = ['SIM', 'NÃO', 'NEGOCIAÇÃO', 'LIBERADO', 'OBSTRUÇÃO', 'ABSTENÇÃO'];
+const ORI_CORES  = {
+  'SIM':        '#d4edda',
+  'NÃO':        '#f8d7da',
+  'NEGOCIAÇÃO': '#fff3cd',
+  'LIBERADO':   '#cce5ff',
+  'OBSTRUÇÃO':  '#ffe5d0',
+  'ABSTENÇÃO':  '#e2e3e5',
+  '':           '#ffffff',
+};
+
+function grupoDoUsuario() {
+  const un = "{{ current_user.username }}".toUpperCase();
+  if (un === 'LUISA.MARRECO') return 'todos';
+  if (USER_CATEGORIA === 'restrito') {
+    if (un === 'PL')   return 'PL';
+    if (un === 'NOVO') return 'NOVO';
+  }
+  if (USER_CATEGORIA === 'oposicao') return 'oposicao';
+  if (USER_CATEGORIA === 'minoria')  return 'minoria';
+  return 'todos';
+}
+
+const COLUNAS = [
+  { grupo: 'PL',       label: 'PL'       },
+  { grupo: 'NOVO',     label: 'NOVO'     },
+  { grupo: 'oposicao', label: 'Oposição' },
+  { grupo: 'minoria',  label: 'Minoria'  },
+];
+
+let oriData = {};
+
+async function carregarOrientacoes() {
+  const elLoading  = document.getElementById('ori-loading');
+  const elConteudo = document.getElementById('ori-conteudo');
+  if (elLoading)  elLoading.style.display  = 'block';
+  if (elConteudo) elConteudo.style.display = 'none';
+  try {
+    const r = await fetch(`/get_orientacoes/${EVENTO_ID_ORI}`);
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      if (r.url.includes('login') || r.status === 401) {
+        alert('Sessão expirada. Faça login novamente.');
+        window.location.href = '/login';
+        return;
+      }
+      throw new Error(`Erro do servidor (HTTP ${r.status}) — tente recarregar a página`);
+    }
+    const j = await r.json();
+    console.log('Orientações carregadas:', j.length, j);
+    oriData = {};
+    j.forEach(o => {
+      const key = `${o.id_principal}|${o.grupo}`;
+      oriData[key] = {
+        orientacao: o.orientacao || '',
+        comentario: o.comentario || ''
+      };
+    });
+    renderizarTabela();
+  } catch(e) {
+    console.error('Erro ao carregar orientações:', e);
+    alert('Erro ao carregar orientações: ' + e.message);
+  } finally {
+    if (elLoading)  elLoading.style.display  = 'none';
+    if (elConteudo) elConteudo.style.display = 'block';
+  }
+}
+
+function renderizarTabela() {
+  const tbody    = document.getElementById('tbody-orientacoes');
+  const meuGrupo = grupoDoUsuario();
+  tbody.innerHTML = '';
+
+  ITENS_ORI.forEach((item) => {
+    const tr = document.createElement('tr');
+    const resumoEl = document.getElementById('resumo-ia-' + item.id_principal);
+    const resumo = (resumoEl && resumoEl.textContent.trim()) || '';
+    const ementaHtml = `<span style="color:#333">${item.ementa || ''}</span>` +
+      (resumo ? `<br><span style="color:#1A6B3A;font-weight:500">Resumo: ${resumo}</span>` : '');
+
+    // Responsável: foto + nome em itálico azul
+    let respHtml = '';
+    if (item.responsavel_nome) {
+      const foto = item.responsavel_foto
+        ? `<img src="${item.responsavel_foto}" style="width:20px;height:20px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:4px;border:1px solid #ccc;">`
+        : `<i class="fas fa-user-circle" style="color:#0D2B5E;margin-right:4px;"></i>`;
+      respHtml = `<div style="margin-top:4px;font-size:0.72rem;color:#0D2B5E;font-style:italic;">${foto}${item.responsavel_nome}</div>`;
+    }
+
+    tr.innerHTML = `
+      <td class="text-center fw-bold align-top">${item.ordem}</td>
+      <td class="align-top"><strong>${item.projeto}</strong>${respHtml}</td>
+      <td style="font-size:0.78rem; min-width:200px; white-space:normal; word-break:break-word;">${ementaHtml}</td>`;
+
+    COLUNAS.forEach(col => {
+      const key   = `${item.id_principal}|${col.grupo}`;
+      const salvo = oriData[key] || {orientacao: '', comentario: ''};
+      const podeEditar = (meuGrupo === 'todos' || meuGrupo === col.grupo);
+      const corSelect  = ORI_CORES[salvo.orientacao] || '#fff';
+
+      const td = document.createElement('td');
+      td.style.background = ORI_CORES[salvo.orientacao] || '#ffffff';
+      td.style.padding = '5px';
+      td.style.verticalAlign = 'top';
+      td.style.transition = 'background 0.2s';
+
+      if (podeEditar) {
+        td.innerHTML = `
+          <select class="form-select form-select-sm mb-1"
+                  style="background:${corSelect}; font-size:0.78rem; font-weight:600;"
+                  onchange="salvarOrientacao('${item.id_principal}','${col.grupo}',this.value,this)">
+            <option value="">— selecione —</option>
+            ${ORI_OPCOES.map(op =>
+              `<option value="${op}" ${salvo.orientacao===op?'selected':''}>${op}</option>`
+            ).join('')}
+          </select>
+          <textarea class="form-control form-control-sm"
+                    rows="4"
+                    placeholder="Comentário / justificativa..."
+                    style="font-size:0.75rem; resize:vertical; min-height:80px;"
+                    onchange="salvarComentario('${item.id_principal}','${col.grupo}',this.value)"
+                    >${salvo.comentario}</textarea>`;
+      } else {
+        const badgeCor = salvo.orientacao === 'SIM' ? '#1A6B3A'
+                       : salvo.orientacao === 'NÃO' || salvo.orientacao === 'OBSTRUÇÃO' ? '#8B0000'
+                       : salvo.orientacao === 'LIBERADO' ? '#7B5C00'
+                       : '#555';
+        td.innerHTML = salvo.orientacao
+          ? `<div style="background:${ORI_CORES[salvo.orientacao]};border-radius:4px;padding:3px 6px;
+                         color:${badgeCor};font-weight:700;font-size:0.78rem;text-align:center;">
+               ${salvo.orientacao}
+             </div>
+             ${salvo.comentario
+               ? `<div style="font-size:0.72rem;color:#555;margin-top:4px;white-space:pre-wrap;">${salvo.comentario}</div>`
+               : ''}`
+          : `<span class="text-muted" style="font-size:0.75rem;">—</span>`;
+      }
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+}
+
+async function salvarOrientacao(id_principal, grupo, orientacao, selectEl) {
+  const cor = ORI_CORES[orientacao] || '#ffffff';
+  selectEl.style.background = cor;
+  const td = selectEl.closest('td');
+  if (td) td.style.background = cor;
+  const key = `${id_principal}|${grupo}`;
+  if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
+  oriData[key].orientacao = orientacao;
+  await _enviarOrientacao(id_principal, grupo);
+}
+
+async function salvarComentario(id_principal, grupo, comentario) {
+  const key = `${id_principal}|${grupo}`;
+  if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
+  oriData[key].comentario = comentario;
+  await _enviarOrientacao(id_principal, grupo);
+}
+
+async function _enviarOrientacao(id_principal, grupo) {
+  const key   = `${id_principal}|${grupo}`;
+  const dados = oriData[key] || {};
+  try {
+    await fetch('/salvar_orientacoes', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        evento_id: EVENTO_ID_ORI,
+        orientacoes: [{
+          id_principal,
+          grupo,
+          orientacao: dados.orientacao || '',
+          comentario: dados.comentario || ''
+        }]
+      })
+    });
+  } catch(e) {
+    console.error('Erro ao salvar:', e);
+  }
+}
+
+async function exportarOrientacoesPDF() {
+  const payload = {
+    evento_id: EVENTO_ID_ORI,
+    itens: ITENS_ORI,
+    orientacoes: oriData,
+    colunas: COLUNAS.map(c => ({grupo: c.grupo, label: c.label}))
+  };
+  const r = await fetch('/exportar_orientacoes_pdf', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const blob = await r.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `orientacoes_plenario_${EVENTO_ID_ORI}.pdf`;
+  a.click();
+}
+</script>
+
+<!-- ═══ MODAL PAUTA ICONOGRÁFICA ══════════════════════════════════════════ -->
+<div class="modal fade" id="modalIconografica" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width:95vw;">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);color:#fff;">
+        <h5 class="modal-title"><i class="fas fa-th-large me-2"></i>Pauta Iconográfica</h5>
+        <div class="ms-auto me-3 d-flex gap-2">
+          <span id="icon-status" class="badge bg-warning text-dark" style="font-size:0.75rem;"></span>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0" style="background:#f4ede1;">
+        <!-- Preview em tempo real -->
+        <div id="icon-preview-container" style="padding:16px;">
+          <div id="icon-preview" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:794px;margin:0 auto;">
+            <!-- Cards gerados via JS -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+        <button class="btn btn-primary" id="btn-gerar-iconografica"
+          onclick="window._gerarIconografica && window._gerarIconografica()">
+          <i class="fas fa-print me-1"></i>Imprimir / Salvar PDF
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Modal de alerta do monitoramento -->
+<div class="modal fade" id="modalMonitorAlerta" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header text-white" style="background:linear-gradient(135deg,#C0392B,#922B21);">
+        <h5 class="modal-title fw-bold">
+          <i class="fas fa-satellite-dish me-2"></i>
+          <span id="monitor-alerta-titulo">Item Em Análise</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body text-center py-4">
+        <div style="font-size:3rem;margin-bottom:12px;">🔔</div>
+        <div id="monitor-alerta-corpo" style="font-size:1.15rem;font-weight:700;color:#2c3e50;"></div>
+        <div id="monitor-alerta-detalhe" class="text-muted mt-2" style="font-size:0.88rem;"></div>
+        <div id="monitor-alerta-horario" class="mt-2" style="font-size:0.8rem;color:#888;"></div>
+      </div>
+      <div class="modal-footer justify-content-center gap-2">
+        <button type="button" class="btn btn-danger fw-bold px-4" data-bs-dismiss="modal">
+          <i class="fas fa-check me-2"></i>Entendido
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  // ── Agente de Monitoramento da Pauta ──────────────────────────────────────
+  // Faz polling via rota interna /monitor_status que tenta múltiplas fontes.
+  // Dispara popup apenas uma vez por status novo detectado.
+
+  const EVENTO_ID_MON  = window.EVENTO_ID;
+  const INTERVALO_MS   = 45000;
+
+  let _ativo           = false;
+  let _timer           = null;
+  let _baseline        = null;   // snapshot do primeiro fetch
+  let _jaAlertados     = new Set(); // "termo" — dispara só uma vez
+
+  // ── API pública ──────────────────────────────────────────────────────────
+  window.toggleMonitoramento = function() {
+    _ativo ? parar() : iniciar();
+  };
+
+  function iniciar() {
+    _ativo    = true;
+    _baseline = null;
+    _jaAlertados.clear();
+    setBotao(true);
+    setStatus('⏳ iniciando...');
+    checar();
+    _timer = setInterval(checar, INTERVALO_MS);
+  }
+
+  function parar() {
+    _ativo = false;
+    clearInterval(_timer);
+    _timer = null;
+    setBotao(false);
+  }
+
+  function setBotao(ativo) {
+    const btn   = document.getElementById('btn-monitorar');
+    const label = document.getElementById('btn-monitorar-label');
+    const txt   = document.getElementById('monitor-status-txt');
+    if (btn)   btn.style.background = ativo
+      ? 'linear-gradient(135deg,#C0392B,#922B21)'
+      : 'linear-gradient(135deg,#6c757d,#495057)';
+    if (label) label.textContent = ativo ? 'Monitorando...' : 'Monitorar';
+    if (!ativo && txt) txt.textContent = '';
+  }
+
+  function setStatus(txt) {
+    const el = document.getElementById('monitor-status-txt');
+    if (el) el.textContent = txt;
+  }
+
+  // ── Polling ───────────────────────────────────────────────────────────────
+  async function checar() {
+    if (!_ativo) return;
+    const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    setStatus('⏳ verificando...');
+    try {
+      // 1. Tenta API de votações direto no browser (sem passar pelo Railway)
+      const rVot = await fetch(
+        'https://dadosabertos.camara.leg.br/api/v2/votacoes?idEvento=' + EVENTO_ID_MON + '&itens=10&ordem=DESC',
+        {headers: {'Accept':'application/json'}, cache: 'no-store'}
+      );
+      if (rVot.ok) {
+        const jVot = await rVot.json();
+        const votacoes = jVot.dados || [];
+        console.log('[Monitor] API votações OK:', votacoes.length, 'votações');
+        if (votacoes.length > 0) {
+          processarVotacoes(votacoes);
+          setStatus('✓ ' + agora + ' (API votações)');
+          return;
+        }
+      }
+    } catch(e) {
+      console.log('[Monitor] API votações bloqueada:', e.message);
+    }
+
+    try {
+      // 2. Tenta página HTML do evento direto no browser
+      const rHtml = await fetch(
+        'https://www.camara.leg.br/evento-legislativo/' + EVENTO_ID_MON,
+        {cache: 'no-store'}
+      );
+      if (rHtml.ok) {
+        const html = await rHtml.text();
+        const parser = new DOMParser();
+        const doc2 = parser.parseFromString(html, 'text/html');
+        doc2.querySelectorAll('script,style').forEach(el => el.remove());
+        const texto = (doc2.body?.textContent || '').replace(/\s+/g,' ').trim().toLowerCase();
+        console.log('[Monitor] HTML OK:', texto.length, 'chars');
+        processarTexto(texto);
+        setStatus('✓ ' + agora + ' (HTML)');
+        return;
+      }
+    } catch(e) {
+      console.log('[Monitor] HTML bloqueado:', e.message);
+    }
+
+    try {
+      // 3. Fallback: rota interna /monitor_status
+      const rInt = await fetch('/monitor_status/' + EVENTO_ID_MON, {
+        cache: 'no-store', credentials: 'same-origin'
+      });
+      if (rInt.ok) {
+        const dados = await rInt.json();
+        console.log('[Monitor] Rota interna OK. fontes:', dados.fontes_status);
+        const texto = (dados.texto || '').toLowerCase();
+        if (texto.length > 10) processarTexto(texto);
+        (dados.itens || []).forEach(it => {
+          const sit = (it.situacao || '').toLowerCase();
+          if (sit) verificarTermo(sit, it.proposicao || 'Plenário');
+        });
+        setStatus('✓ ' + agora + ' (interno)');
+        return;
+      }
+    } catch(e) {
+      console.log('[Monitor] Rota interna falhou:', e.message);
+    }
+
+    setStatus('⚠️ ' + agora + ' sem dados');
+  }
+
+  // ── Processamento ─────────────────────────────────────────────────────────
+  const TERMOS = [
+    { t: 'em análise',      l: 'Em Análise',     e: '🔴' },
+    { t: 'em votação',      l: 'Em Votação',      e: '🗳️' },
+    { t: 'votação nominal', l: 'Votação Nominal', e: '🗳️' },
+    { t: 'em discussão',    l: 'Em Discussão',    e: '💬' },
+    { t: 'em apreciação',   l: 'Em Apreciação',   e: '🔵' },
+    { t: 'aprovado',        l: 'Aprovado',        e: '✅' },
+    { t: 'rejeitado',       l: 'Rejeitado',       e: '❌' },
+    { t: 'retirado de pauta', l: 'Retirado de Pauta', e: '↩️' },
+  ];
+
+  function processarTexto(texto) {
+    if (_baseline === null) {
+      // Primeira vez — salva quais termos já existem
+      _baseline = new Set(TERMOS.filter(({t}) => texto.includes(t)).map(({t}) => t));
+      console.log('[Monitor] Baseline termos:', [..._baseline]);
+      return;
+    }
+    for (const {t, l, e} of TERMOS) {
+      if (_baseline.has(t)) continue; // já existia no início
+      if (!texto.includes(t)) continue;
+      verificarTermo(t, null, l, e, texto);
+    }
+  }
+
+  function processarVotacoes(votacoes) {
+    for (const v of votacoes) {
+      const prop = v.proposicaoObjeto || v.descricao || '';
+      const sit  = v.dataHoraRegistro ? 'Em Votação' : '';
+      const apr  = v.aprovado;
+      if (!prop) continue;
+
+      if (_baseline === null) {
+        // Primeira chamada — salva estado inicial
+        _baseline = new Set();
+        return;
+      }
+
+      const chave = prop + '|' + sit;
+      if (sit && !_jaAlertados.has(chave)) {
+        _jaAlertados.add(chave);
+        const e = apr === true ? '✅' : apr === false ? '❌' : '🗳️';
+        const l = apr === true ? 'Aprovado' : apr === false ? 'Rejeitado' : 'Em Votação';
+        alertar(e + ' ' + prop, '', l);
+      }
+    }
+  }
+
+  function verificarTermo(termo, propCtx, label, emoji, textoFull) {
+    const chave = termo;
+    if (_jaAlertados.has(chave)) return;
+    _jaAlertados.add(chave);
+
+    label = label || termo;
+    emoji = emoji || '🔴';
+
+    // Tenta casar com item da pauta pelo número
+    const itensNossos = window.ITENS_DATA || [];
+    let itemCasado = null;
+    if (textoFull) {
+      const idx = textoFull.indexOf(termo);
+      const contexto = textoFull.substring(Math.max(0,idx-200), idx+300);
+      for (const it of itensNossos) {
+        const nums = (it.projeto||'').match(/\d{3,}/g) || [];
+        if (nums.some(n => contexto.includes(n))) { itemCasado = it; break; }
+      }
+    }
+    if (!itemCasado && propCtx) {
+      const nums = propCtx.match(/\d{3,}/g) || [];
+      itemCasado = itensNossos.find(it =>
+        (it.projeto||'').match(/\d{3,}/g)?.some(n => nums.includes(n))
+      );
+    }
+
+    const titulo  = itemCasado ? emoji + ' ' + itemCasado.projeto : emoji + ' Plenário';
+    const detalhe = itemCasado ? (itemCasado.ementa||'').substring(0,120) : (propCtx || '');
+    alertar(titulo, detalhe, label);
+  }
+
+  // ── Alerta ────────────────────────────────────────────────────────────────
+  function alertar(titulo, detalhe, situacao) {
+    console.log('[Monitor] ALERTA:', titulo, '|', situacao);
+    const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
+    const s = id => document.getElementById(id);
+    if (s('monitor-alerta-titulo'))  s('monitor-alerta-titulo').textContent  = situacao || 'Mudança';
+    if (s('monitor-alerta-corpo'))   s('monitor-alerta-corpo').textContent   = titulo;
+    if (s('monitor-alerta-detalhe')) s('monitor-alerta-detalhe').textContent = detalhe || '';
+    if (s('monitor-alerta-horario')) s('monitor-alerta-horario').textContent = 'Detectado às ' + agora;
+
+    // Som
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.25, 0.5].forEach(t => {
+        const osc = ctx.createOscillator(), g = ctx.createGain();
+        osc.connect(g); g.connect(ctx.destination);
+        osc.frequency.value = 880;
+        g.gain.setValueAtTime(0.3, ctx.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.2);
+        osc.start(ctx.currentTime + t);
+        osc.stop(ctx.currentTime + t + 0.22);
+      });
+    } catch(_) {}
+
+    // Notificação nativa
+    if (Notification.permission === 'granted') {
+      new Notification('🔔 ' + titulo, {body: situacao, icon: '/static/logo_minoria.png'});
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission();
+    }
+
+    // Modal
+    try {
+      bootstrap.Modal.getOrCreateInstance(
+        document.getElementById('modalMonitorAlerta')
+      ).show();
+    } catch(_) {}
+  }
+
+})();
+</script>
+
+
+<script>
+(function() {
+  const _imagens     = {}; // dataURL por id
+  const _imgBusy     = {}; // flag carregando
+  let _cardScale = {}; // escala individual por id (1.0 = padrão)
+  const IMG_H_BASE = 100; // altura padrão de imagem em px
+
+  const C = {cream:"#f4ede1",ink:"#1e3550",inkSoft:"#34547a",forest:"#3d8b4a",leaf:"#7ab450",ruby:"#c0392b",amber:"#f4c542"};
+
+  function oriCfg(o){
+    o=(o||'').toUpperCase();
+    if(o==='SIM')        return{bg:'#2e7d32',icon:'check'};
+    if(o==='NÃO')        return{bg:'#c0392b',icon:'cross'};
+    if(o==='OBSTRUÇÃO')  return{bg:'#c0392b',icon:'lock'};
+    if(o==='NEGOCIAÇÃO') return{bg:'#e6a817',icon:'check'};
+    if(o==='LIBERADO')   return{bg:'#5e7184',icon:'check'};
+    if(o==='ABSTENÇÃO')  return{bg:'#9e9e9e',icon:'check'};
+    return{bg:'#9e9e9e',icon:'check'};
+  }
+
+  function svgIco(t,c){
+    if(t==='check')return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M20 33 L29 42 L45 24" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    if(t==='cross')return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M22 22 L42 42 M42 22 L22 42" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round"/></svg>`;
+    if(t==='lock') return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M24 30 v-4 a8 8 0 0 1 16 0" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/><rect x="22" y="30" width="20" height="16" rx="2" fill="#fff"/></svg>`;
+    return'';
+  }
+
+  function e(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+  // Busca imagem via backend (Gemini para keywords + Pexels)
+  async function buscarImagem(resumo, id) {
+    try {
+      const r = await fetch('/buscar_imagem_item', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({resumo, id_principal: id})
+      });
+      if (!r.ok) return null;
+      const j = await r.json();
+      return j.imagem_url || null;
+    } catch { return null; }
+  }
+
+  const ICON_ORI_OPCOES = ['SIM','NÃO','NEGOCIAÇÃO','LIBERADO','OBSTRUÇÃO','ABSTENÇÃO','—'];
+
+  // Orientação local (editada na pauta iconográfica)
+  const _orientacoes = {}; // sobrescreve a orientação da pauta geral
+  const _marcadores  = {}; // texto customizado do marcador, ex: "PRIORIDADE", "URGENTE"
+
+  // Renderiza um card no preview
+  function renderCard(item, container) {
+    const id  = String(item.id_principal);
+    const scale = _cardScale[id] || 1.0;
+    const imgH = Math.round(IMG_H_BASE * scale);
+    // Orientação: local override > da pauta geral
+    const oriAtual = _orientacoes[id] !== undefined ? _orientacoes[id] : (item.orientacao||'');
+    const cfg = oriCfg(oriAtual);
+    const resumoEl = document.getElementById('resumo-ia-' + id);
+    const resumo = (resumoEl && resumoEl.textContent.trim()) || (window.resumoCache && window.resumoCache[String(item.id_principal)]) || item.resumo_ia || '';
+    const descricao = (resumo || item.ementa || '').substring(0, 180);
+    const imgSrc   = _imagens[id];
+    const marcador = _marcadores[id]; // texto do marcador ou undefined
+    const temMarcador = !!marcador;
+    const shadow   = temMarcador ? `0 0 0 3px ${C.amber},0 6px 14px rgba(0,0,0,.10)` : '0 3px 10px rgba(0,0,0,.06)';
+
+    const selectOri = ICON_ORI_OPCOES.map(o =>
+      `<option value="${o}" ${o===oriAtual?'selected':''}>${o}</option>`
+    ).join('');
+
+    container.innerHTML = `
+      <div style="background:#fff;border-radius:10px;padding:11px 12px 0;position:relative;
+        box-shadow:${shadow};overflow:hidden;font-family:Barlow,sans-serif;">
+        <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${cfg.bg};"></div>
+        ${temMarcador ? `<div style="position:absolute;top:6px;right:6px;background:${C.amber};color:#fff;font-size:8px;font-weight:900;letter-spacing:.8px;padding:2px 6px;border-radius:4px;">★ ${e(marcador)}</div>` : ''}
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;padding-top:2px;">
+          <button class="icon-zoom-btn" data-id="${id}" data-fator="1.2" title="Aumentar" style="border:1px solid #ccc;border-radius:4px;padding:0px 7px;font-size:14px;background:#f8f8f8;cursor:pointer;line-height:1.6;">＋</button>
+          <button class="icon-zoom-btn" data-id="${id}" data-fator="0.83" title="Diminuir" style="border:1px solid #ccc;border-radius:4px;padding:0px 7px;font-size:14px;background:#f8f8f8;cursor:pointer;line-height:1.6;">－</button>
+          <select class="icon-ori-select" data-id="${id}"
+            style="font-size:10px;padding:2px 4px;border:1px solid ${cfg.bg};border-radius:4px;color:${cfg.bg};font-weight:700;background:#fff;cursor:pointer;">
+            ${selectOri}
+          </select>
+          <label style="cursor:pointer;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;padding:2px 7px;font-size:10px;white-space:nowrap;color:#444;">
+            ${imgSrc ? 'Alterar foto' : 'Inserir foto'}
+            <input type="file" accept="image/*" class="d-none icon-img-inline" data-id="${id}">
+          </label>
+          <button class="icon-marcar-btn" data-id="${id}"
+            style="cursor:pointer;background:${temMarcador?C.amber:'#f0f0f0'};color:${temMarcador?'#fff':'#444'};border:1px solid ${temMarcador?C.amber:'#ccc'};border-radius:4px;padding:2px 7px;font-size:10px;white-space:nowrap;">
+            ${temMarcador ? `★ ${e(marcador)}` : 'Marcar'}
+          </button>
+        </div>
+
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;padding-left:2px;">
+          <div style="width:22px;height:22px;border-radius:50%;background:${C.inkSoft};color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">${e(item.ordem)}</div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-size:15px;font-weight:800;color:${C.ink};line-height:1.1;">${e(item.projeto||'')}</div>
+        </div>
+
+        ${imgSrc ? `
+        <div class="icon-img-wrapper" data-id="${id}" style="width:100%;margin:5px 0;border-radius:6px;overflow:hidden;background:#f5f5f5;height:${imgH}px;position:relative;">
+          <img src="${imgSrc}" style="width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;">
+          <div class="icon-resize-e" data-id="${id}" style="position:absolute;top:0;right:0;width:10px;height:100%;cursor:ew-resize;background:rgba(30,53,80,0.18);display:flex;align-items:center;justify-content:center;">
+            <div style="width:3px;height:30px;border-radius:2px;background:rgba(255,255,255,0.7);"></div>
+          </div>
+          <div class="icon-resize-n" data-id="${id}" style="position:absolute;top:0;left:0;right:0;height:10px;cursor:ns-resize;background:rgba(30,53,80,0.18);display:flex;align-items:center;justify-content:center;">
+            <div style="width:30px;height:3px;border-radius:2px;background:rgba(255,255,255,0.7);"></div>
+          </div>
+          <div class="icon-resize-ne" data-id="${id}" style="position:absolute;top:0;right:0;width:18px;height:18px;cursor:nesw-resize;background:rgba(30,53,80,0.35);border-radius:0 6px 0 4px;"></div>
+        </div>` : ''}
+
+        <div style="font-size:9px;color:${C.inkSoft};line-height:1.5;padding-left:2px;">
+          <div><strong>Autor:</strong> ${e((item.autor||'N/D').substring(0,60))}</div>
+          <div><strong>Relator:</strong> ${e((item.relator||'N/D').substring(0,60))}</div>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px;margin-top:6px;padding-left:2px;padding-bottom:8px;">
+          <div style="flex:1;font-size:10px;color:#2c3e50;line-height:1.4;">${e(descricao)}</div>
+          <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
+            ${svgIco(cfg.icon, cfg.bg)}
+            <div style="font-size:8px;font-weight:900;color:${cfg.bg};margin-top:2px;letter-spacing:.5px;">${e(oriAtual||'—')}</div>
+          </div>
+        </div>
+        <div style="height:4px;background:linear-gradient(90deg,${C.leaf} 0%,${C.forest} 100%);margin-left:-12px;margin-right:-12px;"></div>
+      </div>`;
+
+    // Listeners de zoom (botões +/-)
+    container.querySelectorAll('.icon-zoom-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        const fator = parseFloat(b.dataset.fator);
+        _cardScale[id] = Math.min(3.0, Math.max(0.4, (_cardScale[id]||1.0) * fator));
+        renderCard(item, container);
+      });
+    });
+
+    // Resize por arraste nas alças da imagem
+    function makeResizeListener(handle, mode) {
+      if (!handle) return;
+      function startResize(clientX, clientY) {
+        const wrapper = container.querySelector('.icon-img-wrapper');
+        if (!wrapper) return;
+        const startX = clientX, startY = clientY;
+        const startW = wrapper.offsetWidth;
+        const startH = wrapper.offsetHeight;
+        function onMove(cx, cy) {
+          if (mode === 'e' || mode === 'ne') {
+            const newW = Math.max(60, startW + (cx - startX));
+            wrapper.style.width = newW + 'px';
+          }
+          if (mode === 'n' || mode === 'ne') {
+            // arrastar para cima diminui, para baixo aumenta (invertido: top fixo)
+            const newH = Math.max(30, startH - (cy - startY));
+            wrapper.style.height = newH + 'px';
+            _cardScale[id] = newH / IMG_H_BASE;
+          }
+        }
+        function onMouseMove(e) { e.preventDefault(); onMove(e.clientX, e.clientY); }
+        function onTouchMove(e) { e.preventDefault(); onMove(e.touches[0].clientX, e.touches[0].clientY); }
+        function cleanup() {
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', cleanup);
+          document.removeEventListener('touchmove', onTouchMove);
+          document.removeEventListener('touchend', cleanup);
+        }
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', cleanup);
+        document.addEventListener('touchmove', onTouchMove, {passive:false});
+        document.addEventListener('touchend', cleanup);
+      }
+      handle.addEventListener('mousedown',  e => { e.preventDefault(); startResize(e.clientX, e.clientY); });
+      handle.addEventListener('touchstart', e => { e.preventDefault(); startResize(e.touches[0].clientX, e.touches[0].clientY); }, {passive:false});
+    }
+    makeResizeListener(container.querySelector('.icon-resize-e'),  'e');
+    makeResizeListener(container.querySelector('.icon-resize-n'),  'n');
+    makeResizeListener(container.querySelector('.icon-resize-ne'), 'ne');
+
+    // Listener: select de orientação
+    container.querySelector('.icon-ori-select')?.addEventListener('change', function() {
+      _orientacoes[id] = this.value;
+      renderCard(item, container);
+    });
+
+    // Listener: trocar imagem
+    container.querySelector('.icon-img-inline')?.addEventListener('change', function() {
+      const file = this.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => { _imagens[id] = ev.target.result; renderCard(item, container); };
+      reader.readAsDataURL(file);
+    });
+
+    // Listener: marcar com texto customizado
+    container.querySelector('.icon-marcar-btn')?.addEventListener('click', function() {
+      if (temMarcador) {
+        // Já tem marcador — remove ou edita
+        const acao = confirm(`Marcador atual: "${marcador}"\n\nOK = editar   Cancelar = remover`);
+        if (acao) {
+          const novo = prompt('Texto do marcador:', marcador);
+          if (novo !== null) { if (novo.trim()) _marcadores[id] = novo.trim().toUpperCase(); else delete _marcadores[id]; }
+        } else {
+          delete _marcadores[id];
+        }
+      } else {
+        const txt = prompt('Texto do marcador (ex: PRIORIDADE, URGENTE, DESTAQUE):', 'PRIORIDADE');
+        if (txt && txt.trim()) _marcadores[id] = txt.trim().toUpperCase();
+      }
+      renderCard(item, container);
+    });
+  }
+
+  // Busca imagens para todos os itens
+  async function buscarTodasImagens(itens) {
+    const status = document.getElementById('icon-status');
+    let n = 0;
+    for (const item of itens) {
+      const id = String(item.id_principal);
+      if (_imagens[id]) { n++; continue; }
+      const resumoEl = document.getElementById('resumo-ia-' + id);
+      const resumo = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || item.ementa || '';
+      const query = resumo.substring(0, 80);
+      if (!query) continue;
+      _imgBusy[id] = true;
+      if (status) status.textContent = `Buscando imagens… ${n+1}/${itens.length}`;
+      // Atualiza placeholder
+      const ph = document.querySelector(`.icon-img-placeholder[data-id="${id}"]`);
+      if (ph) ph.textContent = '⏳ Buscando…';
+      const dataUrl = await buscarImagem(query, id);
+      _imgBusy[id] = false;
+      if (dataUrl) _imagens[id] = dataUrl;
+      n++;
+      // Re-renderiza o card
+      const container = document.querySelector(`[data-card-id="${id}"]`);
+      if (container) {
+        const itemData = itens.find(i => String(i.id_principal) === id);
+        if (itemData) renderCard(itemData, container);
+      }
+    }
+    if (status) status.textContent = '✅ Pronto';
+  }
+
+  async function abrirModalIconografica() {
+    const preview = document.getElementById('icon-preview');
+    if (!preview) return;
+    const itens = window.ITENS_DATA || [];
+
+    // Limpa e renderiza grid
+    preview.innerHTML = '';
+    itens.forEach(item => {
+      const wrapper = document.createElement('div');
+      wrapper.dataset.cardId = String(item.id_principal);
+      preview.appendChild(wrapper);
+      renderCard(item, wrapper);
+    });
+
+    const modal = new bootstrap.Modal(document.getElementById('modalIconografica'));
+    modal.show();
+  }
+
+  async function b64url(url){
+    try{
+      const r=await fetch(url);const blob=await r.blob();
+      return await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(blob);});
+    }catch{return null;}
+  }
+
+  function buildPrintHTML(data){
+    var mid=Math.ceil(data.items.length/2);
+    var left=data.items.slice(0,mid), right=data.items.slice(mid);
+
+    function card(it){
+      var cfg=oriCfg(it.orientacao);
+      var prio=it.marcador
+        ? '<div style="position:absolute;top:5px;right:5px;background:'+C.amber+';color:#fff;font-size:7px;font-weight:900;padding:2px 5px;border-radius:3px;">★ '+e(it.marcador)+'</div>'
+        : '';
+      var imgH = Math.round(100 * (it.scale||1.0));
+      var imgBlock=it.imagem
+        ? '<div style="width:100%;margin:5px 0;border-radius:5px;overflow:hidden;background:#f5f5f5;height:'+imgH+'px;"><img src="'+it.imagem+'" style="width:100%;height:'+imgH+'px;object-fit:contain;display:block;"></div>'
+        : '';
+      var ico=svgIco(cfg.icon,cfg.bg);
+      return '<div style="background:#fff;border-radius:8px;padding:9px 10px 0;position:relative;box-shadow:0 2px 6px rgba(0,0,0,.08);overflow:hidden;page-break-inside:avoid;border-top:3px solid '+cfg.bg+';">'
+        + prio
+        + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">'
+          + '<div style="width:19px;height:19px;border-radius:50%;background:'+C.inkSoft+';color:#fff;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
+          + '<div style="font-family:Arial,sans-serif;font-size:13px;font-weight:800;color:'+C.ink+';line-height:1.1;flex:1;">'+e(it.codigo)+'</div>'
+          + ico
+        + '</div>'
+        + imgBlock
+        + '<div style="font-size:8px;color:'+C.inkSoft+';line-height:1.5;">'
+          + '<div><b>Autor:</b> '+e(it.autor)+'</div>'
+          + '<div><b>Relator:</b> '+e(it.relator)+'</div>'
+        + '</div>'
+        + '<div style="font-size:9px;color:#2c3e50;line-height:1.4;margin-top:3px;padding-bottom:7px;">'+e(it.descricao)+'</div>'
+        + '<div style="height:3px;background:'+cfg.bg+';margin-left:-10px;margin-right:-10px;"></div>'
+        + '<div style="text-align:center;padding:2px 0 3px;font-size:7.5px;font-weight:900;color:'+cfg.bg+';letter-spacing:.8px;">'+e(it.orientacao||'—')+'</div>'
+      + '</div>';
+    }
+
+    var logosMin = data.logo_min
+      ? '<img src="'+data.logo_min+'" style="height:38px;object-fit:contain;padding-right:10px;border-right:1.5px solid #ccc;">'
+      : '<span style="font-size:8px;font-weight:900;color:'+C.forest+';padding-right:10px;border-right:1.5px solid #ccc;">LIDERANÇA DA MINORIA</span>';
+    var logosOpo = data.logo_opo
+      ? '<img src="'+data.logo_opo+'" style="height:38px;object-fit:contain;padding-left:10px;">'
+      : '<span style="font-size:8px;font-weight:900;color:'+C.ruby+';padding-left:10px;">OPOSIÇÃO</span>';
+    var logosHeader = '<div style="display:flex;align-items:center;justify-content:center;margin-top:8px;border-top:1px solid #ddd;padding-top:8px;">'+logosMin+logosOpo+'</div>';
+
+    var cream=C.cream, ink=C.ink, inkSoft=C.inkSoft;
+    // Calcula escala para caber todos os cards em uma A4
+    // A4 = 794px largura útil, 1123px altura. Estimativa de altura por card: ~180px
+    var totalItems = data.items.length;
+    var cols = 2;
+    var rowsEstimados = Math.ceil(totalItems / cols);
+    var alturaHeader  = 120; // header + logos
+    var alturaCard    = 170; // estimativa por card
+    var alturaTotal   = alturaHeader + rowsEstimados * alturaCard;
+    var alturaA4      = 1050; // altura útil A4 em px (com margem)
+    var escala = alturaTotal > alturaA4 ? Math.max(0.5, alturaA4 / alturaTotal) : 1.0;
+    var escalaStr = escala.toFixed(3);
+    return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pauta Iconográfica</title>'
+      + '<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;700;800;900&family=Barlow+Condensed:wght@700;800;900&display=swap" rel="stylesheet">'
+      + '<style>'
+      + '@page{size:A4 portrait;margin:0}'
+      + '@media print{'
+      + 'html,body{width:210mm;height:297mm;margin:0;padding:0}'
+      + '.page{transform:scale('+escalaStr+');transform-origin:top left;width:'+(Math.round(794/escala))+'px!important}'
+      + '-webkit-print-color-adjust:exact;print-color-adjust:exact'
+      + '}'
+      + 'body{margin:0;padding:0;background:'+cream+';font-family:Arial,sans-serif;color:'+ink+'}'
+      + '.page{width:794px;margin:0 auto;background:'+cream+';padding-bottom:20px;position:relative}'
+      + '.col{display:flex;flex-direction:column;gap:8px}'
+      + '</style></head><body>'
+      + '<div class="page">'
+      + '<div style="padding:16px 22px 6px;border-bottom:2px solid rgba(30,53,80,.15);">'
+        + '<div style="text-align:center;font-family:Arial,sans-serif;font-size:22px;font-weight:800;color:'+ink+';">'
+          + 'Pauta Iconográfica — Plenário da Câmara'
+          + '<span style="display:block;font-size:13px;font-weight:500;color:'+inkSoft+';">'+e(data.data)+'</span>'
+        + '</div>'
+        + logosHeader
+      + '</div>'
+      + '<div style="padding:10px 16px 0;display:grid;grid-template-columns:1fr 1fr;gap:10px;">'
+        + '<div class="col">'+left.map(card).join('')+'</div>'
+        + '<div class="col">'+right.map(card).join('')+'</div>'
+      + '</div>'
+      + '</div></body></html>';
+  }
+
+  async function gerarIconografica() {
+    const btn = document.getElementById('btn-gerar-iconografica');
+    if (btn) { btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Preparando…'; }
+
+    const [logo_min, logo_opo] = await Promise.all([b64url('/static/logo_minoria.png'), b64url('/static/logo_oposicao.png')]);
+    const dataEvento = (document.querySelector('[data-evento-data]')||{}).dataset?.eventoData||'';
+
+    const itens = (window.ITENS_DATA||[]).map(item => {
+      const id = String(item.id_principal);
+      const resumoEl = document.getElementById('resumo-ia-'+id);
+      const resumo = (resumoEl&&resumoEl.textContent.trim())||item.resumo_ia||'';
+      const oriAtual = _orientacoes[id] !== undefined ? _orientacoes[id] : (item.orientacao||'');
+      const marcador = _marcadores[id] || null;
+      return {
+        num: String(item.ordem||''), codigo: item.projeto||'',
+        autor: (item.autor||'N/D').substring(0,60),
+        relator: (item.relator||'N/D').substring(0,60),
+        descricao: (resumo||(item.ementa||'')).substring(0,180),
+        orientacao: oriAtual.toUpperCase(),
+        prioridade: !!marcador,
+        marcador: marcador,
+        imagem: _imagens[id]||null,
+        scale: _cardScale[id]||1.0,
+      };
+    });
+
+    itens.sort((a,b)=>(b.prioridade?1:0)-(a.prioridade?1:0));
+
+    bootstrap.Modal.getInstance(document.getElementById('modalIconografica'))?.hide();
+
+    const html = buildPrintHTML({data:dataEvento, items:itens, logo_min, logo_opo});
+    const blob = new Blob([html], {type: 'text/html;charset=utf-8'});
+    const url  = URL.createObjectURL(blob);
+    const w    = window.open(url, '_blank');
+    if (!w) { alert('Permita pop-ups para imprimir.'); URL.revokeObjectURL(url); return; }
+    // Revoga o URL após carregar para liberar memória
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+
+    if (btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-print me-1"></i>Imprimir / Salvar PDF'; }
+  }
+
+  window._abrirModalIconografica = abrirModalIconografica;
+  window._gerarIconografica = gerarIconografica;
+  // Diagnóstico visual — remove após resolver
+  document.addEventListener('DOMContentLoaded', function() {
+    var el = document.getElementById('btn-iconografica');
+    if (el) el.title = 'CARREGADO OK';
+  });
+  window._iconograficaCarregada = true;
+})();</script>
+</body>
+</html>
