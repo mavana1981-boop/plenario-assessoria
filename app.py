@@ -356,8 +356,10 @@ def load_notas():
 # LOGIN
 # --------------------------------------------------------------------------
 class User(UserMixin):
-    def __init__(self, id, username, role, categoria='geral'):
+    def __init__(self, id, username, role, categoria='geral', nome_display=None, foto=None):
         self.id = id; self.username = username; self.role = role; self.categoria = categoria
+        self.nome_display = nome_display or username
+        self.foto = foto or ''
 
     def display_name(self):
         """Nome de exibição com categoria."""
@@ -369,10 +371,14 @@ class User(UserMixin):
 def load_user(user_id):
     conn = get_conn()
     c = conn.cursor()
-    c.execute('SELECT id, username, role, categoria FROM users WHERE id = ?', (user_id,))
+    c.execute('SELECT id, username, role, categoria, nome_display, foto FROM users WHERE id = ?', (user_id,))
     u = c.fetchone()
     conn.close()
-    return User(u[0], u[1], u[2], u[3] if len(u) > 3 else 'geral') if u else None
+    if not u: return None
+    return User(u[0], u[1], u[2],
+                u[3] if len(u) > 3 else 'geral',
+                u[4] if len(u) > 4 else None,
+                u[5] if len(u) > 5 else None)
 
 # --------------------------------------------------------------------------
 # EVENTOS & PAUTA
@@ -1372,13 +1378,22 @@ def view_pauta(evento_id):
             if ref_norm in projetos_pauta:
                 item['req_pl_mesmo_dia'] = True
 
+    # Dados do usuário logado para o quadro de boas-vindas
+    user_nome_display = current_user.nome_display or current_user.username
+    user_foto = current_user.foto or ''
+    # Itens atribuídos ao usuário logado
+    itens_atribuidos = [item for item in itens if item.get('responsavel_username') == current_user.username]
+
     return render_template('pauta.html', evento_id=evento_id, evento=evento, itens=itens,
                            from_cache=from_cache, user_role=current_user.role,
                            user_categoria=current_user.categoria,
                            last_updated=last_updated, last_saved_user=last_saved_user,
                            assessores=assessores,
                            data_evento=data_evento,
-                           eh_responsavel_pauta=eh_responsavel_pauta)
+                           eh_responsavel_pauta=eh_responsavel_pauta,
+                           user_nome_display=user_nome_display,
+                           user_foto=user_foto,
+                           itens_atribuidos=itens_atribuidos)
 
 @app.route('/save_item', methods=['POST'])
 @login_required
