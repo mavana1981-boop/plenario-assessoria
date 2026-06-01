@@ -2909,7 +2909,7 @@ async function exportarOrientacoesPDF() {
     if(o==='NÃO')        return{bg:'#c0392b',icon:'cross'};
     if(o==='OBSTRUÇÃO')  return{bg:'#c0392b',icon:'lock'};
     if(o==='NEGOCIAÇÃO') return{bg:'#e6a817',icon:'check'};
-    if(o==='LIBERADO')   return{bg:'#5e7184',icon:'check'};
+    if(o==='LIBERADO')   return{bg:'#e6a817',icon:'check'};
     if(o==='ABSTENÇÃO')  return{bg:'#9e9e9e',icon:'check'};
     return{bg:'#9e9e9e',icon:'check'};
   }
@@ -3179,14 +3179,18 @@ async function exportarOrientacoesPDF() {
         : '';
       var ico = svgIco(cfg.icon, cfg.bg);
 
-      // Rodapé assessor
-      var rodape = '';
-      if (it.responsavel_nome) {
-        var lid = it.responsavel_categoria
-          ? ' — Lid. ' + it.responsavel_categoria.charAt(0).toUpperCase() + it.responsavel_categoria.slice(1)
-          : '';
-        rodape = '<div style="font-size:6px;color:#0D2B5E;font-weight:700;text-align:center;padding:2px 0 1px;border-top:1px solid rgba(13,43,94,.12);flex-shrink:0;">'+e(it.responsavel_nome)+e(lid)+'</div>';
-      }
+      // Orientação abaixo do ícone
+      var oriLabel = it.orientacao
+        ? '<div style="font-size:6.5px;font-weight:900;color:'+cfg.bg+';text-align:center;line-height:1;margin-top:1px;">'+e(it.orientacao)+'</div>'
+        : '';
+
+      // Rodapé: assessor responsável em azul escuro
+      var rodape = it.responsavel_nome
+        ? '<div style="font-size:6px;color:#0D2B5E;font-weight:700;text-align:center;padding:2px 0 1px;border-top:1px solid rgba(13,43,94,.15);flex-shrink:0;margin-top:auto;">'
+          + e(it.responsavel_nome)
+          + (it.responsavel_categoria ? ' · Lid. ' + it.responsavel_categoria.charAt(0).toUpperCase() + it.responsavel_categoria.slice(1) : '')
+          + '</div>'
+        : '';
 
       return '<div style="background:#fff;border-radius:5px;padding:6px 7px 0;position:relative;'
         + 'box-shadow:0 1px 4px rgba(0,0,0,.10);overflow:hidden;'
@@ -3196,7 +3200,10 @@ async function exportarOrientacoesPDF() {
         + '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;flex-shrink:0;">'
           + '<div style="width:15px;height:15px;border-radius:50%;background:'+C.inkSoft+';color:#fff;font-size:7px;font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
           + '<div style="font-size:10px;font-weight:800;color:'+C.ink+';line-height:1.1;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">'+e(it.codigo)+'</div>'
-          + ico
+          + '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">'
+            + ico
+            + oriLabel
+          + '</div>'
         + '</div>'
         + imgBlock
         + '<div style="font-size:6.5px;color:'+C.inkSoft+';line-height:1.35;flex-shrink:0;">'
@@ -3204,8 +3211,6 @@ async function exportarOrientacoesPDF() {
           + '<div><b>Relator:</b> '+e(it.relator)+'</div>'
         + '</div>'
         + '<div style="font-size:7.5px;color:#2c3e50;line-height:1.3;margin-top:2px;flex:1;overflow:hidden;">'+e(it.descricao)+'</div>'
-        + '<div style="height:3px;background:'+cfg.bg+';margin-left:-7px;margin-right:-7px;flex-shrink:0;"></div>'
-        + '<div style="text-align:center;padding:1px 0;font-size:7px;font-weight:900;color:'+cfg.bg+';letter-spacing:.5px;flex-shrink:0;">'+e(it.orientacao||'INDEFINIDO')+'</div>'
         + rodape
         + '</div>';
     }
