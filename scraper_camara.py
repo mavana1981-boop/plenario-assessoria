@@ -167,7 +167,8 @@ def obter_itens_pauta(id_evento):
                             break
 
                 if not titulo_tag:
-                    logger.warning("⚠️ Item sem título de proposição. Pulando...")
+                    # Loga a estrutura do li para diagnóstico
+                    logger.warning(f"⚠️ Item sem título de proposição. HTML: {str(li)[:300]}")
                     continue
 
                 codigo = titulo_tag.get_text(strip=True)
