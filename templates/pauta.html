@@ -142,6 +142,34 @@
       </div>
     </div>
 
+    <div class="d-flex align-items-center flex-wrap mb-2">
+      <!-- Quadro de boas-vindas -->
+      <div style="width:100%;background:#fffde7;border:1px solid #ffe082;border-radius:8px;padding:10px 16px;margin-bottom:10px;display:flex;align-items:center;gap:14px;">
+        {% if user_foto %}
+        <img src="{{ user_foto }}" alt="foto" style="width:44px;height:44px;border-radius:50%;object-fit:cover;border:2px solid #ffe082;flex-shrink:0;">
+        {% else %}
+        <div style="width:44px;height:44px;border-radius:50%;background:#ffe082;display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0;">
+          <i class="fas fa-user" style="color:#b8860b;"></i>
+        </div>
+        {% endif %}
+        <div>
+          <div style="font-weight:700;font-size:1rem;color:#5d4037;">
+            Olá, {{ user_nome_display.split()[0] if user_nome_display else current_user.username }} 👋
+          </div>
+          {% if itens_atribuidos %}
+          <div style="font-size:0.82rem;color:#5d4037;margin-top:2px;">
+            Há pauta publicada e foram atribuídos a você os itens:
+            <strong>{{ itens_atribuidos | map(attribute='projeto') | join(', ') }}</strong>
+          </div>
+          {% else %}
+          <div style="font-size:0.82rem;color:#8d6e63;margin-top:2px;font-style:italic;">
+            Não foram atribuídos itens de pauta para você.
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
     <div class="d-flex align-items-center flex-wrap">
       {% if user_categoria != 'restrito' %}
       <a href="{{ url_for('selecionar_data') }}" class="btn btn-outline-secondary btn-sm mb-3">
@@ -3151,12 +3179,15 @@ async function exportarOrientacoesPDF() {
     var logosHeader = '<div style="display:flex;align-items:center;justify-content:center;margin-top:8px;border-top:1px solid #ddd;padding-top:8px;">'+logosMin+logosOpo+'</div>';
 
     var cream=C.cream, ink=C.ink, inkSoft=C.inkSoft;
+    // Calcula escala para caber todos os cards em uma A4
+    var totalItems = data.items.length;
+    var cardFontScale = totalItems > 16 ? 0.7 : totalItems > 12 ? 0.8 : totalItems > 8 ? 0.9 : 1.0;
     return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pauta Iconográfica</title>'
       + '<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;700;800;900&family=Barlow+Condensed:wght@700;800;900&display=swap" rel="stylesheet">'
-      + '<style>@page{size:A4;margin:0}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}'
-      + 'body{margin:0;padding:0;background:'+cream+';font-family:Arial,sans-serif;color:'+ink+'}'
-      + '.page{width:794px;min-height:1123px;margin:0 auto;background:'+cream+';padding-bottom:30px;position:relative}'
-      + '.col{display:flex;flex-direction:column;gap:10px}'
+      + '<style>@page{size:A4 portrait;margin:8mm}@media print{html{transform:scale('+cardFontScale+');transform-origin:top center;width:'+(100/cardFontScale)+'%}-webkit-print-color-adjust:exact;print-color-adjust:exact}'
+      + 'body{margin:0;padding:0;background:'+cream+';font-family:Arial,sans-serif;color:'+ink+';font-size:'+Math.round(cardFontScale*13)+'px}'
+      + '.page{width:760px;margin:0 auto;background:'+cream+';padding-bottom:20px;position:relative}'
+      + '.col{display:flex;flex-direction:column;gap:'+(cardFontScale<0.85?5:8)+'px}'
       + '</style></head><body>'
       + '<div class="page">'
       + '<div style="padding:16px 22px 6px;border-bottom:2px solid rgba(30,53,80,.15);">'
