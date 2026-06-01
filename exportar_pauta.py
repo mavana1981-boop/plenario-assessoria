@@ -382,29 +382,23 @@ def exportar_pauta(evento_id):
             ori = (it.get("orientacao","") or "").strip().upper()
             cor_ori, _ = CORES_ORI.get(ori, (C_CINZA, C_CINZA_LT))
 
-            # Coluna proposição: título + ementa num único Paragraph (resolve split entre páginas)
+            # Coluna proposição: só o título, sem ementa
             proj_titulo  = it.get("projeto","—")
-            ementa_curta = _strip_html(it.get("ementa","") or "")
 
             try:
                 cor_hex = '#' + ''.join(f'{int(x*255):02X}' for x in cor_t.rgb())
             except Exception:
                 cor_hex = '#0D2B5E'
 
-            # Escapa caracteres XML especiais no título e ementa
             import xml.sax.saxutils as _xml
-            proj_titulo_esc  = _xml.escape(proj_titulo)
-            ementa_curta_esc = _xml.escape(ementa_curta) if ementa_curta else ''
-
+            proj_titulo_esc = _xml.escape(proj_titulo)
             proj_xml = f'<b><font color="{cor_hex}" size="9.5">{proj_titulo_esc}</font></b>'
-            if ementa_curta_esc:
-                proj_xml += f'<br/><font color="{cor_hex}" size="7"><i>{ementa_curta_esc}</i></font>'
 
             proj_para = Paragraph(proj_xml,
                 ParagraphStyle("pm"+str(it.get("ordem",0)),
                     parent=SS["Normal"], alignment=TA_CENTER, wordWrap="CJK"))
 
-            # Coluna objeto: resumo IA + ementa abaixo em fonte menor
+            # Coluna objeto: resumo IA + "Ementa:" abaixo em fonte menor, itálico
             resumo_ia_tab = _strip_html(it.get("resumo_ia","") or "")
             ementa_obj    = _strip_html(it.get("ementa","") or "")
             import xml.sax.saxutils as _xml2
@@ -412,10 +406,10 @@ def exportar_pauta(evento_id):
 
             if resumo_ia_tab and ementa_obj_esc:
                 objeto_xml = (resumo_ia_tab +
-                    f'<br/><font size="6.5" color="#555555"><i>{ementa_obj_esc}</i></font>')
+                    f'<br/><font size="6" color="#777777"><i>Ementa: {ementa_obj_esc}</i></font>')
                 objeto_para = Paragraph(objeto_xml, sObjeto)
             elif ementa_obj_esc:
-                objeto_xml = f'<font size="6.5" color="#555555"><i>{ementa_obj_esc}</i></font>'
+                objeto_xml = f'<font size="6" color="#777777"><i>Ementa: {ementa_obj_esc}</i></font>'
                 objeto_para = Paragraph(objeto_xml, sObjeto)
             else:
                 objeto_para = Paragraph(resumo_ia_tab or "—", sObjeto)
