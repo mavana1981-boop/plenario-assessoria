@@ -615,6 +615,33 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                 ordem[chave] = num
                 logger.info(f"  Item {num} (REQ texto): REQ {num_p}/{ano} → {chave}")
 
+        # Redação Final: "N. Redação Final ao Projeto de Lei nº X.XXX, de AAAA"
+        # Estes itens têm número à esquerda (não centralizado) — parser específico
+        for m in re.finditer(
+            r'^(\d+)\.\s+Redação\s+Final\s+ao\s+'
+            r'(PROJETO\s+DE\s+LEI(?:\s+COMPLEMENTAR)?'
+            r'|PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O'
+            r'|PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO)'
+            r'\s+N[º°.]?\s*([\d.]+(?:-[A-Z])?),?\s*[Dd][Ee]\s+(\d{4})',
+            texto_total, re.MULTILINE | re.IGNORECASE
+        ):
+            num      = int(m.group(1))
+            tipo_txt = m.group(2).upper()
+            num_p    = re.sub(r'[-–][A-Z]$', '', m.group(3).replace('.', ''))
+            ano      = m.group(4)
+            if 'COMPLEMENTAR' in tipo_txt:          sigla = 'PLP'
+            elif 'EMENDA' in tipo_txt:              sigla = 'PEC'
+            elif 'DECRETO LEGISLATIVO' in tipo_txt: sigla = 'PDL'
+            else:                                   sigla = 'PL'
+            chave = _normalizar_codigo(f"{sigla} {num_p}/{ano}")
+            posicoes_usadas = {v: k for k, v in ordem.items()}
+            if num <= 30:
+                if num in posicoes_usadas and posicoes_usadas[num].startswith('PEND'):
+                    del ordem[posicoes_usadas[num]]
+                if chave not in ordem:
+                    ordem[chave] = num
+                    logger.info(f"  Item {num} (Redação Final): {sigla} {num_p}/{ano} → {chave}")
+
         # Fallback robusto: extrai ordem de qualquer linha "N. TIPO Nº X/ANO" no texto
         # Sobrescreve posições PEND (não identificadas pelo parser centralizado)
         posicoes_usadas = {v: k for k, v in ordem.items()}
@@ -697,19 +724,26 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
         if gaps:
             # Coleta cabeçalhos de proposição no texto (sem número sequencial na frente)
             cabecalhos = []
-            # Usa re.search sem ^ para pegar cabeçalhos em qualquer posição da linha
             for m in re.finditer(
-                r'(?:^|\n)\s*(PROJETO\s+DE\s+LEI(?:\s+COMPLEMENTAR)?'
-                r'|PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O)'
+                r'(?:^|\n)\s*(?:Redação Final ao\s+)?(PROJETO\s+DE\s+LEI(?:\s+COMPLEMENTAR)?'
+                r'|PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO'
+                r'|PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O'
+                r'|MEDIDA\s+PROVIS[OÓ]RIA'
+                r'|PROJETO\s+DE\s+DECRETO'
+                r'|PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O)'
                 r'\s+N[º°.]?\s*([\d.]+(?:-[A-Z])?),?\s*DE\s+(\d{4})',
                 texto_total, re.IGNORECASE | re.MULTILINE
             ):
                 tipo_txt = m.group(1).upper()
                 num_p = re.sub(r'-[A-Z]$', '', m.group(2).replace('.', ''))
                 ano   = m.group(3)
-                if 'COMPLEMENTAR' in tipo_txt: sigla = 'PLP'
-                elif 'EMENDA' in tipo_txt:     sigla = 'PEC'
-                else:                          sigla = 'PL'
+                if 'COMPLEMENTAR' in tipo_txt:       sigla = 'PLP'
+                elif 'EMENDA' in tipo_txt:           sigla = 'PEC'
+                elif 'DECRETO LEGISLATIVO' in tipo_txt: sigla = 'PDL'
+                elif 'DECRETO' in tipo_txt:          sigla = 'PDC'
+                elif 'MEDIDA' in tipo_txt:           sigla = 'MPV'
+                elif 'RESOLUÇÃO' in tipo_txt:        sigla = 'PRC'
+                else:                                sigla = 'PL'
                 chave = _normalizar_codigo(f"{sigla} {num_p}/{ano}")
                 if chave not in ordem:
                     cabecalhos.append((m.start(), chave, sigla, num_p, ano))
