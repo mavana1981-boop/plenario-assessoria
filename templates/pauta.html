@@ -3155,93 +3155,117 @@ async function exportarOrientacoesPDF() {
   }
 
   function buildPrintHTML(data){
-    var totalItems = data.items.length;
-    var rows = Math.ceil(totalItems / 2);
-
-    // A4: 794x1123px. Calcula altura exata de cada card para preencher toda a página
+    // A4: 794x1123px (96dpi). Máx 8 linhas por página (2 cols = 16 itens/pág)
     var PAGE_W   = 794;
     var PAGE_H   = 1123;
-    var HDR_H    = 86;   // header fixo
+    var HDR_H    = 82;    // header (título + logos)
     var GRID_PAD = 8;
     var GAP      = 5;
-    var availH   = PAGE_H - HDR_H - GRID_PAD * 2 - GAP * (rows - 1);
-    var cardH    = Math.floor(availH / rows);
-    var cardW    = Math.floor((PAGE_W - GRID_PAD * 2 - GAP) / 2);
+    var MAX_ROWS = 8;     // máximo de linhas por página
+    var COLS     = 2;
 
-    function card(it){
-      var cfg = oriCfg(it.orientacao);
-      var prio = it.marcador
-        ? '<div style="position:absolute;top:3px;right:3px;background:'+C.amber+';color:#fff;font-size:6px;font-weight:900;padding:1px 4px;border-radius:2px;">'+e(it.marcador)+'</div>'
-        : '';
-      var imgH = Math.round(70 * (it.scale||1.0));
-      var imgBlock = it.imagem
-        ? '<div style="width:100%;margin:3px 0;overflow:hidden;background:#f5f5f5;height:'+imgH+'px;flex-shrink:0;"><img src="'+it.imagem+'" style="width:100%;height:'+imgH+'px;object-fit:cover;display:block;"></div>'
-        : '';
-      var ico = svgIco(cfg.icon, cfg.bg);
+    // Divide itens em páginas de MAX_ROWS*COLS itens
+    var pages = [];
+    var itemsPerPage = MAX_ROWS * COLS;
+    for (var pi = 0; pi < data.items.length; pi += itemsPerPage) {
+      pages.push(data.items.slice(pi, pi + itemsPerPage));
+    }
 
-      // Orientação abaixo do ícone
-      var oriLabel = it.orientacao
-        ? '<div style="font-size:6.5px;font-weight:900;color:'+cfg.bg+';text-align:center;line-height:1;margin-top:1px;">'+e(it.orientacao)+'</div>'
-        : '';
+    function buildPage(items, isFirst){
+      var rows = Math.min(Math.ceil(items.length / COLS), MAX_ROWS);
+      // Altura disponível para cards nesta página
+      var hdrH  = isFirst ? HDR_H : 0; // apenas primeira página tem header
+      var availH = PAGE_H - hdrH - GRID_PAD * 2 - GAP * (rows - 1);
+      var cardH  = Math.floor(availH / rows);
+      var cardW  = Math.floor((PAGE_W - GRID_PAD * 2 - GAP) / COLS);
 
-      // Rodapé: assessor responsável em azul escuro
-      var rodape = it.responsavel_nome
-        ? '<div style="font-size:6px;color:#0D2B5E;font-weight:700;text-align:center;padding:2px 0 1px;border-top:1px solid rgba(13,43,94,.15);flex-shrink:0;margin-top:auto;">'
-          + e(it.responsavel_nome)
-          + (it.responsavel_categoria ? ' · Lid. ' + it.responsavel_categoria.charAt(0).toUpperCase() + it.responsavel_categoria.slice(1) : '')
+      // Escala de fontes proporcional à altura do card
+      // Card de referência: 120px → fontes base. Cresce proporcionalmente.
+      var fScale = Math.min(cardH / 120, 2.2);
+      var fCodigo  = Math.round(10  * fScale) + 'px';
+      var fAutor   = Math.round(6.5 * fScale) + 'px';
+      var fDesc    = Math.round(8   * fScale) + 'px';
+      var fOri     = Math.round(7   * fScale) + 'px';
+      var fRodape  = Math.round(6   * fScale) + 'px';
+      var numSz    = Math.round(15  * fScale) + 'px';
+      var numW     = Math.round(15  * fScale) + 'px';
+      var icoSz    = Math.round(40  * fScale) + 'px';
+
+      function card(it){
+        var cfg = oriCfg(it.orientacao);
+        var prio = it.marcador
+          ? '<div style="position:absolute;top:3px;right:3px;background:'+C.amber+';color:#fff;font-size:'+fRodape+';font-weight:900;padding:1px 4px;border-radius:2px;">'+e(it.marcador)+'</div>'
+          : '';
+        var imgH = Math.round(70 * fScale * (it.scale||1.0));
+        var imgBlock = it.imagem
+          ? '<div style="width:100%;margin:3px 0;overflow:hidden;background:#f5f5f5;height:'+imgH+'px;flex-shrink:0;"><img src="'+it.imagem+'" style="width:100%;height:'+imgH+'px;object-fit:cover;display:block;"></div>'
+          : '';
+        var ico = svgIco(cfg.icon, cfg.bg).replace(/width="40" height="40"/, 'width="'+icoSz+'" height="'+icoSz+'"');
+        var oriLabel = it.orientacao
+          ? '<div style="font-size:'+fOri+';font-weight:900;color:'+cfg.bg+';text-align:center;line-height:1;margin-top:1px;">'+e(it.orientacao)+'</div>'
+          : '';
+        var rodape = it.responsavel_nome
+          ? '<div style="font-size:'+fRodape+';color:#0D2B5E;font-weight:700;text-align:center;padding:2px 0 1px;border-top:1px solid rgba(13,43,94,.15);flex-shrink:0;margin-top:auto;">'
+            + e(it.responsavel_nome)
+            + (it.responsavel_categoria ? ' · Lid. ' + it.responsavel_categoria.charAt(0).toUpperCase() + it.responsavel_categoria.slice(1) : '')
+            + '</div>'
+          : '';
+
+        return '<div style="background:#fff;border-radius:5px;padding:6px 7px 0;position:relative;'
+          + 'box-shadow:0 1px 4px rgba(0,0,0,.10);overflow:hidden;'
+          + 'height:'+cardH+'px;width:'+cardW+'px;box-sizing:border-box;display:flex;flex-direction:column;">'
+          + prio
+          + '<div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;flex-shrink:0;">'
+            + '<div style="width:'+numW+';height:'+numW+';border-radius:50%;background:'+C.inkSoft+';color:#fff;font-size:'+Math.round(7*fScale)+'px;font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
+            + '<div style="font-size:'+fCodigo+';font-weight:800;color:'+C.ink+';line-height:1.1;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">'+e(it.codigo)+'</div>'
+            + '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">'
+              + ico + oriLabel
+            + '</div>'
           + '</div>'
-        : '';
-
-      return '<div style="background:#fff;border-radius:5px;padding:6px 7px 0;position:relative;'
-        + 'box-shadow:0 1px 4px rgba(0,0,0,.10);overflow:hidden;'
-        + 'height:'+cardH+'px;width:'+cardW+'px;box-sizing:border-box;'
-        + 'display:flex;flex-direction:column;">'
-        + prio
-        + '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;flex-shrink:0;">'
-          + '<div style="width:15px;height:15px;border-radius:50%;background:'+C.inkSoft+';color:#fff;font-size:7px;font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
-          + '<div style="font-size:10px;font-weight:800;color:'+C.ink+';line-height:1.1;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">'+e(it.codigo)+'</div>'
-          + '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">'
-            + ico
-            + oriLabel
+          + imgBlock
+          + '<div style="font-size:'+fAutor+';color:'+C.inkSoft+';line-height:1.4;flex-shrink:0;">'
+            + '<div><b>Autor:</b> '+e(it.autor)+'</div>'
+            + '<div><b>Relator:</b> '+e(it.relator)+'</div>'
           + '</div>'
+          + '<div style="font-size:'+fDesc+';color:#2c3e50;line-height:1.35;margin-top:3px;flex:1;overflow:hidden;">'+e(it.descricao)+'</div>'
+          + rodape
+          + '</div>';
+      }
+
+      var hdrHtml = '';
+      if (isFirst) {
+        var logosMin = data.logo_min
+          ? '<img src="'+data.logo_min+'" style="height:28px;object-fit:contain;padding-right:8px;border-right:1.5px solid #ccc;">'
+          : '<span style="font-size:7px;font-weight:900;color:'+C.forest+';padding-right:8px;border-right:1px solid #ccc;">MINORIA</span>';
+        var logosOpo = data.logo_opo
+          ? '<img src="'+data.logo_opo+'" style="height:28px;object-fit:contain;padding-left:8px;">'
+          : '<span style="font-size:7px;font-weight:900;color:'+C.ruby+';padding-left:8px;">OPOSIÇÃO</span>';
+        hdrHtml = '<div style="padding:10px 18px 4px;border-bottom:2px solid rgba(30,53,80,.15);height:'+(HDR_H-2)+'px;box-sizing:border-box;">'
+          + '<div style="text-align:center;font-size:16px;font-weight:800;color:'+C.ink+';">'
+            + 'Pauta Iconográfica — Plenário da Câmara'
+            + '<span style="display:block;font-size:10px;font-weight:500;color:'+C.inkSoft+';">'+e(data.data)+'</span>'
+          + '</div>'
+          + '<div style="display:flex;align-items:center;justify-content:center;margin-top:4px;">'+logosMin+logosOpo+'</div>'
+          + '</div>';
+      }
+
+      return '<div style="width:'+PAGE_W+'px;height:'+PAGE_H+'px;overflow:hidden;background:'+C.cream+';page-break-after:always;box-sizing:border-box;">'
+        + hdrHtml
+        + '<div style="padding:'+GRID_PAD+'px;display:grid;grid-template-columns:1fr 1fr;gap:'+GAP+'px;">'
+          + items.map(card).join('')
         + '</div>'
-        + imgBlock
-        + '<div style="font-size:6.5px;color:'+C.inkSoft+';line-height:1.35;flex-shrink:0;">'
-          + '<div><b>Autor:</b> '+e(it.autor)+'</div>'
-          + '<div><b>Relator:</b> '+e(it.relator)+'</div>'
-        + '</div>'
-        + '<div style="font-size:7.5px;color:#2c3e50;line-height:1.3;margin-top:2px;flex:1;overflow:hidden;">'+e(it.descricao)+'</div>'
-        + rodape
         + '</div>';
     }
 
-    var logosMin = data.logo_min
-      ? '<img src="'+data.logo_min+'" style="height:28px;object-fit:contain;padding-right:8px;border-right:1.5px solid #ccc;">'
-      : '<span style="font-size:7px;font-weight:900;color:'+C.forest+';padding-right:8px;border-right:1px solid #ccc;">MINORIA</span>';
-    var logosOpo = data.logo_opo
-      ? '<img src="'+data.logo_opo+'" style="height:28px;object-fit:contain;padding-left:8px;">'
-      : '<span style="font-size:7px;font-weight:900;color:'+C.ruby+';padding-left:8px;">OPOSIÇÃO</span>';
-
-    var cream=C.cream, ink=C.ink, inkSoft=C.inkSoft;
+    var cream=C.cream, ink=C.ink;
     return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pauta Iconográfica</title>'
       + '<style>'
       + '@page{size:A4 portrait;margin:0}'
-      + '@media print{html,body{width:'+PAGE_W+'px!important;height:'+PAGE_H+'px!important;margin:0;padding:0;overflow:hidden}.page{width:'+PAGE_W+'px!important;height:'+PAGE_H+'px!important;overflow:hidden}-webkit-print-color-adjust:exact;print-color-adjust:exact}'
-      + 'body{margin:0;padding:0;background:'+cream+';font-family:Arial,sans-serif;color:'+ink+';}'
-      + '.page{width:'+PAGE_W+'px;height:'+PAGE_H+'px;overflow:hidden;background:'+cream+';}'
+      + '@media print{html,body{margin:0;padding:0}-webkit-print-color-adjust:exact;print-color-adjust:exact}'
+      + 'body{margin:0;padding:0;background:'+cream+';}'
       + '</style></head><body>'
-      + '<div class="page">'
-      + '<div style="padding:10px 18px 4px;border-bottom:2px solid rgba(30,53,80,.15);height:'+(HDR_H-2)+'px;box-sizing:border-box;">'
-        + '<div style="text-align:center;font-size:16px;font-weight:800;color:'+ink+';">'
-          + 'Pauta Iconográfica — Plenário da Câmara'
-          + '<span style="display:block;font-size:10px;font-weight:500;color:'+inkSoft+';">'+e(data.data)+'</span>'
-        + '</div>'
-        + '<div style="display:flex;align-items:center;justify-content:center;margin-top:4px;">'+logosMin+logosOpo+'</div>'
-      + '</div>'
-      + '<div style="padding:'+GRID_PAD+'px;display:grid;grid-template-columns:1fr 1fr;gap:'+GAP+'px;">'
-        + data.items.map(card).join('')
-      + '</div>'
-      + '</div></body></html>';
+      + pages.map(function(pg,i){ return buildPage(pg, i===0); }).join('')
+      + '</body></html>';
   }
 
   async function gerarIconografica() {
