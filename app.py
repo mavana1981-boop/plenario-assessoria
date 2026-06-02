@@ -1,4557 +1,3558 @@
-# -*- coding: utf-8 -*-
-from flask import Flask, jsonify, request, render_template, redirect, url_for, flash, make_response
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
-from flask_bcrypt import Bcrypt
-import sqlite3
-import requests
-import json
-import logging
-from datetime import datetime, timedelta, timezone
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Assessoria - Plenário da Câmara dos Deputados</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <link href="/static/style.css" rel="stylesheet">
+  <style>
+    .item-header {
+      display: flex; justify-content: space-between; align-items: center;
+      cursor: pointer; color: #006633; font-weight: 600; font-size: 0.95rem; padding: 0.3rem 0;
+    }
+    .item-header:hover { color: #004d26; }
+    .item-info { font-size: 0.85rem; color: #555; }
+    .collapse-toggle-icon { transition: transform 0.3s ease; }
+    .collapse.show + .item-header .collapse-toggle-icon,
+    .item-header[aria-expanded="true"] .collapse-toggle-icon { transform: rotate(180deg); }
+    .secao-badge {
+      font-size: 0.75rem;
+      padding: 0.3em 0.5em;
+      border-radius: 0.3rem;
+      margin-left: 10px;
+      color: #fff !important;
+    }
+    .secao-badge.bg-warning { color: #000 !important; }
+    .secao-badge.bg-primary { background-color: #0d6efd !important; }
+    .secao-badge.bg-info { background-color: #17a2b8 !important; }
+    .secao-badge.bg-success { background-color: #28a745 !important; }
+    .secao-badge.bg-warning { background-color: #ffc107 !important; }
+    .secao-badge.bg-secondary { background-color: #6c757d !important; }
+    .last-updated {
+      font-size: 0.75rem;
+      color: #6c757d;
+      margin-left: 10px;
+    }
 
-# Fuso horário de Brasília (UTC-3)
-TZ_BRASILIA = timezone(timedelta(hours=-3))
+    .editor-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(255,255,255,0.8);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      font-size: 0.9rem;
+      color: #333;
+      font-style: italic;
+    }
+    .editor-spinner {
+      margin: 10px auto;
+      width: 40px;
+      height: 40px;
+      border: 4px solid #ccc;
+      border-top-color: #007bff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+    .ql-container { font-size: 14px; font-family: 'Segoe UI', Arial, sans-serif; }
+    .ql-editor { min-height: 550px; }
+    .ql-toolbar.ql-snow, .ql-container.ql-snow { width: 100%; box-sizing: border-box; }
+    .logo-header { width: 80px; height: 50px; object-fit: contain; background: transparent; }
+  </style>
+</head>
 
-def now_brasilia():
-    """Retorna datetime atual no fuso de Brasília."""
-    return datetime.now(TZ_BRASILIA)
-import os
-import re
-import html as ihtml
-from io import BytesIO
-from urllib.parse import urlparse
-from scraper_camara import obter_itens_pauta
+<body>
+  <div class="alert text-center py-1 mb-0" 
+     style="font-size:0.85rem; background-color:#b5d3bc; color:#4d5d4d; border:1px solid #dbe3da;">
+    ⚠️ Ambiente de desenvolvimento — dados e análises podem conter erros.
+  </div>
 
-# Logger — definido antes de tudo
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+  <div class="header" style="background: #fff !important; border-bottom: 3px solid #1A6B3A; box-shadow: 0 2px 6px rgba(0,0,0,0.08);">
+    <div class="container header-wrap d-flex align-items-center justify-content-between">
+      <div class="d-flex align-items-center">
+        <div class="header-logos me-3 d-flex align-items-center gap-3">
+          <img src="/static/logo_minoria.png" alt="Liderança da Minoria"
+            style="width:90px;height:55px;object-fit:contain;background:transparent;"
+            onerror="this.style.display='none'">
+          <img src="/static/logo_oposicao.png" alt="Oposição"
+            style="width:90px;height:55px;object-fit:contain;background:transparent;"
+            onerror="this.style.display='none'">
+        </div>
+        <div class="header-text">
+          <h1 class="titulo-app mb-0" style="color:#1A6B3A !important;">Assessoria de Plenário</h1>
+          <p class="subtitulo-app mb-0" style="color:#444 !important;">Lideranças da Minoria e da Oposição — Câmara dos Deputados</p>
+        </div>
+      </div>
+      <div class="text-end">
+        <a href="{{ url_for('logout') }}" class="btn btn-outline-success btn-sm mb-1">
+          <i class="fas fa-sign-out-alt me-2"></i>Sair
+        </a>
+        <a href="/trocar-senha" class="btn btn-outline-secondary btn-sm mb-1 ms-1">
+          <i class="fas fa-key me-1"></i>Senha
+        </a><br>
+        <small style="color:#444;">{{ current_user.username }}</small>
+        {% if current_user.is_authenticated and current_user.role == 'Admin' %}
+          <a href="/admin/usuarios" 
+            class="btn btn-sm mb-1 ms-1"
+            style="color: rgba(255,255,255,0.5); border: none;"
+            onmouseover="this.style.color='#ffc107'" 
+            onmouseout="this.style.color='rgba(255,255,255,0.5)'">
+            <i class="fas fa-cog"></i>
+          </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
 
-# ── DB ABSTRACTION ────────────────────────────────────────────────────────────
-DATABASE_URL = os.environ.get('DATABASE_URL', '')
-USE_POSTGRES = bool(DATABASE_URL)
-PG_PARAMS = {}
+  <div class="container my-4">
+    <div class="sessao-info p-3 bg-light border rounded mb-3">
+      <h5 class="mb-2"><i class="fas fa-users text-success me-2"></i>Sessão Deliberativa</h5>
+      {% if from_cache %}
+      <div class="alert alert-warning text-center py-2 mb-3" style="font-size: 0.9rem;">
+        🔁 Exibindo versão em cache — dados indisponíveis ou instáveis no momento.
+      </div>
+      {% endif %}
+      <div class="small text-muted">
+        <strong><i class="far fa-clock me-1"></i>Data/Hora:</strong>
+        <span data-evento-data="{{ evento.dataHoraInicio | datetimeformat('%d/%m/%Y') if evento.dataHoraInicio and evento.dataHoraInicio != 'N/D' else '' }}">
+        {{ evento.dataHoraInicio | default('N/D') | replace('T', ' ') | datetimeformat('%d/%m/%Y %H:%M') if evento.dataHoraInicio != 'N/D' else 'N/D' }}
+        </span><br>
+        <strong><i class="fas fa-info-circle me-1"></i>Situação:</strong>
+        <span class="badge {{ 'bg-success' if evento.situacao|default('')|lower == 'em andamento' else 'bg-secondary' }}">
+          {{ evento.situacao | default('N/D') }}
+        </span><br>
+        <strong><i class="fas fa-align-left me-1"></i>Descrição:</strong> {{ evento.descricao | default('Sem descrição') }}<br>
+        <strong><i class="fas fa-map-marker-alt me-1"></i>Local:</strong> {{ evento.local | default('N/D') }}<br>
+        <strong><i class="fas fa-save me-1"></i>Última atualização:</strong>
+        <span id="ultimo-salvamento">
+          {% if last_updated %}{{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}{% else %}Nenhum registro{% endif %}
+        </span>
+        <span id="ultimo-usuario" class="text-muted">
+          {% if last_saved_user %} — por <strong>{{ last_saved_user }}</strong>{% endif %}
+        </span>
+      </div>
+    </div>
 
-if USE_POSTGRES:
-    try:
-        import pg8000
-        import pg8000.native
-        if DATABASE_URL.startswith('postgres://'):
-            DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
-        _parsed = urlparse(DATABASE_URL)
-        PG_PARAMS = {
-            'host':     _parsed.hostname,
-            'port':     _parsed.port or 5432,
-            'database': _parsed.path.lstrip('/'),
-            'user':     _parsed.username,
-            'password': _parsed.password,
-        }
-        # SSL: usa apenas se não for rede interna do Railway
-        if _parsed.hostname and 'railway.internal' not in _parsed.hostname:
-            PG_PARAMS['ssl_context'] = True
-        logger.info(f'✅ PostgreSQL configurado: host={_parsed.hostname} db={_parsed.path.lstrip("/")}')
-    except ImportError:
-        USE_POSTGRES = False
-        logger.warning('⚠️ pg8000 não disponível — usando SQLite')
-else:
-    logger.warning('⚠️ DATABASE_URL não definida — usando SQLite (dados NÃO persistem entre deploys!)')
+    <div class="d-flex align-items-center flex-wrap mb-2">
+      <!-- Quadro de boas-vindas -->
+      <div style="width:100%;background:#fffde7;border:1px solid #ffe082;border-radius:8px;padding:10px 16px;margin-bottom:10px;display:flex;align-items:center;gap:14px;">
+        {% if user_foto %}
+        <img src="{{ user_foto }}" alt="foto" style="width:44px;height:44px;border-radius:50%;object-fit:cover;border:2px solid #ffe082;flex-shrink:0;">
+        {% else %}
+        <div style="width:44px;height:44px;border-radius:50%;background:#ffe082;display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0;">
+          <i class="fas fa-user" style="color:#b8860b;"></i>
+        </div>
+        {% endif %}
+        <div>
+          <div style="font-weight:700;font-size:1rem;color:#5d4037;">
+            Olá, {{ user_nome_display.split()[0] if user_nome_display else current_user.username }} 👋
+          </div>
+          {% if itens_atribuidos %}
+          <div style="font-size:0.82rem;color:#5d4037;margin-top:2px;">
+            Há pauta publicada e foram atribuídos a você os itens:
+            <strong>{{ itens_atribuidos | map(attribute='projeto') | join(', ') }}</strong>
+          </div>
+          {% else %}
+          <div style="font-size:0.82rem;color:#8d6e63;margin-top:2px;font-style:italic;">
+            Não foram atribuídos itens de pauta para você.
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
 
-def get_conn():
-    """Retorna conexão ao banco. No PostgreSQL usa pg8000 (pure Python)."""
-    if USE_POSTGRES:
-        conn = pg8000.connect(**PG_PARAMS)
-        _orig_cursor = conn.cursor
-        def _patched_cursor(*a, **kw):
-            cur = _orig_cursor(*a, **kw)
-            _orig_exec = cur.execute
-            _orig_execmany = cur.executemany
-            def _exec(sql, params=None):
-                sql_orig = sql
-                sql = sql.replace('?', '%s')
-                if re.search(r'INSERT OR REPLACE INTO notas\b', sql_orig, re.I):
-                    sql = re.sub(r'INSERT OR REPLACE INTO notas\b', 'INSERT INTO notas', sql, flags=re.I)
-                    sql += (' ON CONFLICT (item_key) DO UPDATE SET '
-                            'evento_id=EXCLUDED.evento_id, ordem=EXCLUDED.ordem, '
-                            'resumo_materia=EXCLUDED.resumo_materia, orientacao=EXCLUDED.orientacao, '
-                            'resumo_parecer=EXCLUDED.resumo_parecer, saved_by=EXCLUDED.saved_by, '
-                            'saved_at=EXCLUDED.saved_at')
-                elif re.search(r'INSERT OR REPLACE INTO pauta_cache_db\b', sql_orig, re.I):
-                    sql = re.sub(r'INSERT OR REPLACE INTO pauta_cache_db\b', 'INSERT INTO pauta_cache_db', sql, flags=re.I)
-                    sql += (' ON CONFLICT (evento_id) DO UPDATE SET '
-                            'json_pauta=EXCLUDED.json_pauta, last_updated=EXCLUDED.last_updated')
-                elif re.search(r'INSERT OR REPLACE INTO orientacoes_grupo\b', sql_orig, re.I):
-                    # Upsert manual: tenta UPDATE primeiro, depois INSERT se não existir
-                    # Extrai os valores dos params: (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
-                    if params and len(params) >= 7:
-                        p = list(params)
-                        ev_id, id_pr, grp, ori, com, sb, sa = p[0], p[1], p[2], p[3], p[4], p[5], p[6]
-                        _orig_exec(
-                            'UPDATE orientacoes_grupo SET orientacao=%s, comentario=%s, saved_by=%s, saved_at=%s '
-                            'WHERE evento_id=%s AND id_principal=%s AND grupo=%s',
-                            [ori, com, sb, sa, ev_id, id_pr, grp]
-                        )
-                        _orig_exec(
-                            'INSERT INTO orientacoes_grupo (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at) '
-                            'SELECT %s,%s,%s,%s,%s,%s,%s WHERE NOT EXISTS '
-                            '(SELECT 1 FROM orientacoes_grupo WHERE evento_id=%s AND id_principal=%s AND grupo=%s)',
-                            [ev_id, id_pr, grp, ori, com, sb, sa, ev_id, id_pr, grp]
-                        )
-                    return
-                    sql = sql  # nunca chega aqui
-                elif re.search(r'INSERT OR IGNORE INTO users\b', sql_orig, re.I):
-                    sql = re.sub(r'INSERT OR IGNORE INTO users\b', 'INSERT INTO users', sql, flags=re.I)
-                    sql += ' ON CONFLICT (username) DO NOTHING'
-                elif re.search(r'INSERT OR REPLACE INTO\b', sql_orig, re.I):
-                    sql = re.sub(r'INSERT OR REPLACE INTO\b', 'INSERT INTO', sql, flags=re.I)
-                elif re.search(r'INSERT OR IGNORE INTO\b', sql_orig, re.I):
-                    sql = re.sub(r'INSERT OR IGNORE INTO\b', 'INSERT INTO', sql, flags=re.I)
-                    sql += ' ON CONFLICT DO NOTHING'
-                sql = re.sub(r'\bAUTOINCREMENT\b', '', sql, flags=re.I)
-                # pg8000 não aceita params=None
-                if params is not None:
-                    return _orig_exec(sql, list(params) if not isinstance(params, (list, tuple)) else params)
-                return _orig_exec(sql)
-            def _execmany(sql, params):
-                sql = sql.replace('?', '%s')
-                return _orig_execmany(sql, params)
-            cur.execute = _exec
-            cur.executemany = _execmany
-            return cur
-        conn.cursor = _patched_cursor
-        return conn
-    return sqlite3.connect(DB)
+    <div class="d-flex align-items-center flex-wrap">
+      {% if user_categoria != 'restrito' %}
+      <a href="{{ url_for('selecionar_data') }}" class="btn btn-outline-secondary btn-sm mb-3">
+        <i class="fas fa-arrow-left me-2"></i>Voltar para Seleção de Data
+      </a>
+      <a href="{{ url_for('view_pauta', evento_id=evento_id, force_reload='true') }}" class="btn btn-outline-primary btn-sm mb-3 ms-2">
+        <i class="fas fa-sync-alt me-2"></i>Atualizar Pauta
+      </a>
+      <a href="/limpar_cache/{{ evento_id }}" class="btn btn-outline-warning btn-sm mb-3 ms-2"
+              title="Remove cache e reprocessa a pauta"
+              onclick="return confirm('Limpar cache desta pauta?')">
+        <i class="fas fa-broom me-1"></i>Limpar Cache
+      </a>
+      <a href="/exportar/{{ evento_id }}"
+        class="btn btn-outline-success btn-sm mb-3 ms-2" target="_blank" rel="noopener">
+        <i class="fas fa-file-export me-2"></i>Exportar resumo
+      </a>
+      <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-iconografica"
+        onclick="window._abrirModalIconografica && window._abrirModalIconografica();"
+        style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
+        <i class="fas fa-th-large me-2"></i>Pauta Iconográfica
+      </button>
+      <button class="btn btn-sm mb-3 ms-2 text-white"
+        style="background:linear-gradient(135deg,#25D366,#128C7E);"
+        data-bs-toggle="modal" data-bs-target="#modalMensagens">
+        <i class="fab fa-whatsapp me-2"></i>Mensagens Plenário
+      </button>
+      {% if current_user.role == 'Admin' %}
+      <span class="d-inline-flex align-items-center gap-1 mb-3 ms-2">
+        <button class="btn btn-sm text-white" id="btn-monitorar"
+          onclick="toggleMonitoramento()"
+          style="background:linear-gradient(135deg,#6c757d,#495057);">
+          <i class="fas fa-satellite-dish me-2"></i><span id="btn-monitorar-label">Monitorar</span>
+        </button>
+        <small id="monitor-status-txt" class="text-muted" style="font-size:0.72rem;white-space:nowrap;min-width:80px;display:inline-block;"></small>
+      </span>
+      {% endif %}
+      {% endif %}
+      <button class="btn btn-sm mb-3 ms-2 text-white"
+        style="background:linear-gradient(135deg,#B8860B,#DAA520);"
+        data-bs-toggle="modal" data-bs-target="#modalOrientacoes"
+        onclick="carregarOrientacoes()">
+        <i class="fas fa-vote-yea me-2"></i>Orientações
+      </button>
 
-def ph(n=1):
-    """Placeholder: %s para postgres, ? para sqlite."""
-    if USE_POSTGRES:
-        return '%s'
-    return '?'
+      {% if last_updated and user_categoria != 'restrito' %}
+      <small class="last-updated mb-3">Atualizado em {{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</small>
+      {% endif %}
+    </div>
 
-def phs(n):
-    """N placeholders separados por vírgula."""
-    p = '%s' if USE_POSTGRES else '?'
-    return ', '.join([p] * n)
+    {% if user_categoria == 'restrito' %}
+    <!-- Visão restrita: apenas itens, situação, relator, ementa, resumo IA e orientações -->
+    <div class="alert alert-info mt-2 mb-2 d-flex align-items-center gap-3">
+      <div>
+        <i class="fas fa-info-circle me-2"></i>
+        Acesso restrito. Registre a orientação do seu grupo clicando no botão:
+      </div>
+      <button class="btn btn-warning btn-sm fw-bold ms-auto"
+        data-bs-toggle="modal" data-bs-target="#modalOrientacoes"
+        onclick="carregarOrientacoes()">
+        <i class="fas fa-vote-yea me-1"></i>Registrar Orientação
+      </button>
+    </div>
+    {% if itens %}
+      {% for item in itens %}
+      <div class="card mb-2 shadow-sm">
+        <div class="card-body py-2 px-3">
+          <div class="d-flex align-items-start gap-2">
+            <span class="badge bg-secondary" style="min-width:28px;text-align:center;">{{ item.ordem }}</span>
+            <div style="flex:1;">
+              <strong>{{ item.projeto }}</strong>
+              <div class="text-muted" style="font-size:0.82rem;">
+                {% if item.relator and item.relator != 'Não atribuído' %}
+                  <span><strong>Relator:</strong> {{ item.relator }}</span> &nbsp;
+                {% endif %}
+                {% if item.situacao and item.situacao != 'N/D' %}
+                  <span><strong>Situação:</strong> {{ item.situacao }}</span>
+                {% endif %}
+              </div>
+              <div style="font-size:0.85rem;margin-top:2px;">{{ item.ementa }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="alert alert-info">Nenhum item encontrado na pauta para este evento.</div>
+    {% endif %}
+    {% else %}
+    {% if itens %}
+      {% for item in itens %}
+      <div class="item-card mb-3">
+        <div class="card-body">
+          <div class="item-header" data-bs-toggle="collapse" data-bs-target="#col-{{ item.ordem }}-{{ item.id_principal }}" aria-expanded="false">
+            <div>
+              <i class="fas fa-file-alt text-primary me-2"></i>
+              Item {{ item.ordem }} — <strong>{{ item.projeto }}</strong> — <strong>Autor:</strong>
+              <span class="span-autor" id="autor-{{ item.id_principal }}" data-id="{{ item.id_principal }}">{% set partes = item.autor.split(', ') %}{% if partes|length > 2 %}{{ partes[:2]|join(', ') }} e outros.{% else %}{{ item.autor }}{% endif %}</span>
+              <span class="badge secao-badge 
+                {{ 'bg-primary' if item.status in ['Proposta em Análise', 'Propostas em Análise'] else 
+                   'bg-info' if item.status in ['Proposta Prevista', 'Propostas Previstas'] else 
+                   'bg-success' if item.status in ['Proposta Analisada', 'Propostas Analisadas'] else 
+                   'bg-warning text-dark' if item.status in ['Proposta Não Analisada', 'Propostas Não Analisadas'] else 
+                   'bg-secondary' }}">
+                {{ item.status | default('N/D') }}
+              </span>
+              <div class="item-info mt-1">
+                <strong>Situação:</strong> {{ item.situacao | default('N/D') }} &nbsp;&nbsp;
+                <strong>Relator:</strong>
+                <span class="span-relator" id="relator-{{ item.id_principal }}" data-id="{{ item.id_principal }}">{{ item.relator }}</span>
+              </div>
+              <div class="item-info mt-1 text-muted fst-italic"
+                   style="font-size:0.82rem; width:100%; white-space:normal; word-break:break-word;"
+                   data-ementa-id="{{ item.id_principal }}"
+                   data-projeto="{{ item.projeto }}"
+                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
+                   data-autor="{{ item.autor | replace('"','&quot;')  }}">
+                {{ item.ementa }}
+              </div>
+              <div class="resumo-ia-ementa mt-1"
+                   id="resumo-ia-{{ item.id_principal }}"
+                   data-id="{{ item.id_principal }}"
+                   data-projeto="{{ item.projeto | replace('"','&quot;') }}"
+                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
+                   data-autor="{{ item.autor | replace('"','&quot;') }}"
+                   style="font-size:0.82rem; color:#1A6B3A; font-weight:500; white-space:normal; word-break:break-word; display:none;">
+              </div>
+            </div>
+            <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
+          </div>
 
-def upsert_notas(c, item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at):
-    if USE_POSTGRES:
-        c.execute('''INSERT INTO notas (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at)
-                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                     ON CONFLICT (item_key) DO UPDATE SET
-                       evento_id=EXCLUDED.evento_id, ordem=EXCLUDED.ordem,
-                       resumo_materia=EXCLUDED.resumo_materia, orientacao=EXCLUDED.orientacao,
-                       resumo_parecer=EXCLUDED.resumo_parecer, saved_by=EXCLUDED.saved_by,
-                       saved_at=EXCLUDED.saved_at''',
-                  (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at))
-    else:
-        c.execute('INSERT OR REPLACE INTO notas (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at) VALUES (?,?,?,?,?,?,?,?)',
-                  (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at))
+          <div class="collapse" id="col-{{ item.ordem }}-{{ item.id_principal }}">
+            <hr class="mt-2 mb-2">
 
-def upsert_pauta_cache(c, evento_id, json_pauta, last_updated):
-    if USE_POSTGRES:
-        c.execute('''INSERT INTO pauta_cache_db (evento_id, json_pauta, last_updated)
-                     VALUES (%s,%s,%s)
-                     ON CONFLICT (evento_id) DO UPDATE SET
-                       json_pauta=EXCLUDED.json_pauta, last_updated=EXCLUDED.last_updated''',
-                  (evento_id, json_pauta, last_updated))
-    else:
-        c.execute('INSERT OR REPLACE INTO pauta_cache_db (evento_id, json_pauta, last_updated) VALUES (?,?,?)',
-                  (evento_id, json_pauta, last_updated))
+            <!-- ASSESSOR RESPONSÁVEL -->
+            <div class="mb-3 d-flex align-items-center gap-2 flex-wrap" id="resp-container-{{ item.ordem }}">
+              {% set resp = assessores | selectattr('username', 'equalto', item.responsavel_username) | list %}
+              {% if resp %}
+                {% set r = resp[0] %}
+                {# Logo da bancada SEMPRE primeiro #}
+                {% if r.categoria == 'minoria' %}
+                  <img src="/static/logo_minoria.png" style="height:22px;object-fit:contain;" alt="Minoria">
+                {% elif r.categoria == 'oposicao' %}
+                  <img src="/static/logo_oposicao.png" style="height:22px;object-fit:contain;" alt="Oposição">
+                {% endif %}
+                {# Depois a foto do usuário se houver #}
+                {% if r.foto %}
+                  <img src="{{ r.foto }}" alt="{{ r.nome }}" style="width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid #ccc;">
+                {% endif %}
+                <small class="text-muted">Responsável: <strong>{{ r.nome }}</strong></small>
+              {% else %}
+                <small class="text-muted fst-italic">Sem responsável atribuído</small>
+              {% endif %}
+              {% if eh_responsavel_pauta %}
+              <select class="form-select form-select-sm w-auto select-responsavel"
+                      data-item-key="PROP_{{ item.id_principal }}"
+                      data-evento-id="{{ evento_id }}"
+                      style="font-size:0.78rem; max-width:180px;">
+                <option value="">— Sem responsável —</option>
+                {% for a in assessores %}
+                  {% if a.username not in ['admin','PL','NOVO'] %}
+                    <option value="{{ a.username }}" {% if a.username == item.responsavel_username %}selected{% endif %}>
+                      {{ a.nome }}
+                    </option>
+                  {% endif %}
+                {% endfor %}
+              </select>
+              {% endif %}
+            </div>
 
-def upsert_orientacoes(c, evento_id, grupo, item_key, orientacao, comentario, saved_by, saved_at):
-    if USE_POSTGRES:
-        c.execute('''INSERT INTO orientacoes_grupo (evento_id, grupo, item_key, orientacao, comentario, saved_by, saved_at)
-                     VALUES (%s,%s,%s,%s,%s,%s,%s)
-                     ON CONFLICT (evento_id, grupo, item_key) DO UPDATE SET
-                       orientacao=EXCLUDED.orientacao, comentario=EXCLUDED.comentario,
-                       saved_by=EXCLUDED.saved_by, saved_at=EXCLUDED.saved_at''',
-                  (evento_id, grupo, item_key, orientacao, comentario, saved_by, saved_at))
-    else:
-        c.execute('''INSERT OR REPLACE INTO orientacoes_grupo (evento_id, grupo, item_key, orientacao, comentario, saved_by, saved_at)
-                     VALUES (?,?,?,?,?,?,?)''',
-                  (evento_id, grupo, item_key, orientacao, comentario, saved_by, saved_at))
+            {% if user_role == 'Assessor' %}
+              <!-- 🟡 MODO LEITURA -->
 
-def integrity_error():
-    if USE_POSTGRES:
-        return psycopg2.errors.UniqueViolation
-    return sqlite3.IntegrityError
-# ─────────────────────────────────────────────────────────────────────────────
+              {# Aviso de item remanescente #}
+              {% if item.eh_remanescente and item.resumo_materia %}
+              <div class="alert alert-warning py-1 px-2 mb-2" style="font-size:0.82rem;">
+                <i class="fas fa-clock me-1"></i>
+                <strong>Item remanescente.</strong>
+                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
+                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
+              </div>
+              {% endif %}
 
+              {# Aviso de REQ com PL na mesma pauta #}
+              {% if item.req_pl_mesmo_dia and item.resumo_materia %}
+              <div class="alert alert-info py-1 px-2 mb-2" style="font-size:0.82rem;">
+                <i class="fas fa-link me-1"></i>
+                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
+                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
+              </div>
+              {% endif %}
+              <div class="mt-2">
+                <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
+                <div class="p-2 border rounded bg-light" style="min-height:150px; white-space:pre-wrap;">
+                  {{ item.resumo_materia | safe }}
+                </div>
+              </div>
 
-logging.getLogger('werkzeug').setLevel(logging.WARNING)
+              <div class="mt-2">
+                <label class="form-label small"><strong>Orientação:</strong></label><br>
+                <span class="badge bg-secondary">{{ item.orientacao or '—' }}</span>
+              </div>
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'plenario-chave-secreta-2025'
-bcrypt = Bcrypt(app)
-login_manager = LoginManager(app)
-login_manager.login_view = 'login'
+              {% if item.destaques_emendas %}
+              <div class="mt-4">
+                <h6><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
+                <div class="table-responsive">
+                  <table class="table table-sm table-striped align-middle">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo Destaque</th><th>Situação</th><th>Resumo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for d in item.destaques_emendas %}
+                      <tr>
+                        <td><strong>{{ d.numero }}</strong></td>
+                        <td>{{ d.autoria }}</td>
+                        <td>{{ d.descricao }}</td>
+                        <td>{{ d.tipo_destaque }}</td>
+                        <td><span class="badge {{ 'bg-warning' if d.situacao|lower == 'em tramitação' else 'bg-secondary' }}">{{ d.situacao }}</span></td>
+                        <td style="white-space:pre-wrap;">{{ d.resumo_nota | safe }}</td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {% endif %}
 
-pauta_cache = {}
-CACHE_DURATION = timedelta(minutes=5)
-DB = 'plenario.db'
+            {% else %}
+              <!-- 🔵 EDIÇÃO PARA ADMIN E ASSESSOR PLENÁRIO -->
 
-# --------------------------------------------------------------------------
-# INIT BANCO AUTOMÁTICO (Railway)
-# --------------------------------------------------------------------------
-with app.app_context():
-    try:
-        conn = get_conn()
-        c = conn.cursor()
-        _p = '%s' if USE_POSTGRES else '?'
-        _AI = 'SERIAL' if USE_POSTGRES else 'INTEGER'
-        _TXT = 'TEXT' if USE_POSTGRES else 'TEXT'
+              {# Aviso de item remanescente #}
+              {% if item.eh_remanescente and item.resumo_materia %}
+              <div class="alert alert-warning py-1 px-2 mb-2" style="font-size:0.82rem;">
+                <i class="fas fa-clock me-1"></i>
+                <strong>Item remanescente.</strong>
+                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
+                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
+              </div>
+              {% endif %}
 
-        c.execute(f'''CREATE TABLE IF NOT EXISTS users (
-            id {_AI} PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            role TEXT NOT NULL,
-            categoria TEXT NOT NULL DEFAULT 'geral',
-            foto TEXT,
-            nome_display TEXT,
-            responsavel_pauta INTEGER DEFAULT 0)''')
+              {# Aviso de REQ com PL na mesma pauta #}
+              {% if item.req_pl_mesmo_dia and item.resumo_materia %}
+              <div class="alert alert-info py-1 px-2 mb-2" style="font-size:0.82rem;">
+                <i class="fas fa-link me-1"></i>
+                Análise feita por <strong>{{ item.saved_by or '—' }}</strong>
+                em <strong>{{ item.saved_at | datetimeformat('%d/%m/%Y') }}</strong>
+              </div>
+              {% endif %}
+              <div class="mt-2">
+                <label class="form-label small"><strong>Gerar sugestão de análise (Projeto principal):</strong></label>
 
-        c.execute('''CREATE TABLE IF NOT EXISTS notas (
-            item_key TEXT PRIMARY KEY,
-            evento_id INTEGER,
-            ordem TEXT,
-            resumo_materia TEXT,
-            orientacao TEXT,
-            resumo_parecer TEXT,
-            saved_by TEXT,
-            saved_at TEXT,
-            responsavel_username TEXT)''')
+                <!-- Botão procurar último parecer -->
+                <div class="mb-2">
+                  <button class="btn btn-outline-info btn-sm" type="button"
+                    id="btn-ultimo-doc-{{ item.ordem }}"
+                    data-id-principal="{{ item.id_principal }}"
+                    data-projeto="{{ item.projeto }}"
+                    data-ordem="{{ item.ordem }}"
+                    onclick="verificarUltimoDoc(this)">
+                    <i class="fas fa-search me-1"></i>Procurar último parecer (PRLP/Substitutivo)
+                  </button>
+                  <div id="ultimo-doc-resultado-{{ item.ordem }}" class="mt-1" style="display:none;">
+                    <small class="text-info fw-bold" id="ultimo-doc-texto-{{ item.ordem }}"></small>
+                  </div>
+                </div>
 
-        c.execute('''CREATE TABLE IF NOT EXISTS pauta_cache_db (
-            evento_id INTEGER PRIMARY KEY,
-            json_pauta TEXT,
-            last_updated TEXT,
-            last_saved_by TEXT)''')
+                <!-- Campo: Análise baseada em -->
+                <div class="mb-2">
+                  <div class="input-group input-group-sm">
+                    <span class="input-group-text text-muted" style="font-size:0.75rem;white-space:nowrap;">
+                      <i class="fas fa-file-alt me-1"></i>Análise baseada em
+                    </span>
+                    <input type="text" class="form-control campo-baseada-em"
+                      id="baseada-em-{{ item.ordem }}"
+                      data-ordem="{{ item.ordem }}"
+                      placeholder="Ex: PRLP 7 — 21/05/2025"
+                      style="font-size:0.8rem;">
+                  </div>
+                </div>
 
-        c.execute('''CREATE TABLE IF NOT EXISTS resumos_ia (
-            evento_id INTEGER,
-            id_proposicao TEXT,
-            resumo TEXT,
-            PRIMARY KEY (evento_id, id_proposicao))''')
+                <div class="mb-2">
+                  <button class="btn btn-outline-primary btn-gerar-analise" type="button"
+                    data-ordem="{{ item.ordem }}"
+                    data-projeto="{{ item.projeto }}"
+                    data-ementa="{{ item.ementa | replace('"', '') | replace("'", '')  }}"
+                    data-autor="{{ item.autor }}"
+                    data-relator="{{ item.relator }}"
+                    data-id-principal="{{ item.id_principal }}"
+                    onclick="gerarAnalise('{{ item.ordem }}', this)">
+                    <img src="/static/logo_gemini.svg" alt="Gemini" style="width:16px;height:16px;vertical-align:middle;" class="me-2">
+                    Gerar Análise
+                  </button>
+                </div>
+                <small class="text-muted">A análise será inserida automaticamente no campo de Resumo/Nota Técnica.</small>
+              </div>
 
-        c.execute('''CREATE TABLE IF NOT EXISTS orientacoes_grupo (
-            id SERIAL PRIMARY KEY,
-            evento_id INTEGER,
-            id_principal TEXT,
-            grupo TEXT,
-            orientacao TEXT,
-            comentario TEXT,
-            saved_by TEXT,
-            saved_at TEXT,
-            UNIQUE(evento_id, id_principal, grupo))''' if USE_POSTGRES else
-            '''CREATE TABLE IF NOT EXISTS orientacoes_grupo (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            evento_id INTEGER,
-            id_principal TEXT,
-            grupo TEXT,
-            orientacao TEXT,
-            comentario TEXT,
-            saved_by TEXT,
-            saved_at TEXT,
-            UNIQUE(evento_id, id_principal, grupo))''')
+              <div class="mt-2 position-relative" style="width:100%;">
+                <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
+                <textarea id="editor-resumo-materia-{{ item.ordem }}" class="d-none">{% if item.resumo_materia %}{{ item.resumo_materia | safe }}{% endif %}</textarea>
+                <div id="quill-editor-{{ item.ordem }}" data-ordem="{{ item.ordem }}" style="width:100%; background:#fff; min-height:500px;"></div>
+                <div id="overlay-{{ item.ordem }}" class="editor-overlay" style="display:none;">
+                  <div class="editor-spinner"></div>
+                  <p>📄 Modelo analisando a Proposição...<br>🧠 Gerando sugestão de nota técnica...</p>
+                </div>
+              </div>
 
-        # Migrações seguras
-        migrações = [
-            'ALTER TABLE users ADD COLUMN IF NOT EXISTS foto TEXT' if USE_POSTGRES else 'ALTER TABLE users ADD COLUMN foto TEXT',
-            'ALTER TABLE users ADD COLUMN IF NOT EXISTS nome_display TEXT' if USE_POSTGRES else 'ALTER TABLE users ADD COLUMN nome_display TEXT',
-            'ALTER TABLE users ADD COLUMN IF NOT EXISTS responsavel_pauta INTEGER DEFAULT 0' if USE_POSTGRES else 'ALTER TABLE users ADD COLUMN responsavel_pauta INTEGER DEFAULT 0',
-            'ALTER TABLE notas ADD COLUMN IF NOT EXISTS responsavel_username TEXT' if USE_POSTGRES else 'ALTER TABLE notas ADD COLUMN responsavel_username TEXT',
-            # Migração: adiciona id_principal na tabela orientacoes_grupo (substitui item_key)
-            'ALTER TABLE orientacoes_grupo ADD COLUMN IF NOT EXISTS id_principal TEXT' if USE_POSTGRES else 'ALTER TABLE orientacoes_grupo ADD COLUMN id_principal TEXT',
-        ]
-        for sql in migrações:
-            try: c.execute(sql)
-            except Exception: pass
+              <div class="mt-2">
+                <label class="form-label small"><strong>Orientação:</strong></label>
+                <select class="form-control editable-field orientacao" data-ordem="{{ item.ordem }}">
+                  <option value="" {% if not item.orientacao %}selected{% endif %}>Selecione</option>
+                  <option value="NEGOCIAÇÃO" {% if item.orientacao == 'NEGOCIAÇÃO' %}selected{% endif %}>NEGOCIAÇÃO</option>
+                  <option value="SIM" {% if item.orientacao == 'SIM' %}selected{% endif %}>SIM</option>
+                  <option value="NÃO" {% if item.orientacao == 'NÃO' %}selected{% endif %}>NÃO</option>
+                  <option value="LIBERADO" {% if item.orientacao == 'LIBERADO' %}selected{% endif %}>LIBERADO</option>
+                  <option value="OBSTRUÇÃO" {% if item.orientacao == 'OBSTRUÇÃO' %}selected{% endif %}>OBSTRUÇÃO</option>
+                  <option value="ABSTENÇÃO" {% if item.orientacao == 'ABSTENÇÃO' %}selected{% endif %}>ABSTENÇÃO</option>
+                </select>
+              </div>
 
-        from flask_bcrypt import Bcrypt as _Bc
-        _bcrypt = _Bc()
-        _pw123 = _bcrypt.generate_password_hash('123').decode('utf-8')
+              {% if item.destaques_emendas %}
+              <div class="mt-4">
+                <h6><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
+                <div class="table-responsive">
+                  <table class="table table-sm table-striped align-middle">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo Destaque</th><th>Situação</th><th>IA</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for d in item.destaques_emendas %}
+                      <tr>
+                        <td><strong>{{ d.numero }}</strong></td>
+                        <td>{{ d.autoria }}</td>
+                        <td>{{ d.descricao }}</td>
+                        <td>{{ d.tipo_destaque }}</td>
+                        <td><span class="badge {{ 'bg-warning' if d.situacao|lower == 'em tramitação' else 'bg-secondary' }}">{{ d.situacao }}</span></td>
+                        <td>
+                          <button class="btn btn-outline-primary btn-sm"
+                            onclick="analisarDestaque(this)"
+                            data-id-principal="{{ item.id_principal }}"
+                            data-descricao="{{ d.descricao | replace('"','') }}"
+                            data-numero="{{ d.numero }}"
+                            data-autoria="{{ d.autoria | replace('"','') }}"
+                            data-projeto="{{ item.projeto }}">
+                            <i class="fas fa-robot"></i>
+                          </button>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td colspan="6">
+                          <div id="analise-destaque-{{ d.numero | replace(' ','-') }}" class="mt-1" style="display:none;">
+                            <div class="p-2 border rounded bg-light" style="font-size:0.85rem;"></div>
+                          </div>
+                          <label class="form-label small mt-2"><strong>Resumo/Nota Técnica — {{ d.numero }}:</strong></label>
+                          <textarea id="editor-resumo-destaque-{{ item.ordem }}-{{ loop.index }}" class="editable-field" data-numero="{{ d.numero }}">{% if d.resumo_nota %}{{ d.resumo_nota | safe }}{% endif %}</textarea>
+                        </td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              {% endif %}
 
-        c.execute('''CREATE TABLE IF NOT EXISTS usuarios_deletados (
-            username TEXT PRIMARY KEY)''')
+              <div class="d-flex align-items-center gap-3 mt-3 flex-wrap">
+                <button class="btn btn-primary btn-sm save-btn"
+                        data-ordem="{{ item.ordem }}"
+                        data-id-principal="{{ item.id_principal }}">Salvar</button>
+                <small class="text-muted" id="info-salvo-{{ item.ordem }}" style="font-size:0.8rem;">
+                  {% if item.saved_by and item.saved_at %}
+                    <i class="fas fa-check-circle text-success me-1"></i>
+                    Salvo por <strong>{{ item.saved_by }}</strong> em {{ item.saved_at | datetimeformat('%d/%m/%Y %H:%M') }}
+                  {% endif %}
+                </small>
+              </div>
 
-        # Carrega lista de usuários já deletados para não recriar
-        try:
-            c.execute('SELECT username FROM usuarios_deletados')
-            _deletados = {r[0] for r in c.fetchall()}
-        except Exception:
-            _deletados = set()
+              <!-- DESTAQUES -->
+              <div class="mt-4">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                  <h6 class="mb-0"><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
+                  <button class="btn btn-outline-warning btn-sm btn-buscar-destaques"
+                          data-id-proposicao="{{ item.id_principal }}"
+                          data-ordem="{{ item.ordem }}"
+                          data-projeto="{{ item.projeto }}">
+                    <i class="fas fa-search me-1"></i>Buscar Destaques
+                  </button>
+                  <span class="spinner-busca-{{ item.ordem }}" style="display:none;">
+                    <span class="spinner-border spinner-border-sm text-warning"></span>
+                    Buscando...
+                  </span>
+                </div>
+                <div id="tabela-destaques-{{ item.ordem }}" style="display:none;">
+                  <div class="table-responsive">
+                    <table class="table table-sm table-striped align-middle">
+                      <thead class="table-warning">
+                        <tr>
+                          <th>Número</th>
+                          <th>Autoria</th>
+                          <th>Descrição</th>
+                          <th>Tipo</th>
+                          <th>Situação</th>
+                          <th>IA</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tbody-destaques-{{ item.ordem }}"></tbody>
+                    </table>
+                  </div>
+                  <div id="sem-destaques-{{ item.ordem }}" class="alert alert-info py-2" style="display:none;">
+                    <i class="fas fa-info-circle me-2"></i>Nenhum destaque em tramitação encontrado para esta proposição.
+                  </div>
+                </div>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="alert alert-info">Nenhum item encontrado na pauta para este evento.</div>
+    {% endif %}
+    {% endif %} {# fecha o else do restrito #}
+  </div>
 
-        _usuarios = [
-            ('admin',             'Admin',            'admin',    'Admin'),
-            ('assessor_plenario', 'Assessor Plenário','minoria',  'Assessor Plenário'),
-            ('assessor',          'Assessor',         'geral',    'Assessor'),
-            ('PL',                'Orientação',       'restrito', 'Orientação'),
-            ('NOVO',              'Orientação',       'restrito', 'Orientação'),
-            ('marcelo.oliveira',  'Assessor Plenário','minoria',  'Marcelo Oliveira'),
-        ]
-        for _un, _cat, _role_cat, _nome in _usuarios:
-            if _un in _deletados:
-                continue  # não recria usuários que foram deletados
-            _role_val = 'Admin' if _un == 'admin' else 'Assessor'
-            try:
-                if USE_POSTGRES:
-                    c.execute('INSERT INTO users (username, password, role, categoria, nome_display) VALUES (%s,%s,%s,%s,%s) ON CONFLICT (username) DO NOTHING',
-                              (_un, _pw123, _role_val, _cat, _nome))
-                else:
-                    c.execute('INSERT OR IGNORE INTO users (username, password, role, categoria, nome_display) VALUES (?,?,?,?,?)',
-                              (_un, _pw123, _role_val, _cat, _nome))
-            except Exception:
-                pass
+    <!-- JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+  <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+  <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
 
-        # Garante que o admin tenha role='Admin' caso já exista com role errado
-        try:
-            c.execute("UPDATE users SET role='Admin' WHERE username='admin' AND role != 'Admin'")
-        except Exception:
-            pass
+  <script>
+    const quillInstances = {};
 
-        _cats = {
-            # Oposição
-            'vinicius.scheffel': 'oposicao', 'lianna.barros': 'oposicao',
-            'marcelo.uvara': 'oposicao', 'elyesley.silva': 'oposicao',
-            'pedro.chaves': 'oposicao',
-            # Minoria
-            'ulisses.branco': 'minoria', 'eduardo.borba': 'minoria',
-            'luisa.marreco': 'minoria', 'luiz.garibaldi': 'minoria',
-            'assessor_plenario': 'minoria', 'marcelo.oliveira': 'minoria',
-        }
-        # Atualiza categoria SOMENTE se ainda estiver como 'geral' (padrão inicial)
-        # Não sobrescreve categorias editadas manualmente pelo admin
-        for _un, _cat in _cats.items():
-            try:
-                c.execute(
-                    f'UPDATE users SET categoria={_p} WHERE username={_p} AND (categoria={_p} OR categoria IS NULL)',
-                    (_cat, _un, 'geral')
-                )
-            except Exception:
-                pass
+    // Inicializa Quill quando collapse abre
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('.collapse').forEach(collapseEl => {
+        collapseEl.addEventListener('shown.bs.collapse', () => {
+          const quillDiv = collapseEl.querySelector('[id^="quill-editor-"]');
+          if (!quillDiv) return;
+          const ordem = quillDiv.dataset.ordem;
+          if (quillInstances[ordem]) return;
 
-        conn.commit()
-        conn.close()
-        logger.info(f'✅ Banco inicializado ({"PostgreSQL" if USE_POSTGRES else "SQLite"}).')
-    except Exception as _e:
-        logger.error(f'❌ Erro banco: {_e}')
+          const textarea = collapseEl.querySelector(`#editor-resumo-materia-${ordem}`);
+          const conteudo = textarea ? textarea.value : '';
 
-# --------------------------------------------------------------------------
-# HELPERS DB
-# --------------------------------------------------------------------------
-def load_notas():
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        c.execute('SELECT item_key, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at, responsavel_username FROM notas')
-        notas = {row[0]: {'resumo_materia': row[1], 'orientacao': row[2], 'resumo_parecer': row[3],
-                          'saved_by': row[4] or '', 'saved_at': row[5] or '',
-                          'responsavel_username': row[6] or ''}
-                 for row in c.fetchall()}
-    except Exception:
-        notas = {}
-    finally:
-        conn.close()
-    return notas
-
-# --------------------------------------------------------------------------
-# LOGIN
-# --------------------------------------------------------------------------
-class User(UserMixin):
-    def __init__(self, id, username, role, categoria='geral', nome_display=None, foto=None):
-        self.id = id; self.username = username; self.role = role; self.categoria = categoria
-        self.nome_display = nome_display or username
-        self.foto = foto or ''
-
-    def display_name(self):
-        """Nome de exibição com categoria."""
-        if self.categoria in ('oposicao', 'minoria'):
-            return f"{self.username} - {self.categoria}"
-        return self.username
-
-@login_manager.user_loader
-def load_user(user_id):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('SELECT id, username, role, categoria, nome_display, foto FROM users WHERE id = ?', (user_id,))
-    u = c.fetchone()
-    conn.close()
-    if not u: return None
-    return User(u[0], u[1], u[2],
-                u[3] if len(u) > 3 else 'geral',
-                u[4] if len(u) > 4 else None,
-                u[5] if len(u) > 5 else None)
-
-# --------------------------------------------------------------------------
-# EVENTOS & PAUTA
-# --------------------------------------------------------------------------
-def fetch_eventos_por_data(data):
-    url = f"https://dadosabertos.camara.leg.br/api/v2/eventos?idOrgao=180&dataInicio={data}&dataFim={data}&itens=50"
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        dados = r.json().get('dados', [])
-        return [
-            {
-                'id': str(e.get('id')),
-                'descricao': e.get('descricao', 'Sem descrição'),
-                'tipo': e.get('descricaoTipo', ''),
-                'dataHoraInicio': e.get('dataHoraInicio', 'N/D'),
-                'local': e.get('localCamara', {}).get('nome', 'N/D') if isinstance(e.get('localCamara'), dict) else e.get('localCamara', 'N/D'),
-                'situacao': e.get('situacao', 'N/D')
+          const quill = new Quill(`#quill-editor-${ordem}`, {
+            theme: 'snow',
+            modules: {
+              toolbar: [
+                ['bold', 'italic', 'underline'],
+                [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+                ['clean']
+              ]
             }
-            for e in dados if e.get('descricaoTipo') == "Sessão Deliberativa"
-        ]
-    except Exception as e:
-        logger.error(f"Erro ao buscar eventos: {e}")
-        return []
-
-def extrair_ref_pl(projeto, ementa):
-    """
-    Se for REQ/RQS/RQU/REC, extrai a referência ao PL/PEC/PLP/MPV da ementa.
-    Retorna ex: 'REQ 2569/2026 ao PL 1811/2026'
-    É idempotente: se já contém ' ao ', não processa novamente.
-    """
-    # Pega só a parte base do projeto (antes de " ao " se já processado)
-    projeto_base = projeto.split(' ao ')[0].strip()
-
-    siglas_req = ('REQ', 'RQS', 'RQU', 'REC', 'REQ.', 'RQS.')
-    if not any(projeto_base.upper().startswith(s) for s in siglas_req):
-        return projeto
-
-    ementa_str = str(ementa or '')
-
-    # Padrões do mais específico para o mais genérico
-    padroes = [
-        # Sigla curta com número: "PLP nº 221/2024", "PL nº 1811/2026"
-        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})\b', 3, None),
-        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s+(\d+),?\s*de\s+(\d{4})\b', 3, None),
-        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s*(\d{3,5})[/\-](\d{4})\b', 3, None),
-        # Texto por extenso — ordem importa: Complementar antes de Lei simples
-        (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PLP'),
-        (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PEC'),
-        (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'MPV'),
-        (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PDL'),
-        (r'Projeto\s+de\s+Lei\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PL'),
-    ]
-
-    for item in padroes:
-        padrao, n_grupos, sigla_fixa = item
-        m = re.search(padrao, ementa_str, re.IGNORECASE)
-        if m:
-            if n_grupos == 3:
-                sigla, num, ano = m.group(1).upper(), m.group(2), m.group(3)
-            else:
-                sigla, num, ano = sigla_fixa, m.group(1), m.group(2)
-            return f"{projeto_base} ao {sigla} {num}/{ano}"
-
-    return projeto_base
-
-def buscar_ordem_oficial(evento_id, data_evento=''):
-    """
-    Extrai a ordem oficial dos itens diretamente do PDF de pauta da sessão.
-    
-    Estratégia:
-    1. Acessa a página do evento para encontrar o link do PDF de pauta
-    2. Baixa o PDF e extrai o texto
-    3. Parseia os números de ordem (padrão: "N. Proposição...")
-    4. Retorna dict {codigo_normalizado: posicao}
-    """
-    try:
-        from bs4 import BeautifulSoup
-        import pdfplumber
-
-        # Passo 1: Busca o PDF de pauta na página do evento
-        url_evento = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
-        r = requests.get(url_evento, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36'
-        }, timeout=12)
-        if not r.ok:
-            logger.warning(f"Evento {evento_id} inacessível: {r.status_code}")
-            return {}
-
-        soup = BeautifulSoup(r.text, 'html.parser')
-
-        # Busca PDF com texto "Pauta" — verifica se é da mesma data do evento
-        pdf_url = None
-        from bs4 import BeautifulSoup
-
-        # Busca data do evento para validar
-        data_evento = ''
-        try:
-            data_el = soup.find(string=re.compile(r'\d{2}/\d{2}/\d{4}'))
-            if data_el:
-                m_data = re.search(r'(\d{2})/(\d{2})/(\d{4})', str(data_el))
-                if m_data:
-                    data_evento = f"{m_data.group(3)}-{m_data.group(2)}-{m_data.group(1)}"
-        except Exception:
-            pass
-
-        # Coleta todos os links "Pauta" para testar
-        candidatos_pauta = []
-        for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
-            if a.get_text(strip=True).lower() == 'pauta':
-                href = a['href']
-                url_cand = (camara_url(href))
-                url_cand += ('&' if '?' in url_cand else '?') + 'tipo=PDF'
-                candidatos_pauta.append(url_cand)
-
-        # Testa cada candidato — usa o que tiver a data correta do evento
-        for url_cand in candidatos_pauta:
-            rp_test = requests.get(url_cand, headers={
-                'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'
-            }, timeout=20)
-            if not rp_test.ok:
-                continue
-            # Extrai primeiras linhas do PDF para verificar data
-            try:
-                with pdfplumber.open(BytesIO(rp_test.content)) as pdf_test:
-                    texto_inicio = pdf_test.pages[0].extract_text() or ''
-                # Verifica se data do evento está no PDF
-                data_ok = True
-                if data_evento:
-                    ano_ev = data_evento[:4]
-                    mes_ev = data_evento[5:7].lstrip('0')
-                    dia_ev = data_evento[8:10].lstrip('0')
-                    # Verifica se dia E ano estão no texto do PDF
-                    data_ok = ano_ev in texto_inicio and (
-                        f"{dia_ev} de" in texto_inicio or
-                        f"Em {dia_ev} de" in texto_inicio or
-                        f"Em {dia_ev.zfill(2)} de" in texto_inicio
-                    )
-                if data_ok:
-                    pdf_url = url_cand
-                    rp = rp_test
-                    logger.info(f"PDF de pauta válido: {url_cand}")
-                    break
-            except Exception:
-                pdf_url = url_cand
-                rp = rp_test
-                break
-
-        if not pdf_url:
-            logger.warning(f"Nenhum PDF de pauta válido para evento {evento_id}")
-            return {}
-
-        # Passo 3: Extrai ordem usando posição X das palavras (números centralizados)
-        from io import BytesIO
-        ordem = {}
-
-        with pdfplumber.open(BytesIO(rp.content)) as pdf:
-            page_width = float(pdf.pages[0].width) if pdf.pages else 595.0
-
-            for page in pdf.pages:
-                words = page.extract_words(x_tolerance=3, y_tolerance=3)
-
-                # Agrupa palavras por linha (y próximo)
-                linhas = {}
-                for w in words:
-                    y = round(float(w['top']))
-                    linhas.setdefault(y, []).append(w)
-
-                ys = sorted(linhas.keys())
-
-                for i, y in enumerate(ys):
-                    palavras = linhas[y]
-
-                    # Encontra na linha uma palavra que seja número 1-2 dígitos E centralizada
-                    # Ignora qualquer outro texto na mesma linha (invisível ou não)
-                    num_encontrado = None
-                    for w in palavras:
-                        txt = w['text'].strip()
-                        if not re.match(r'^\d{1,2}$', txt):
-                            continue
-                        centro_w = (float(w['x0']) + float(w['x1'])) / 2
-                        if abs(centro_w - page_width / 2) <= page_width * 0.05:
-                            num_encontrado = (int(txt), float(w['x0']), float(w['x1']))
-                            break
-
-                    if not num_encontrado:
-                        continue
-                    num, x0, x1 = num_encontrado
-                    if num < 1 or num > 30:
-                        continue
-                    centro = (x0 + x1) / 2
-                    if abs(centro - page_width / 2) > page_width * 0.20:
-                        continue
-
-                    # Pega texto das próximas 10 linhas para extrair o código
-                    prox_ys = ys[i+1:i+11]
-                    bloco = ' '.join(
-                        ' '.join(w['text'] for w in linhas[ny])
-                        for ny in prox_ys if ny in linhas
-                    )
-
-                    codigo = _extrair_codigo_do_bloco(bloco)
-                    logger.info(f"  Item {num} (centralizado): bloco='{bloco[:200]}' → codigo={codigo}")
-                    if codigo:
-                        chave = _normalizar_codigo(codigo)
-                        posicoes_usadas = {v: k for k, v in ordem.items()}
-                        if num in posicoes_usadas:
-                            del ordem[posicoes_usadas[num]]
-                            logger.info(f"  Posição {num} sobrescrita: {posicoes_usadas[num]} → {chave}")
-                        ordem[chave] = num
-                    else:
-                        logger.warning(f"  Item {num}: NÃO extraiu código do bloco: '{bloco[:300]}'")
-                        # Marca posição como pendente para o fallback resolver
-                        chave_pend = f"PEND{num}"
-                        if num not in ordem.values():
-                            ordem[chave_pend] = num
-
-        # Texto bruto já extraído acima
-
-        # Extrai REQ do texto bruto (formato com ponto, não centralizado)
-        with pdfplumber.open(BytesIO(rp.content)) as pdf:
-            texto_total = '\n'.join(p.extract_text() or '' for p in pdf.pages)
-
-        # REQ com número: "N. Requerimento nº X.XXX, de AAAA"
-        for m in re.finditer(
-            r'^(\d+)\.\s+Requerimento\s+n\.?[º°oa]?\.?\s*([\d.]+),\s*de\s+(\d{4})',
-            texto_total, re.MULTILINE | re.IGNORECASE
-        ):
-            num   = int(m.group(1))
-            num_p = m.group(2).replace('.', '')
-            ano   = m.group(3)
-            chave = _normalizar_codigo(f"REQ {num_p}/{ano}")
-            if chave not in ordem and num <= 30:
-                ordem[chave] = num
-                logger.info(f"  Item {num} (REQ texto): REQ {num_p}/{ano} → {chave}")
-
-        # Redação Final: "N. Redação Final ao Projeto de Lei nº X.XXX, de AAAA"
-        # Estes itens têm número à esquerda (não centralizado) — parser específico
-        for m in re.finditer(
-            r'^(\d+)\.\s+Redação\s+Final\s+ao\s+'
-            r'(PROJETO\s+DE\s+LEI(?:\s+COMPLEMENTAR)?'
-            r'|PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O'
-            r'|PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO)'
-            r'\s+N[º°.]?\s*([\d.]+(?:-[A-Z])?),?\s*[Dd][Ee]\s+(\d{4})',
-            texto_total, re.MULTILINE | re.IGNORECASE
-        ):
-            num      = int(m.group(1))
-            tipo_txt = m.group(2).upper()
-            num_p    = re.sub(r'[-–][A-Z]$', '', m.group(3).replace('.', ''))
-            ano      = m.group(4)
-            if 'COMPLEMENTAR' in tipo_txt:          sigla = 'PLP'
-            elif 'EMENDA' in tipo_txt:              sigla = 'PEC'
-            elif 'DECRETO LEGISLATIVO' in tipo_txt: sigla = 'PDL'
-            else:                                   sigla = 'PL'
-            chave = _normalizar_codigo(f"{sigla} {num_p}/{ano}")
-            posicoes_usadas = {v: k for k, v in ordem.items()}
-            if num <= 30:
-                if num in posicoes_usadas and posicoes_usadas[num].startswith('PEND'):
-                    del ordem[posicoes_usadas[num]]
-                if chave not in ordem:
-                    ordem[chave] = num
-                    logger.info(f"  Item {num} (Redação Final): {sigla} {num_p}/{ano} → {chave}")
-
-        # Fallback robusto: extrai ordem de qualquer linha "N. TIPO Nº X/ANO" no texto
-        # Sobrescreve posições PEND (não identificadas pelo parser centralizado)
-        posicoes_usadas = {v: k for k, v in ordem.items()}
-        for m in re.finditer(
-            r'^(\d{1,2})\.\s+(' +
-            r'(?:PROJETO\s+DE\s+LEI(?:\s+COMPLEMENTAR)?|' +
-            r'PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O|' +
-            r'MEDIDA\s+PROVIS[OÓ]RIA|' +
-            r'PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO|' +
-            r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O|' +
-            r'Requerimento)' +
-            r'\s+[Nn][º°.]?\s*([\d.]+)(?:-[A-Z])?,?\s*[Dd][Ee]\s+(\d{4}))',
-            texto_total, re.MULTILINE | re.IGNORECASE
-        ):
-            num  = int(m.group(1))
-            if num > 30:
-                continue
-            tipo_txt = m.group(2).upper()
-            num_p = m.group(3).replace('.', '')
-            ano   = m.group(4)
-            if 'COMPLEMENTAR' in tipo_txt:   sigla = 'PLP'
-            elif 'EMENDA' in tipo_txt:       sigla = 'PEC'
-            elif 'PROVIS' in tipo_txt:       sigla = 'MPV'
-            elif 'DECRETO' in tipo_txt:      sigla = 'PDL'
-            elif 'RESOLU' in tipo_txt:       sigla = 'PRC'
-            elif 'REQUERIMENTO' in tipo_txt: sigla = 'REQ'
-            else:                            sigla = 'PL'
-            chave = _normalizar_codigo(f"{sigla} {num_p}/{ano}")
-            chave_pend = f"PEND{num}"
-            # Sobrescreve se: chave nova não existe OU posição tem uma chave PEND/REQSN
-            chave_atual = posicoes_usadas.get(num, '')
-            if chave not in ordem and (num not in posicoes_usadas or
-                    chave_atual.startswith('PEND') or chave_atual.startswith('REQSN')):
-                if chave_atual:
-                    del ordem[chave_atual]
-                ordem[chave] = num
-                posicoes_usadas[num] = chave
-                logger.info(f"  Item {num} (fallback texto): {sigla} {num_p}/{ano} → {chave}")
-
-        # REQ sem número (s/n ou s/nº)
-        # Extrai o PL referenciado da ementa do PDF para matching com a API
-        posicoes_usadas_final = {v: k for k, v in ordem.items()}
-        req_sn_count = 0
-        for m in re.finditer(
-            r'^(\d+)\.\s+Requerimento\s+s/n[º°]?',
-            texto_total, re.MULTILINE | re.IGNORECASE
-        ):
-            num = int(m.group(1))
-            if num > 30:
-                continue
-            chave_atual = posicoes_usadas_final.get(num, '')
-            if chave_atual.startswith('PEND') or num not in posicoes_usadas_final:
-                if chave_atual:
-                    del ordem[chave_atual]
-                # Extrai PL referenciado do bloco do PDF para uso no matching
-                bloco_req = texto_total[m.start():m.start()+500]
-                m_pl = re.search(
-                    r'Projeto\s+de\s+Lei(?:\s+Complementar)?\s+n[º°.]?\s*([\d.]+),\s*de\s+(\d{4})',
-                    bloco_req, re.IGNORECASE
-                )
-                if m_pl:
-                    num_pl = m_pl.group(1).replace('.', '')
-                    ano_pl = m_pl.group(2)
-                    sigla_pl = 'PLP' if 'Complementar' in m_pl.group(0) else 'PL'
-                    chave = f"REQSN_{sigla_pl}{num_pl}/{ano_pl}"
-                    logger.info(f"  Item {num} (REQ s/nº → {sigla_pl} {num_pl}/{ano_pl}): chave={chave}")
-                else:
-                    chave = f"REQSN{req_sn_count}"
-                    logger.info(f"  Item {num} (REQ s/nº): chave={chave}")
-                req_sn_count += 1
-                ordem[chave] = num
-                posicoes_usadas_final[num] = chave
-
-        # Preenche gaps de posição usando cabeçalhos de PL/PLP/PEC no texto
-        # Ex: "PROJETO DE LEI Nº 5.868, DE 2025" aparece entre pos 18 e 20 → pos 19
-        posicoes_usadas_set = set(ordem.values())
-        gaps = sorted(set(range(1, max(posicoes_usadas_set)+1)) - posicoes_usadas_set)
-        logger.info(f"Gaps de posição no PDF: {gaps}")
-
-        if gaps:
-            # Coleta cabeçalhos de proposição no texto (sem número sequencial na frente)
-            cabecalhos = []
-            for m in re.finditer(
-                r'(?:^|\n)\s*(?:Redação Final ao\s+)?(PROJETO\s+DE\s+LEI(?:\s+COMPLEMENTAR)?'
-                r'|PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO'
-                r'|PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O'
-                r'|MEDIDA\s+PROVIS[OÓ]RIA'
-                r'|PROJETO\s+DE\s+DECRETO'
-                r'|PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O)'
-                r'\s+N[º°.]?\s*([\d.]+(?:-[A-Z])?),?\s*DE\s+(\d{4})',
-                texto_total, re.IGNORECASE | re.MULTILINE
-            ):
-                tipo_txt = m.group(1).upper()
-                num_p = re.sub(r'-[A-Z]$', '', m.group(2).replace('.', ''))
-                ano   = m.group(3)
-                if 'COMPLEMENTAR' in tipo_txt:       sigla = 'PLP'
-                elif 'EMENDA' in tipo_txt:           sigla = 'PEC'
-                elif 'DECRETO LEGISLATIVO' in tipo_txt: sigla = 'PDL'
-                elif 'DECRETO' in tipo_txt:          sigla = 'PDC'
-                elif 'MEDIDA' in tipo_txt:           sigla = 'MPV'
-                elif 'RESOLUÇÃO' in tipo_txt:        sigla = 'PRC'
-                else:                                sigla = 'PL'
-                chave = _normalizar_codigo(f"{sigla} {num_p}/{ano}")
-                if chave not in ordem:
-                    cabecalhos.append((m.start(), chave, sigla, num_p, ano))
-                    logger.info(f"  Cabeçalho encontrado: {sigla} {num_p}/{ano} → {chave}")
-
-            cabecalhos.sort(key=lambda x: x[0])
-            for gap, (_, chave, sigla, num_p, ano) in zip(gaps, cabecalhos):
-                ordem[chave] = gap
-                posicoes_usadas_set.add(gap)
-                logger.info(f"  Gap {gap} preenchido: {sigla} {num_p}/{ano} → {chave}")
-
-        logger.info(f"Ordem extraída do PDF evento {evento_id}: {len(ordem)} itens — {dict(list(ordem.items())[:10])}")
-        return ordem
-
-    except ImportError:
-        logger.warning("pdfplumber não disponível — usando fallback HTML")
-        return _buscar_ordem_html(evento_id)
-    except Exception as e:
-        logger.warning(f"Erro ao extrair ordem do PDF {evento_id}: {e}")
-        return _buscar_ordem_html(evento_id)
-
-def camara_url(href):
-    """Monta URL completa da Câmara garantindo o caminho correto."""
-    if href.startswith('http'):
-        url = href
-    elif href.startswith('/'):
-        url = f"https://www.camara.leg.br{href}"
-    else:
-        url = f"https://www.camara.leg.br/{href}"
-    if 'prop_mostrarintegra' in url and '/proposicoesWeb/' not in url:
-        url = url.replace('camara.leg.br/prop_mostrarintegra', 'camara.leg.br/proposicoesWeb/prop_mostrarintegra')
-    return url
-
-def _buscar_ordem_html(evento_id):
-    """Fallback: tenta extrair ordem da página HTML de ordem do dia."""
-    url = f"https://www.camara.leg.br/internet/ordemdodia/ordemDetalheReuniaoPle.asp?codReuniao={evento_id}"
-    try:
-        from bs4 import BeautifulSoup
-        r = requests.get(url, headers={
-            'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'
-        }, timeout=12)
-        if not r.ok:
-            return {}
-        soup = BeautifulSoup(r.text, 'html.parser')
-        texto = soup.get_text(separator='\n')
-        ordem = {}
-        padrao = re.compile(r'^(\d+)\s*[-–]\s*([A-Z]+\s+\d+/\d{4})', re.MULTILINE)
-        for m in padrao.finditer(texto):
-            num    = int(m.group(1))
-            chave  = _normalizar_codigo(m.group(2))
-            if chave not in ordem:
-                ordem[chave] = num
-        logger.info(f"Ordem via HTML: {len(ordem)} itens")
-        return ordem
-    except Exception as e:
-        logger.warning(f"Fallback HTML também falhou: {e}")
-        return {}
-
-def _extrair_codigo_do_bloco(bloco):
-    """
-    Extrai código de QUALQUER proposição do bloco de texto após o número centralizado.
-    Usa regex universal que captura sigla + número + sufixo + ano.
-    Remove sufixos (-A, -B, -C, -F etc.) que o PDF usa mas a API não usa.
-    """
-    b = bloco.replace('\xa0', ' ').strip()
-
-    # Mapa de texto completo → sigla curta
-    tipos = [
-        (r'PROJETO\s+DE\s+LEI\s+COMPLEMENTAR',           'PLP'),
-        (r'PROJETO\s+DE\s+LEI',                           'PL'),
-        (r'PROPOSTA\s+DE\s+EMENDA\s+[AÀ]\s+CONSTITUI[CÇ][AÃ]O', 'PEC'),
-        (r'MEDIDA\s+PROVIS[OÓ]RIA',                       'MPV'),
-        (r'PROJETO\s+DE\s+DECRETO\s+LEGISLATIVO',         'PDL'),
-        (r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O\s+DO\s+SENADO','PRS'),
-        (r'PROJETO\s+DE\s+RESOLU[CÇ][AÃ]O',              'PRC'),
-        (r'PROPOSTA\s+DE\s+FISCALIZA[CÇ][AÃ]O\s+E\s+CONTROLE', 'PFC'),
-        (r'PROJETO\s+DE\s+LEI\s+DE\s+CONVERS[AÃ]O',      'PLV'),
-        (r'Requerimento',                                  'REQ'),
-    ]
-
-    # Número: dígitos com pontos opcionais, sufixo -A/-B/-F etc. opcional
-    num_pattern = r'([\d.]+(?:-[A-Z])?)'
-    ano_pattern = r'(\d{4})'
-
-    for tipo_regex, sigla in tipos:
-        # Tenta: TIPO Nº NUM, DE ANO
-        padrao = (rf'{tipo_regex}\s+N[º°oa.]?\s*{num_pattern}'
-                  rf'(?:\s*[-–]\s*[A-Z])?,?\s*[Dd][Ee]\s+{ano_pattern}')
-        m = re.search(padrao, b, re.IGNORECASE)
-        if m:
-            num = re.sub(r'[-–][A-Z]$', '', m.group(1).replace('.', '').replace('\xa0', ''))
-            ano = m.group(2)
-            return f"{sigla} {num}/{ano}"
-
-    return None
-
-def _normalizar_codigo(codigo):
-    """Normaliza código para comparação.
-    Remove: espaços, pontos, texto entre parênteses, sufixos -A/-B/-C no número.
-    Ex: 'PDL 330-B/2022' → 'PDL330/2022'
-        'PL 3.278-A/2021' → 'PL3278/2021'
-        'PL 2199/2022 (Nº Anterior: PL 7750/2017)' → 'PL2199/2022'
-    """
-    c = codigo.upper().strip()
-    c = re.sub(r'\(.*?\)', '', c)        # remove (Nº Anterior: ...) etc
-    c = re.sub(r'\s+', '', c)            # remove espaços
-    c = re.sub(r'\.', '', c)             # remove pontos
-    c = re.sub(r'-[A-Z](?=/)', '', c)    # remove -A, -B, -C antes da /
-    return c.strip()
-
-def reordenar_por_ordem_oficial(itens, ordem_oficial):
-    if not ordem_oficial or not itens:
-        return itens
-
-    def norm(item):
-        proj = item.get('projeto_original') or item.get('projeto', '')
-        return _normalizar_codigo(proj.split(' ao ')[0].strip())
-
-    def eh_req_sn(item):
-        proj = (item.get('projeto_original') or item.get('projeto', '')).upper()
-        return any(proj.startswith(s) for s in ('REQ','RQS','RQU','REC')) and \
-               not re.search(r'\d{2,}', proj.split('/')[0])
-
-    # Casa REQ s/n da API com chaves REQSN do PDF (por ordem de aparição)
-    chaves_reqsn = sorted([k for k in ordem_oficial if k.startswith('REQSN')],
-                          key=lambda k: ordem_oficial[k])
-    req_sn_itens = [it for it in itens if eh_req_sn(it) and norm(it) not in ordem_oficial]
-    ordem_extra = {}
-    for i, (chave, item) in enumerate(zip(chaves_reqsn, req_sn_itens)):
-        ordem_extra[id(item)] = ordem_oficial[chave]
-        logger.info(f"REQ s/n match: {item.get('projeto','')} → posição {ordem_oficial[chave]}")
-
-    encontrados = []
-    nao_encontrados = []
-    for i, it in enumerate(itens):
-        n = norm(it)
-        if n in ordem_oficial:
-            encontrados.append((i, it, ordem_oficial[n]))
-        elif id(it) in ordem_extra:
-            encontrados.append((i, it, ordem_extra[id(it)]))
-        else:
-            nao_encontrados.append((i, it))
-
-    cobertura = len(encontrados) / len(itens)
-    logger.info(f"Cobertura PDF: {len(encontrados)}/{len(itens)} ({cobertura:.0%})")
-
-    if not encontrados or cobertura < 0.30:
-        logger.warning("Cobertura insuficiente — mantendo ordem da API.")
-        return itens
-
-    encontrados.sort(key=lambda x: x[2])
-
-    resultado = list(encontrados)
-    for api_idx, item in sorted(nao_encontrados, key=lambda x: x[0]):
-        pos = 0
-        for j, (enc_idx, _, _) in enumerate(resultado):
-            if enc_idx < api_idx:
-                pos = j + 1
-        resultado.insert(pos, (api_idx, item, -1))
-        logger.info(f"Não encontrado no PDF: {item.get('projeto_original','')[:20]} → inserido em pos {pos+1}")
-
-    itens_ord = [it for (_, it, _) in resultado]
-    for i, it in enumerate(itens_ord, start=1):
-        it['ordem'] = str(i)
-
-    logger.info(f"Ordem final: {[(it.get('projeto_original','')[:12], it['ordem']) for it in itens_ord]}")
-    return itens_ord
-
-def fetch_pauta(evento_id, force_reload=False):
-    now = now_brasilia()
-    cache_key = str(evento_id)
-    notas = load_notas()
-
-    if not force_reload and cache_key in pauta_cache:
-        cached = pauta_cache[cache_key]
-        if now - cached['timestamp'] < CACHE_DURATION:
-            return cached['itens'], False
-
-    conn = get_conn()
-    c = conn.cursor()
-
-    if not force_reload:
-        try:
-            c.execute("SELECT json_pauta, last_updated FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
-            row = c.fetchone()
-            if row:
-                itens = json.loads(row[0])
-                # Reaplica notas e corrige título de REQ sempre
-                for item in itens:
-                    # projeto_original = código limpo (sem " ao PL...")
-                    orig = item.get('projeto_original') or item.get('projeto', '')
-                    # Garante que projeto_original seja o código base
-                    item['projeto_original'] = orig.split(' ao ')[0].strip()
-                    item['projeto'] = extrair_ref_pl(item['projeto_original'], item.get('ementa', ''))
-                    key = f"PROP_{item['id_principal']}"
-                    if key in notas:
-                        item['resumo_materia'] = notas[key].get('resumo_materia', item.get('resumo_materia', ''))
-                        item['orientacao']     = notas[key].get('orientacao', item.get('orientacao', ''))
-                        item['resumo_parecer'] = notas[key].get('resumo_parecer', item.get('resumo_parecer', ''))
-                        item['saved_by']       = notas[key].get('saved_by', item.get('saved_by', ''))
-                        item['saved_at']       = notas[key].get('saved_at', item.get('saved_at', ''))
-                pauta_cache[cache_key] = {'timestamp': now, 'itens': itens}
-                conn.close()
-                return itens, True
-        except Exception:
-            pass
-
-    try:
-        # Busca data do evento
-        data_ev = ''
-        try:
-            r_ev = requests.get(f"https://dadosabertos.camara.leg.br/api/v2/eventos/{evento_id}", timeout=8)
-            if r_ev.ok:
-                data_ev = r_ev.json().get('dados', {}).get('dataHoraInicio', '')[:10]
-        except Exception:
-            pass
-
-        # PASSO 1: PDF define a ordem e quantidade — fonte de verdade
-        ordem_oficial = buscar_ordem_oficial(evento_id, data_ev)
-        logger.info(f"PDF: {len(ordem_oficial)} itens extraídos")
-
-        # PASSO 2: API fornece os dados completos
-        itens_raw = obter_itens_pauta(evento_id)
-        if not itens_raw and not ordem_oficial:
-            raise ValueError("Sem dados do scraper e sem PDF")
-
-        # Monta índice da API por código normalizado
-        api_por_codigo = {}
-        for item in (itens_raw or []):
-            cod = _normalizar_codigo(item['codigo'])
-            api_por_codigo[cod] = item
-        logger.info(f"API: {len(api_por_codigo)} itens")
-
-        now_str = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
-        itens = []
-        vistos_ids = set()
-
-        if ordem_oficial:
-            # PASSO 3a: PDF como base — cria item para cada código do PDF em ordem
-
-            # Mapeamento REQSN → item da API
-            # REQSN_PL3839/2023 → busca na API o REQ cuja ementa menciona "3.839" ou "3839"
-            reqsn_para_api = {}
-            for chave_pdf in sorted(
-                [k for k in ordem_oficial if k.startswith('REQSN')],
-                key=lambda k: ordem_oficial[k]
-            ):
-                m_pl = re.search(r'REQSN_(?:PL|PLP)(\d+)/(\d{4})', chave_pdf)
-                if m_pl:
-                    num_pl, ano_pl = m_pl.group(1), m_pl.group(2)
-                    # Busca REQ na API cuja ementa menciona esse número
-                    for item in (itens_raw or []):
-                        if not re.match(r'RE[QCS]', item['codigo'].upper()):
-                            continue
-                        ementa = item.get('ementa', '')
-                        num_fmt1 = num_pl  # "3839"
-                        num_fmt2 = f"{int(num_pl):,}".replace(',', '.')  # "3.839"
-                        if (num_fmt1 in ementa or num_fmt2 in ementa) and item not in reqsn_para_api.values():
-                            reqsn_para_api[chave_pdf] = item
-                            logger.info(f"REQSN match por PL: {chave_pdf} → {item['codigo']}")
-                            break
-                if chave_pdf not in reqsn_para_api:
-                    logger.warning(f"REQSN sem match: {chave_pdf}")
-
-            codigos_pdf = sorted(ordem_oficial.keys(), key=lambda k: ordem_oficial[k])
-
-            for cod_pdf in codigos_pdf:
-                # Para REQSN, usa o item da API mapeado
-                if cod_pdf.startswith('REQSN') and cod_pdf in reqsn_para_api:
-                    item_api = reqsn_para_api[cod_pdf]
-                else:
-                    item_api = api_por_codigo.get(cod_pdf)
-
-                if item_api:
-                    id_p = item_api.get('id_principal')
-                    if id_p and id_p in vistos_ids:
-                        continue
-                    if id_p:
-                        vistos_ids.add(id_p)
-                    key = f"PROP_{id_p}" if id_p else ''
-                    itens.append({
-                        'ordem':            str(len(itens) + 1),
-                        'id_principal':     id_p or '',
-                        'projeto':          extrair_ref_pl(item_api['codigo'], item_api['ementa']),
-                        'projeto_original': item_api['codigo'],
-                        'ementa':           item_api['ementa'],
-                        'autor':            item_api.get('autores', 'N/D'),
-                        'relator':          item_api.get('relator', 'Não atribuído'),
-                        'situacao':         item_api.get('situacao', 'N/D'),
-                        'secao':            item_api.get('secao', 'N/D'),
-                        'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
-                        'orientacao':       notas.get(key, {}).get('orientacao', ''),
-                        'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
-                        'saved_by':         notas.get(key, {}).get('saved_by', ''),
-                        'saved_at':         notas.get(key, {}).get('saved_at', ''),
-                        'destaques_emendas': []
-                    })
-                elif cod_pdf.startswith('REQSN_'):
-                    # REQ s/n sem match na API — busca o PL referenciado diretamente
-                    m_ref = re.search(r'REQSN_((?:PL|PLP)(\d+)/(\d{4}))', cod_pdf)
-                    if m_ref:
-                        sigla_ref = 'PLP' if 'PLP' in m_ref.group(1) else 'PL'
-                        num_ref   = m_ref.group(2)
-                        ano_ref   = m_ref.group(3)
-                        try:
-                            r_pl = requests.get(
-                                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
-                                f"?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
-                                headers={'Accept': 'application/json'}, timeout=8
-                            )
-                            dados_pl = r_pl.json().get('dados', []) if r_pl.ok else []
-                            if dados_pl:
-                                pl = dados_pl[0]
-                                id_pl = str(pl.get('id', ''))
-                                if id_pl in vistos_ids:
-                                    continue
-                                vistos_ids.add(id_pl)
-                                key = f"PROP_{id_pl}"
-                                projeto_req = f"REQ s/nº ao {sigla_ref} {num_ref}/{ano_ref}"
-                                itens.append({
-                                    'ordem':            str(len(itens) + 1),
-                                    'id_principal':     id_pl,
-                                    'projeto':          projeto_req,
-                                    'projeto_original': projeto_req,
-                                    'ementa':           pl.get('ementa', ''),
-                                    'autor':            'Líderes',
-                                    'relator':          'Não atribuído',
-                                    'situacao':         pl.get('statusProposicao', {}).get('descricaoSituacao', 'N/D') if isinstance(pl.get('statusProposicao'), dict) else 'N/D',
-                                    'secao':            'N/D',
-                                    'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
-                                    'orientacao':       notas.get(key, {}).get('orientacao', ''),
-                                    'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
-                                    'saved_by':         notas.get(key, {}).get('saved_by', ''),
-                                    'saved_at':         notas.get(key, {}).get('saved_at', ''),
-                                    'destaques_emendas': []
-                                })
-                                logger.info(f"REQSN resolvido via API: {cod_pdf} → {sigla_ref} {num_ref}/{ano_ref} id={id_pl}")
-                            else:
-                                logger.warning(f"REQSN: PL {num_ref}/{ano_ref} não encontrado na API")
-                        except Exception as e:
-                            logger.warning(f"Erro buscar PL para REQSN {cod_pdf}: {e}")
-                else:
-                    # Item do PDF não encontrado na API — ignora
-                    logger.warning(f"PDF item '{cod_pdf}' não na API — ignorado")
-
-            # Itens da API não encontrados no PDF — insere na posição correta
-            # A posição é inferida pela sequência relativa na API
-            nao_encontrados_api = []
-            for item in (itens_raw or []):
-                id_p = item.get('id_principal')
-                if not id_p or id_p in vistos_ids:
-                    continue
-                nao_encontrados_api.append(item)
-
-            if nao_encontrados_api:
-                # Para cada item não encontrado, determina posição na lista
-                # baseado na posição do item anterior na API
-                for item in nao_encontrados_api:
-                    id_p = item.get('id_principal')
-                    vistos_ids.add(id_p)
-                    key = f"PROP_{id_p}"
-                    # Acha índice do item na lista raw da API
-                    idx_api = next((i for i, it in enumerate(itens_raw) if it.get('id_principal') == id_p), len(itens_raw))
-                    # Acha o item anterior da API que já está na lista
-                    pos_inserir = len(itens)  # default: no final
-                    for idx_prev in range(idx_api - 1, -1, -1):
-                        id_prev = itens_raw[idx_prev].get('id_principal')
-                        for j, it_existente in enumerate(itens):
-                            if it_existente.get('id_principal') == id_prev:
-                                pos_inserir = j + 1
-                                break
-                        else:
-                            continue
-                        break
-
-                    novo_item = {
-                        'ordem':            '',  # será renumerado
-                        'id_principal':     id_p,
-                        'projeto':          extrair_ref_pl(item['codigo'], item['ementa']),
-                        'projeto_original': item['codigo'],
-                        'ementa':           item['ementa'],
-                        'autor':            item.get('autores', 'N/D'),
-                        'relator':          item.get('relator', 'Não atribuído'),
-                        'situacao':         item.get('situacao', 'N/D'),
-                        'secao':            item.get('secao', 'N/D'),
-                        'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
-                        'orientacao':       notas.get(key, {}).get('orientacao', ''),
-                        'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
-                        'saved_by':         notas.get(key, {}).get('saved_by', ''),
-                        'saved_at':         notas.get(key, {}).get('saved_at', ''),
-                        'destaques_emendas': []
-                    }
-                    itens.insert(pos_inserir, novo_item)
-                    logger.info(f"Inserindo '{item['codigo']}' na posição {pos_inserir + 1}")
-
-                # Renumera todos
-                for i, it in enumerate(itens, start=1):
-                    it['ordem'] = str(i)
-
-        else:
-            # PASSO 3b: sem PDF, usa ordem da API
-            logger.info("⚠️ PDF não disponível — usando ordem da API.")
-            for item in (itens_raw or []):
-                id_p = item.get('id_principal')
-                if not id_p or id_p in vistos_ids:
-                    continue
-                vistos_ids.add(id_p)
-                key = f"PROP_{id_p}"
-                itens.append({
-                    'ordem':            str(len(itens) + 1),
-                    'id_principal':     id_p,
-                    'projeto':          extrair_ref_pl(item['codigo'], item['ementa']),
-                    'projeto_original': item['codigo'],
-                    'ementa':           item['ementa'],
-                    'autor':            item.get('autores', 'N/D'),
-                    'relator':          item.get('relator', 'Não atribuído'),
-                    'situacao':         item.get('situacao', 'N/D'),
-                    'secao':            item.get('secao', 'N/D'),
-                    'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
-                    'orientacao':       notas.get(key, {}).get('orientacao', ''),
-                    'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
-                    'saved_by':         notas.get(key, {}).get('saved_by', ''),
-                    'saved_at':         notas.get(key, {}).get('saved_at', ''),
-                    'destaques_emendas': []
-                })
-
-        logger.info(f"✅ Total final: {len(itens)} itens | PDF={len(ordem_oficial)} | API={len(api_por_codigo)}")
-
-        c.execute('INSERT OR REPLACE INTO pauta_cache_db (evento_id, json_pauta, last_updated) VALUES (?, ?, ?)',
-                  (evento_id, json.dumps(itens), now_str))
-        conn.commit()
-        pauta_cache[cache_key] = {'timestamp': now, 'itens': itens}
-        conn.close()
-        return itens, False
-
-    except Exception as e:
-        logger.warning(f"⚠️ Scraping falhou: {e}. Usando cache...")
-        c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
-        cached = c.fetchone()
-        conn.close()
-        if cached:
-            try:
-                itens = json.loads(cached[0])
-                pauta_cache[cache_key] = {'timestamp': now, 'itens': itens}
-                return itens, True
-            except Exception:
-                pass
-        return [], True
-
-# --------------------------------------------------------------------------
-# FILTRO DE DATA
-# --------------------------------------------------------------------------
-@app.template_filter('truncar_autores')
-def truncar_autores(value, max_autores=2):
-    """Limita a exibição a max_autores, acrescentando 'e outros.' se necessário."""
-    if not value:
-        return value
-    # Separa por vírgula, respeitando parênteses ex: "João (PL-RJ), Maria (PT-SP)"
-    import re as _re
-    partes = _re.split(r',\s*(?![^()]*\))', str(value))
-    partes = [p.strip() for p in partes if p.strip()]
-    # Remove " e outros." do final se já existir
-    if partes and 'e outros' in partes[-1].lower():
-        partes = partes[:-1]
-    if len(partes) <= max_autores:
-        return ', '.join(partes)
-    return ', '.join(partes[:max_autores]) + ' e outros.'
-
-@app.template_filter('datetimeformat')
-def datetimeformat(value, format='%d/%m/%Y %H:%M'):
-    try:
-        dt = datetime.fromisoformat(str(value))
-        # Se não tem timezone, assume que já está em Brasília
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=TZ_BRASILIA)
-        return dt.astimezone(TZ_BRASILIA).strftime(format)
-    except Exception:
-        return value
-
-# --------------------------------------------------------------------------
-# ROTAS
-# --------------------------------------------------------------------------
-@app.route('/')
-@login_required
-def home():
-    return redirect(url_for('selecionar_data'))
-
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if current_user.is_authenticated:
-        return redirect(url_for('selecionar_data'))
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        conn = get_conn()
-        c = conn.cursor()
-        c.execute('SELECT id, username, password, role, categoria FROM users WHERE username = ?', (username,))
-        u = c.fetchone()
-        conn.close()
-        if u and bcrypt.check_password_hash(u[2], password):
-            login_user(User(u[0], u[1], u[3], u[4] if len(u) > 4 else 'geral'))
-            return redirect(url_for('selecionar_data'))
-        flash('Usuário ou senha inválidos.', 'error')
-
-    # Busca lista de usuários para o dropdown
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        c.execute('SELECT username, categoria FROM users ORDER BY username')
-        usuarios = [{'username': r[0], 'categoria': r[1]} for r in c.fetchall()]
-    except Exception:
-        usuarios = []
-    finally:
-        conn.close()
-    return render_template('login.html', usuarios=usuarios)
-
-@app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for('login'))
-
-@app.route('/selecionar-data', methods=['GET', 'POST'])
-@login_required
-def selecionar_data():
-    data = request.form.get('data', now_brasilia().strftime('%Y-%m-%d'))
-    eventos = fetch_eventos_por_data(data)
-    return render_template('selecionar_data.html', data_selecionada=data, eventos=eventos, user_role=current_user.role)
-
-@app.route('/pauta/<int:evento_id>/view')
-@login_required
-def view_pauta(evento_id):
-    force_reload = request.args.get('force_reload', 'false').lower() == 'true'
-    itens, from_cache = fetch_pauta(evento_id, force_reload)
-    conn = get_conn()
-    c = conn.cursor()
-    last_updated = None
-    last_saved_user = None
-    try:
-        c.execute("SELECT last_updated, last_saved_by FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
-        row = c.fetchone()
-        if row:
-            last_updated = row[0]
-            last_saved_user = row[1]
-    except Exception:
-        pass
-    finally:
-        conn.close()
-
-    try:
-        r = requests.get(f"https://dadosabertos.camara.leg.br/api/v2/eventos/{evento_id}", timeout=10)
-        d = r.json().get("dados", {})
-        evento = {
-            'id': evento_id,
-            'dataHoraInicio': d.get('dataHoraInicio', 'N/D'),
-            'situacao': d.get('situacao', 'N/D'),
-            'descricao': d.get('descricao', 'Sessão Deliberativa'),
-            'local': d.get('localCamara', {}).get('nome', 'N/D') if isinstance(d.get('localCamara'), dict) else d.get('localCamara', 'N/D')
+          });
+
+          if (conteudo) quill.clipboard.dangerouslyPasteHTML(conteudo);
+          quillInstances[ordem] = quill;
+        });
+      });
+
+      // Botão SALVAR
+      document.querySelectorAll('.save-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const ordem = btn.dataset.ordem;
+          const idPrincipal = btn.dataset.idPrincipal;
+
+          const quill = quillInstances[ordem];
+          const resumoMateria = quill ? quill.root.innerHTML : '';
+
+          const orientacaoEl = document.querySelector(`.orientacao[data-ordem="${ordem}"]`);
+          const orientacao = orientacaoEl ? orientacaoEl.value : '';
+
+          const dataToSend = {
+            evento_id: {{ evento_id|safe }},
+            ordem,
+            id_principal: idPrincipal,
+            resumo_materia: resumoMateria,
+            orientacao,
+            resumo_parecer: '',
+            destaques: []
+          };
+
+          const originalHtml = btn.innerHTML;
+          btn.disabled = true;
+          btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Salvando...';
+
+          // Lê campo "baseada em" e atualiza no Quill se preenchido
+          const campoBaseada = document.getElementById('baseada-em-' + ordem);
+          if (campoBaseada && campoBaseada.value.trim()) {
+            atualizarBaseadaEm(ordem, campoBaseada.value.trim());
+            // Re-lê o resumo já com a linha atualizada
+            dataToSend.resumo_materia = quillInstances[ordem] ? quillInstances[ordem].root.innerHTML : dataToSend.resumo_materia;
+          }
+
+          try {
+            const r = await fetch('/save_item', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(dataToSend)
+            });
+            const j = await r.json();
+            btn.innerHTML = '<i class="fas fa-check me-1"></i>Salvo!';
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-outline-success');
+
+            // Avisa se orientação não foi exportada para o quadro
+            if (orientacao && j.grupo_exportado === null) {
+              setTimeout(() => {
+                alert('⚠️ Orientação salva na pauta, mas NÃO foi exportada para o quadro de orientações.\n\nMotivo: seu usuário não tem categoria de grupo (minoria, oposicao, PL ou NOVO).\n\nContate o administrador para configurar sua categoria.');
+              }, 500);
+            } else if (orientacao && j.grupo_exportado) {
+              const infoOri = document.getElementById(`info-salvo-${ordem}`);
+              if (infoOri) {
+                const badge = document.createElement('span');
+                badge.className = 'badge bg-success ms-2';
+                badge.style.fontSize = '0.7rem';
+                badge.textContent = `→ Quadro ${j.grupo_exportado}`;
+                infoOri.appendChild(badge);
+              }
+            }
+
+            // Atualiza info de salvamento ao lado do botão
+            const agora = new Date();
+            const horaFmt = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
+            const infoEl = document.getElementById(`info-salvo-${ordem}`);
+            if (infoEl) infoEl.innerHTML = `<i class="fas fa-check-circle text-success me-1"></i>Salvo por <strong>{{ current_user.username }}</strong> em ${horaFmt}`;
+
+            // Atualiza cabeçalho da sessão
+            const ultimoEl = document.getElementById('ultimo-salvamento');
+            const usuarioEl = document.getElementById('ultimo-usuario');
+            if (ultimoEl) ultimoEl.textContent = horaFmt;
+            if (usuarioEl) usuarioEl.innerHTML = ` — por <strong>{{ current_user.username }}</strong>`;
+
+            setTimeout(() => {
+              btn.innerHTML = originalHtml;
+              btn.classList.remove('btn-outline-success');
+              btn.classList.add('btn-success');
+              btn.disabled = false;
+            }, 2500);
+          } catch (error) {
+            alert('Erro ao salvar: falha na conexão.');
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+          }
+        });
+      });
+
+      // Cache de resumos IA (global para uso em orientações e iconográfico)
+      window.resumoCache = window.resumoCache || {};
+      const resumoCache = window.resumoCache;
+
+    async function carregarResumoIA(el) {
+      const id     = el.dataset.id;
+      const proj   = el.dataset.projeto;
+      const ementa = el.dataset.ementa;
+      const autor  = el.dataset.autor;
+      if (resumoCache[id]) {
+        el.textContent = resumoCache[id];
+        el.style.display = 'block';
+        return;
+      }
+      try {
+        const r = await fetch('/resumo_ementa', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({id_principal: id, projeto: proj, ementa, autor})
+        });
+        const j = await r.json();
+        if (j.resumo) {
+          // Rejeita resumo igual (ou quase igual) à ementa — força branco
+          const resumoLimpo = j.resumo.trim();
+          const ementaLimpa = (ementa || '').trim();
+          const muitoSimilar = resumoLimpo.length > 20 &&
+            (resumoLimpo === ementaLimpa ||
+             ementaLimpa.startsWith(resumoLimpo.substring(0, Math.min(80, resumoLimpo.length))) ||
+             resumoLimpo.startsWith(ementaLimpa.substring(0, Math.min(80, ementaLimpa.length))));
+          if (muitoSimilar) return; // deixa em branco
+          resumoCache[id] = resumoLimpo;
+          el.textContent = j.resumo;
+          el.style.display = 'block';
+          // Salva no backend para exportar/infográfico
+          fetch('/salvar_resumo_ia', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({evento_id: window.EVENTO_ID, id_principal: id, resumo: j.resumo})
+          }).catch(()=>{});
         }
-    except Exception:
-        evento = {'id': evento_id, 'dataHoraInicio': 'N/D', 'situacao': 'N/D', 'descricao': 'Sessão Deliberativa', 'local': 'Plenário'}
+      } catch(e) { /* silencioso */ }
+    }
 
-    # Carrega assessores com foto e responsavel_pauta
-    try:
-        conn2 = get_conn()
-        c2 = conn2.cursor()
-        c2.execute('SELECT username, nome_display, foto, responsavel_pauta, categoria FROM users ORDER BY nome_display, username')
-        rows_ass = c2.fetchall()
-        conn2.close()
-        assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or '', 'responsavel_pauta': bool(r[3]), 'categoria': r[4] or 'geral'} for r in rows_ass]
-    except Exception as e:
-        logger.warning(f"Erro ao carregar assessores: {e}")
-        assessores = []
-    # Verifica se usuário atual é responsável pela pauta
-    eh_responsavel_pauta = any(a['username'] == current_user.username and a['responsavel_pauta'] for a in assessores) or current_user.role.lower() == 'admin'
-    # Adiciona responsavel_username em cada item
-    notas_db = load_notas()
-    for item in itens:
-        key = f"PROP_{item.get('id_principal','')}"
-        item['responsavel_username'] = notas_db.get(key, {}).get('responsavel_username', '')
+    // Carrega resumos e popula ITENS_DATA com resumo_ia
+    async function carregarTodosResumos() {
+      // 1. Pré-carrega resumos já salvos no banco (evita chamadas IA desnecessárias)
+      try {
+        const rCache = await fetch('/resumos_evento/' + window.EVENTO_ID);
+        if (rCache.ok) {
+          const cached = await rCache.json();
+          Object.entries(cached).forEach(([id, resumo]) => {
+            if (resumo) {
+              resumoCache[id] = resumo;
+              const el = document.getElementById('resumo-ia-' + id);
+              if (el) { el.textContent = resumo; el.style.display = 'block'; }
+              if (window.ITENS_DATA) {
+                const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
+                if (item) item.resumo_ia = resumo;
+              }
+            }
+          });
+        }
+      } catch(e) {}
 
-    # Data do evento (apenas YYYY-MM-DD)
-    data_evento = ''
-    try:
-        dh = evento.get('dataHoraInicio', '') or ''
-        if dh and dh != 'N/D':
-            data_evento = str(dh)[:10]  # '2026-05-20'
-    except Exception:
-        pass
+      // 2. Para itens sem resumo em cache, gera via IA
+      const els = document.querySelectorAll('.resumo-ia-ementa');
+      for (const el of els) {
+        await carregarResumoIA(el);
+        const id = el.dataset.id;
+        if (window.ITENS_DATA) {
+          const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
+          if (item && resumoCache[id]) item.resumo_ia = resumoCache[id];
+        }
+      }
+    }
+    // Enriquece autor e relator com partido via API da Câmara (no browser)
+    async function enriquecerPartidos() {
+      const itens = window.ITENS_DATA || [];
+      const temPartido = txt => /\([A-Z]{2,}-[A-Z]{2}\)/.test(txt || '');
 
-    # Monta set de projetos na pauta atual (códigos normalizados)
-    projetos_pauta = set()
-    for item in itens:
-        proj = item.get('projeto_original') or item.get('projeto') or ''
-        projetos_pauta.add(_normalizar_codigo(proj.split(' ao ')[0].strip()))
+      for (const item of itens) {
+        const id = item.id_principal;
+        const spanAutor   = document.getElementById('autor-' + id);
+        const spanRelator = document.getElementById('relator-' + id);
 
-    # Monta índice de itens por código normalizado para herança de análise
-    itens_por_codigo = {}
-    for item in itens:
-        proj = item.get('projeto_original') or item.get('projeto') or ''
-        cod = _normalizar_codigo(proj.split(' ao ')[0].strip())
-        itens_por_codigo[cod] = item
+        // Sempre busca autores para garantir limite de 2 e partido
+        if (spanAutor) {
+          try {
+            const r = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${id}/autores`,
+              {headers: {'Accept': 'application/json'}});
+            if (r.ok) {
+              const dados = (await r.json()).dados || [];
+              const autores = dados.map(a => {
+                const p = a.siglaPartido || ''; const uf = a.siglaUf || '';
+                const suf = p && uf ? `(${p}-${uf})` : p ? `(${p})` : '';
+                return a.nome ? (suf ? `${a.nome} ${suf}` : a.nome) : null;
+              }).filter(Boolean);
+              if (autores.length > 0) {
+                spanAutor.textContent = autores.length > 2
+                  ? autores.slice(0,2).join(', ') + ' e outros.'
+                  : autores.join(', ');
+              }
+            }
+          } catch(e) {}
+        }
 
-    # Herança de análise: REQ ao PL X → PL X herda análise do REQ
-    # Índice secundário por número/ano (sem sigla) — cobre casos onde REQ diz "PL 139" mas é "PLP 139"
-    itens_por_numano = {}
-    for cod, it in itens_por_codigo.items():
-        m = re.search(r'(\d+)/(\d{4})$', cod)
-        if m:
-            numano = f"{m.group(1)}/{m.group(2)}"
-            itens_por_numano.setdefault(numano, it)
+        if (spanRelator && !temPartido(spanRelator.textContent)) {
+          try {
+            const r = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${id}/tramitacoes?itens=10&ordem=DESC`,
+              {headers: {'Accept': 'application/json'}});
+            if (r.ok) {
+              const trams = (await r.json()).dados || [];
+              for (const t of trams) {
+                const desp = (t.despacho || '').toLowerCase();
+                if (desp.includes('relator')) {
+                  const mNome = t.despacho.match(/Dep\.\s+([A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+)+)/);
+                  if (mNome) {
+                    const nome = mNome[1];
+                    const rDep = await fetch(`https://dadosabertos.camara.leg.br/api/v2/deputados?nome=${encodeURIComponent(nome)}&itens=1`,
+                      {headers: {'Accept': 'application/json'}});
+                    if (rDep.ok) {
+                      const deps = (await rDep.json()).dados || [];
+                      if (deps[0]) {
+                        const p = deps[0].siglaPartido || ''; const uf = deps[0].siglaUf || '';
+                        const suf = p && uf ? `(${p}-${uf})` : '';
+                        spanRelator.textContent = suf ? `${nome} ${suf}` : nome;
+                      }
+                    }
+                  }
+                  break;
+                }
+              }
+            }
+          } catch(e) {}
+        }
+      }
+    }
+    setTimeout(enriquecerPartidos, 1500);
+    // Abrevia comissões e nomes longos via regex primeiro
+    function abreviarTexto(texto){
+      if(!texto) return '';
+      return texto
+        .replace(/Comissão\s+Especial\s+/gi, 'Com.Esp. ')
+        .replace(/Comissão\s+Mista\s+/gi, 'Com.Mista ')
+        .replace(/Comissão\s+de\s+/gi, 'Com. ')
+        .replace(/Comissão\s+/gi, 'Com. ')
+        .replace(/Deputad[oa]s?\s+/gi, 'Dep. ')
+        .replace(/\s{2,}/g, ' ').trim();
+    }
 
-    for item in itens:
-        proj = item.get('projeto') or ''
-        if ' ao ' not in proj:
-            continue
-        resumo_req = (item.get('resumo_materia') or '').strip()
-        if not resumo_req:
-            continue
-        ref_parte = proj.split(' ao ')[1].strip()
-        ref_norm  = _normalizar_codigo(ref_parte)
+    // Para nomes ainda longos (>60 chars), chama IA para abreviar
+    async function abreviarViaIA(texto, maxChars){
+      maxChars = maxChars || 40;
+      if(!texto || texto.length <= maxChars) return texto;
+      try {
+        const r = await fetch('/resumo_ementa', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            id_principal: 'abrev_'+texto.substring(0,10),
+            projeto: 'Abreviação',
+            ementa: 'Abrevia o seguinte nome de autoria parlamentar em no máximo '+maxChars+' caracteres, mantendo siglas e nomes próprios reconhecíveis. Retorne APENAS o texto abreviado, sem explicações: ' + texto,
+            autor: ''
+          })
+        });
+        const j = await r.json();
+        return (j.resumo||texto).substring(0, maxChars);
+      } catch(e){ return texto.substring(0, maxChars); }
+    }
 
-        # Busca direta por código normalizado
-        pl_item = itens_por_codigo.get(ref_norm)
+    async function prepararAutoresRelatores(){
+      if(!window.ITENS_DATA) return;
+      // Estima largura disponível para o texto de autor/relator
+      // (usa valores típicos — 2 colunas, 15 itens)
+      var estimCardW = Math.floor((794-8*2-5)/2);
+      var estimIcoW  = Math.min(60, Math.max(28, Math.round(123*0.18)));
+      var estimTxtW  = estimCardW - 4 - 10*2 - estimIcoW - 10;
+      // Máx chars que cabem em 8pt (mínimo) numa linha
+      var maxChars = Math.floor(estimTxtW / (8 * 0.55));
 
-        # Fallback: busca só por número/ano ignorando sigla (PL vs PLP vs PEC)
-        if not pl_item:
-            m_num = re.search(r'(\d+)/(\d{4})$', ref_norm)
-            if m_num:
-                numano = f"{m_num.group(1)}/{m_num.group(2)}"
-                pl_item = itens_por_numano.get(numano)
-                if pl_item:
-                    logger.info(f"Herança via número/ano: '{ref_norm}' → '{numano}'")
+      for(const item of window.ITENS_DATA){
+        item.autor_breve   = abreviarTexto(item.autor);
+        item.relator_breve = abreviarTexto(item.relator);
+        // Se ainda não cabe, usa IA
+        var metaFull = 'Autor: '+item.autor_breve+'  |  Relator: '+item.relator_breve;
+        if(metaFull.length > maxChars){
+          if(item.autor_breve.length > 35)
+            item.autor_breve = await abreviarViaIA(item.autor_breve, 35);
+          if(item.relator_breve.length > 35)
+            item.relator_breve = await abreviarViaIA(item.relator_breve, 35);
+        }
+      }
+    }
 
-        if pl_item and not (pl_item.get('resumo_materia') or '').strip():
-            pl_item['resumo_materia']   = resumo_req
-            pl_item['orientacao']       = item.get('orientacao') or pl_item.get('orientacao') or ''
-            pl_item['resumo_parecer']   = item.get('resumo_parecer') or pl_item.get('resumo_parecer') or ''
-            pl_item['saved_by']         = item.get('saved_by') or ''
-            pl_item['saved_at']         = item.get('saved_at') or ''
-            pl_item['req_pl_mesmo_dia'] = True
-            logger.info(f"✅ Herança OK: {proj} → {ref_parte}")
-        elif pl_item:
-            logger.info(f"PL já tem análise própria: {ref_parte}")
+    prepararAutoresRelatores();
+    setTimeout(carregarTodosResumos, 1000);
+      document.addEventListener('change', async (e) => {
+        const sel = e.target.closest('.select-responsavel');
+        if (!sel) return;
+        const itemKey  = sel.dataset.itemKey;
+        const eventoId = sel.dataset.eventoId;
+        const username = sel.value;
+        try {
+          const r = await fetch('/atribuir_responsavel', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({item_key: itemKey, evento_id: eventoId, responsavel_username: username})
+          });
+          // Verifica se sessão expirou (retornou HTML de login)
+          const ct = r.headers.get('content-type') || '';
+          if (!ct.includes('application/json')) {
+            if (r.status === 401 || r.url.includes('login')) {
+              alert('Sessão expirada. Faça login novamente.');
+              window.location.href = '/login';
+              return;
+            }
+            const txt = await r.text();
+            alert('Erro inesperado: ' + txt.substring(0, 200));
+            return;
+          }
+          const j = await r.json();
+          if (j.error) { alert(j.error); return; }
+          // Atualiza container com logo + foto + nome
+          const container = sel.closest('[id^="resp-container-"]');
+          if (container) {
+            // Remove elementos antigos (logo, foto, small)
+            container.querySelectorAll('img:not(select img), small').forEach(el => el.remove());
+            if (!username) {
+              const sm = document.createElement('small');
+              sm.className = 'text-muted fst-italic';
+              sm.textContent = 'Sem responsável atribuído';
+              sel.before(sm);
+            } else {
+              const r2 = await fetch('/listar_assessores');
+              const j2 = await r2.json();
+              const assessor = j2.assessores.find(a => a.username === username);
+              if (assessor) {
+                // Logo da bancada primeiro
+                if (assessor.categoria === 'minoria') {
+                  const logo = document.createElement('img');
+                  logo.src = '/static/logo_minoria.png';
+                  logo.style.cssText = 'height:22px;object-fit:contain;';
+                  logo.alt = 'Minoria';
+                  sel.before(logo);
+                } else if (assessor.categoria === 'oposicao') {
+                  const logo = document.createElement('img');
+                  logo.src = '/static/logo_oposicao.png';
+                  logo.style.cssText = 'height:22px;object-fit:contain;';
+                  logo.alt = 'Oposição';
+                  sel.before(logo);
+                }
+                // Foto do usuário
+                if (assessor.foto) {
+                  const foto = document.createElement('img');
+                  foto.src = assessor.foto;
+                  foto.alt = assessor.nome;
+                  foto.style.cssText = 'width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid #ccc;';
+                  sel.before(foto);
+                }
+                // Nome
+                const sm = document.createElement('small');
+                sm.className = 'text-muted';
+                sm.innerHTML = 'Responsável: <strong>' + assessor.nome + '</strong>';
+                sel.before(sm);
+              }
+            }
+          }
+        } catch(err) { alert('Erro: ' + err.message); }
+      });
+      document.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.btn-buscar-destaques');
+        if (!btn) return;
+        const idProp  = btn.dataset.idProposicao;
+        const ordem   = btn.dataset.ordem;
+        const spinner = document.querySelector(`.spinner-busca-${ordem}`);
+        const tabela  = document.getElementById(`tabela-destaques-${ordem}`);
+        const tbody   = document.getElementById(`tbody-destaques-${ordem}`);
+        const semMsg  = document.getElementById(`sem-destaques-${ordem}`);
+        if (!tabela || !tbody) return;
 
-    # Detecta remanescentes e REQs com PL na mesma pauta
-    for item in itens:
-        saved_at    = item.get('saved_at') or ''
-        resumo      = item.get('resumo_materia') or ''
-        tem_analise = bool(resumo.strip())
-        if 'eh_remanescente' not in item:
-            item['eh_remanescente'] = False
-        if 'req_pl_mesmo_dia' not in item:
-            item['req_pl_mesmo_dia'] = False
+        btn.disabled = true;
+        if (spinner) spinner.style.display = 'inline-flex';
+        tabela.style.display = 'none';
+        tbody.innerHTML = '';
+        if (semMsg) semMsg.style.display = 'none';
 
-        if tem_analise and saved_at and data_evento:
-            data_salvo = str(saved_at)[:10]
-            if data_salvo and data_salvo != data_evento:
-                item['eh_remanescente'] = True
+        try {
+          // Busca direto no browser (sem passar pelo Railway que é bloqueado)
+          let destaques = [];
+          try {
+            const urlDtq = `https://www.camara.leg.br/pplen/destaques.html?codOrgao=180&codProposicao=${idProp}`;
+            const rDtq = await fetch(urlDtq, {headers: {'Accept': 'text/html'}});
+            if (rDtq.ok) {
+              const html = await rDtq.text();
+              // Parser manual do HTML de destaques
+              const parser = new DOMParser();
+              const doc2   = parser.parseFromString(html, 'text/html');
+              doc2.querySelectorAll('tr').forEach(tr => {
+                const cols = tr.querySelectorAll('td');
+                if (cols.length < 5) return;
+                const numero = cols[0].textContent.trim();
+                if (!numero.toUpperCase().includes('DTQ')) return;
+                destaques.push({
+                  numero:       numero,
+                  autoria:      cols[1].textContent.trim(),
+                  descricao:    cols[2].textContent.trim(),
+                  tipo_destaque:cols[3].textContent.trim(),
+                  situacao:     cols[4].textContent.trim(),
+                });
+              });
+            }
+          } catch(eCors) {
+            // CORS bloqueado — fallback para rota do servidor
+            const r = await fetch(`/destaques/${idProp}`);
+            const j = await r.json();
+            destaques = j.destaques || [];
+          }
 
-        # REQ com PL referenciado na mesma pauta
-        proj = item.get('projeto') or ''
-        if ' ao ' in proj and tem_analise and not item['req_pl_mesmo_dia']:
-            ref_parte = proj.split(' ao ')[1].strip()
-            ref_norm  = _normalizar_codigo(ref_parte)
-            if ref_norm in projetos_pauta:
-                item['req_pl_mesmo_dia'] = True
+          // Se frontend também falhou, tenta servidor como fallback
+          if (destaques.length === 0) {
+            const r = await fetch(`/destaques/${idProp}`);
+            const j = await r.json();
+            destaques = j.destaques || [];
+          }
 
-    # Dados do usuário logado para o quadro de boas-vindas
-    user_nome_display = current_user.nome_display or current_user.username
-    user_foto = current_user.foto or ''
-    # Itens atribuídos ao usuário logado
-    itens_atribuidos = [item for item in itens if item.get('responsavel_username') == current_user.username]
+          tabela.style.display = 'block';
+          if (destaques.length > 0) {
+            // Salva em memória global por idProp para uso posterior na análise
+            if (!window._destaquesMem) window._destaquesMem = {};
+            window._destaquesMem[idProp] = destaques;
+            const projeto = btn.dataset.projeto || '';
+            destaques.forEach(d => {
+              const badge = d.situacao.toLowerCase().includes('tramitação')
+                ? `<span class="badge bg-warning text-dark">${d.situacao}</span>`
+                : `<span class="badge bg-secondary">${d.situacao}</span>`;
+              tbody.innerHTML += `<tr>
+                <td><strong>${d.numero}</strong></td>
+                <td>${d.autoria}</td>
+                <td>${d.descricao}</td>
+                <td>${d.tipo_destaque}</td>
+                <td>${badge}</td>
+                <td>
+                  <button class="btn btn-outline-primary btn-sm"
+                    onclick="analisarDestaque(this)"
+                    data-id-principal="${idProp}"
+                    data-descricao="${d.descricao.replace(/"/g,"'")}"
+                    data-numero="${d.numero}"
+                    data-autoria="${(d.autoria||'').replace(/"/g,"'")}"
+                    data-projeto="${projeto}">
+                    <i class="fas fa-robot"></i>
+                  </button>
+                </td>
+              </tr>
+              <tr>
+                <td colspan="6">
+                  <div id="analise-destaque-${d.numero.replace(/\s/g,'-')}" class="mt-1" style="display:none;">
+                    <div class="p-2 border rounded bg-light" style="font-size:0.85rem;"></div>
+                  </div>
+                </td>
+              </tr>`;
+            });
+          } else {
+            if (semMsg) semMsg.style.display = 'block';
+          }
+        } catch(err) {
+          tabela.style.display = 'block';
+          if (semMsg) { semMsg.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>Erro: ${err.message}`; semMsg.style.display = 'block'; }
+        } finally {
+          if (spinner) spinner.style.display = 'none';
+          btn.disabled = false;
+        }
+      });
 
-    return render_template('pauta.html', evento_id=evento_id, evento=evento, itens=itens,
-                           from_cache=from_cache, user_role=current_user.role,
-                           user_categoria=current_user.categoria,
-                           last_updated=last_updated, last_saved_user=last_saved_user,
-                           assessores=assessores,
-                           data_evento=data_evento,
-                           eh_responsavel_pauta=eh_responsavel_pauta,
-                           user_nome_display=user_nome_display,
-                           user_foto=user_foto,
-                           itens_atribuidos=itens_atribuidos)
+    });
 
-@app.route('/save_item', methods=['POST'])
-@login_required
-def save_item():
-    data = request.get_json()
-    evento_id    = data.get('evento_id')
-    id_principal = data.get('id_principal')
-    ordem        = data.get('ordem')
-    orientacao   = data.get('orientacao', '') or ''
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        prop_key = f"PROP_{id_principal}"
-        now_str  = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
-        saved_by = current_user.display_name()
-        c.execute('INSERT OR REPLACE INTO notas (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                  (prop_key, evento_id, ordem, data.get('resumo_materia', ''), orientacao, data.get('resumo_parecer', ''), saved_by, now_str))
-        conn.commit()
+    // Botão Gerar Análise — usa ementa da proposição via Groq
+    async function gerarAnalise(ordem, btn) {
+      const ementa       = btn.dataset.ementa || '';
+      const projeto      = btn.dataset.projeto || '';
+      const autor        = btn.dataset.autor || '';
+      const relator      = btn.dataset.relator || '';
+      const id_principal = btn.dataset.idPrincipal || '';
 
-        # Exporta orientação para o quadro da bancada
-        if orientacao:
-            try:
-                GRUPOS_VALIDOS = ['oposicao', 'minoria', 'PL', 'NOVO']
-                grupo = None
+      // Primeiro lista documentos disponíveis
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando documentos...';
 
-                # 1. Tenta categoria do usuário logado
-                cat_logado = (current_user.categoria or '').strip()
-                if cat_logado and cat_logado.lower() in [g.lower() for g in GRUPOS_VALIDOS]:
-                    grupo = cat_logado
+      let docs = [];
+      try {
+        const rDocs = await fetch('/listar_documentos/' + id_principal);
+        if (rDocs.ok) { const jDocs = await rDocs.json(); docs = jDocs.documentos || []; }
+      } catch(e) {}
 
-                # 2. Se não (admin/geral), tenta responsavel_username da nota
-                if not grupo:
-                    c.execute('SELECT responsavel_username FROM notas WHERE item_key=? AND responsavel_username IS NOT NULL AND responsavel_username != ""', (prop_key,))
-                    row_resp = c.fetchone()
-                    if row_resp and row_resp[0]:
-                        c.execute('SELECT categoria FROM users WHERE username=?', (row_resp[0],))
-                        row_cat = c.fetchone()
-                        if row_cat and row_cat[0] and row_cat[0].lower() in [g.lower() for g in GRUPOS_VALIDOS]:
-                            grupo = row_cat[0]
+      btn.disabled = false;
+      btn.innerHTML = '<img src="/static/logo_gemini.svg" alt="Gemini" style="width:16px;height:16px;vertical-align:middle;" class="me-2">Gerar Análise';
 
-                # 3. Se ainda não, tenta usuário que salvou por nome
-                if not grupo:
-                    c.execute('SELECT categoria FROM users WHERE username=? OR nome_display=?', (saved_by, saved_by))
-                    row_cat = c.fetchone()
-                    if row_cat and row_cat[0] and row_cat[0].lower() in [g.lower() for g in GRUPOS_VALIDOS]:
-                        grupo = row_cat[0]
+      // Abre modal de seleção de documento
+      await selecionarDocEAnalisar(ordem, btn, id_principal, projeto, ementa, autor, relator, docs);
+    }
 
-                if not grupo:
-                    logger.warning(f"Orientação NÃO exportada: usuário '{saved_by}' categoria='{cat_logado}' não tem grupo válido")
-                    grupo_exportado = None
-                else:
-                    c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
-                                 (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
-                                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                              (evento_id, str(id_principal), grupo, orientacao, '', saved_by, now_str))
-                    conn.commit()
-                    logger.info(f"✅ Orientação exportada: grupo={grupo} id={id_principal} ori={orientacao} by={saved_by}")
-                    grupo_exportado = grupo
+    async function selecionarDocEAnalisar(ordem, btnOrig, id_principal, projeto, ementa, autor, relator, docs) {
+      return new Promise((resolve) => {
+        document.getElementById('modal-sel-analise')?.remove();
+        const modalEl = document.createElement('div');
+        modalEl.id = 'modal-sel-analise';
+        modalEl.className = 'modal fade';
+        modalEl.setAttribute('tabindex','-1');
 
-            except Exception as e:
-                logger.error(f"Erro ao exportar orientação: {e}")
-                grupo_exportado = None
-        else:
-            grupo_exportado = None
+        const mDialog  = document.createElement('div'); mDialog.className = 'modal-dialog';
+        const mContent = document.createElement('div'); mContent.className = 'modal-content';
+        const mHeader  = document.createElement('div'); mHeader.className = 'modal-header bg-primary text-white';
+        const mTitle   = document.createElement('h6');  mTitle.className = 'modal-title';
+        mTitle.textContent = 'Selecione o documento para análise IA';
+        const mClose = document.createElement('button'); mClose.type='button'; mClose.className='btn-close btn-close-white'; mClose.setAttribute('data-bs-dismiss','modal');
+        mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
 
-        # Atualiza o cache persistente
-        c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
-        row = c.fetchone()
-        if row:
-            try:
-                itens = json.loads(row[0])
-                for item in itens:
-                    if str(item.get('id_principal')) == str(id_principal):
-                        item['resumo_materia'] = data.get('resumo_materia', '')
-                        item['orientacao']     = orientacao
-                        item['resumo_parecer'] = data.get('resumo_parecer', '')
-                c.execute('UPDATE pauta_cache_db SET json_pauta = ?, last_updated = ?, last_saved_by = ? WHERE evento_id = ?',
-                          (json.dumps(itens), now_str, saved_by, evento_id))
-                conn.commit()
-            except Exception:
-                pass
+        const mBody = document.createElement('div'); mBody.className = 'modal-body';
+        const mInfo = document.createElement('p'); mInfo.className = 'small text-muted mb-2';
+        mInfo.textContent = docs.length > 0
+          ? 'A IA usará o documento selecionado como base. A linha "Análise baseada em" será atualizada.'
+          : 'Nenhum documento encontrado — a análise usará a ementa.';
+        mBody.appendChild(mInfo);
 
-        pauta_cache.clear()
-        return jsonify({'message': 'Salvo com sucesso!', 'grupo_exportado': grupo_exportado})
-    except Exception as e:
-        conn.rollback()
-        return jsonify({'message': f'Erro ao salvar: {e}'})
-    finally:
-        conn.close()
+        if (docs.length > 0) {
+          docs.forEach((d, i) => {
+            const wrap = document.createElement('div'); wrap.className = 'form-check mb-1 d-flex align-items-start gap-2';
+            const inp = document.createElement('input'); inp.className='form-check-input mt-1'; inp.type='radio'; inp.name='doc_analise'; inp.id='dan_'+i; inp.value=String(i);
+            if (i === 0) inp.checked = true;
+            const lbl = document.createElement('label'); lbl.className='form-check-label small flex-grow-1'; lbl.setAttribute('for','dan_'+i); lbl.textContent=d.label;
+            const btnVer = document.createElement('button'); btnVer.type='button'; btnVer.className='btn btn-outline-secondary btn-sm py-0 px-1'; btnVer.style.fontSize='0.7rem'; btnVer.textContent='👁 Ver';
+            btnVer.addEventListener('click', () => verTextoDoc(d.url, d.label));
+            wrap.appendChild(inp); wrap.appendChild(lbl); wrap.appendChild(btnVer);
+            mBody.appendChild(wrap);
+          });
+        }
 
-def _clean_html(raw):
-    if raw is None:
+        const mFooter = document.createElement('div'); mFooter.className = 'modal-footer';
+        const btnCancelar = document.createElement('button'); btnCancelar.type='button'; btnCancelar.className='btn btn-secondary btn-sm'; btnCancelar.setAttribute('data-bs-dismiss','modal'); btnCancelar.textContent='Cancelar';
+        const btnOk = document.createElement('button'); btnOk.type='button'; btnOk.className='btn btn-primary btn-sm';
+        btnOk.innerHTML = '<i class="fas fa-robot me-1"></i>Analisar';
+        mFooter.appendChild(btnCancelar); mFooter.appendChild(btnOk);
+
+        mContent.appendChild(mHeader); mContent.appendChild(mBody); mContent.appendChild(mFooter);
+        mDialog.appendChild(mContent); modalEl.appendChild(mDialog);
+        document.body.appendChild(modalEl);
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+
+        btnOk.addEventListener('click', async () => {
+          const sel = mBody.querySelector('input[name="doc_analise"]:checked');
+          const docSel = sel && docs.length > 0 ? docs[parseInt(sel.value)] : null;
+          modal.hide();
+
+          // Gera análise IA com o documento selecionado
+          const overlay = document.getElementById("overlay-" + ordem);
+          if (btnOrig) { btnOrig.disabled=true; btnOrig.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Gerando...'; }
+          if (overlay) overlay.style.display = "flex";
+
+          try {
+            const body = { projeto, ementa, autor, relator, id_principal };
+            if (docSel) { body.url_documento = docSel.url; body.label_documento = docSel.label; }
+            const r = await fetch('/analisar_ia', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+            if (!r.ok) { alert('Erro do servidor: ' + await r.text()); return; }
+            const j = await r.json();
+            if (j.resumo) {
+              if (!quillInstances[ordem]) {
+                const quill = new Quill(`#quill-editor-${ordem}`, { theme:'snow', modules:{toolbar:[['bold','italic','underline'],[{'list':'ordered'},{'list':'bullet'}],['clean']]} });
+                quillInstances[ordem] = quill;
+              }
+              quillInstances[ordem].clipboard.dangerouslyPasteHTML(j.resumo);
+              // Preenche campo "baseada em" com o doc usado
+              const labelDoc = docSel ? docSel.label.replace(/📋|📄|👁/g,'').trim() : 'texto original da proposição';
+              const campoBaseada = document.getElementById('baseada-em-' + ordem);
+              if (campoBaseada) campoBaseada.value = labelDoc;
+              atualizarBaseadaEm(ordem, labelDoc);
+            } else {
+              alert('Erro da IA: ' + (j.error || 'Resposta vazia'));
+            }
+          } catch(e) {
+            alert('Erro ao conectar com a IA: ' + e.message);
+          } finally {
+            if (overlay) overlay.style.display = "none";
+            if (btnOrig) { btnOrig.disabled=false; btnOrig.innerHTML='<img src="/static/logo_gemini.svg" alt="Gemini" style="width:16px;height:16px;vertical-align:middle;" class="me-2">Gerar Análise'; }
+            resolve(docSel);
+          }
+        });
+
+        modalEl.addEventListener('hidden.bs.modal', () => resolve(null));
+      });
+    }
+
+    function atualizarBaseadaEm(ordem, label) {
+      // Procura linha "baseada em" no Quill e atualiza, ou insere no topo
+      const quill = quillInstances[ordem];
+      if (!quill) return;
+      const html = quill.root.innerHTML;
+      const labelClean = label.replace(/📋|📄|👁/g,'').trim();
+      const novaLinha = `<p><em style="color:red;">Análise baseada em: ${labelClean}</em></p>`;
+      if (html.includes('Análise baseada em')) {
+        quill.root.innerHTML = html.replace(/<p><em[^>]*>Análise baseada em:.*?<\/em><\/p>/i, novaLinha);
+      } else {
+        quill.root.innerHTML = novaLinha + html;
+      }
+    }
+  </script>
+
+<!-- MODAL MENSAGENS PLENÁRIO -->
+<div class="modal fade" id="modalMensagens" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#25D366,#128C7E);">
+        <h5 class="modal-title text-white">
+          <i class="fab fa-whatsapp me-2"></i>Mensagens para o Plenário
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <div class="mb-3" id="select-item-container">
+          <label class="form-label fw-bold">Selecione o Item:</label>
+          <select class="form-select" id="select-item-msg">
+            <option value="">-- Selecione --</option>
+            {% for item in itens %}
+            <option value="{{ loop.index0 }}"
+              data-projeto="{{ item.projeto }}"
+              data-ementa="{{ item.ementa | replace('"','')  }}"
+              data-autor="{{ item.autor }}"
+              data-relator="{{ item.relator }}"
+              data-orientacao="{{ item.orientacao or '' }}">
+              Item {{ item.ordem }} — {{ item.projeto }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold">Tipo de Mensagem:</label>
+          <div class="d-flex gap-2 flex-wrap">
+
+            <button class="btn btn-outline-primary btn-sm btn-tipo-msg" data-tipo="apresentacao">
+              <i class="fas fa-file-alt me-1"></i>Apresentação
+            </button>
+
+            <!-- Votação Nominal com opções -->
+            <div class="dropdown d-inline-block">
+              <button class="btn btn-outline-danger btn-sm dropdown-toggle" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="fas fa-vote-yea me-1"></i>Votação Nominal
+              </button>
+              <ul class="dropdown-menu">
+                <li><h6 class="dropdown-header">Mérito</h6></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Mérito">⚖️ Mérito</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Substitutivo">📄 Substitutivo</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Emenda Substitutiva">📝 Emenda Substitutiva</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Subemenda Substitutiva">📋 Subemenda Substitutiva</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="">✏️ Outro (digitar)</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><h6 class="dropdown-header">Requerimento</h6></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Requerimento de Urgência">🚨 Urgência</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Requerimento de Retirada de Pauta">↩️ Retirada de Pauta</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Requerimento de Adiamento de Discussão">🕐 Adiamento de Discussão</a></li>
+                <li><a class="dropdown-item btn-tipo-msg" href="#" data-tipo="votacao" data-objeto-fixo="Requerimento de Adiamento de Votação">🕑 Adiamento de Votação</a></li>
+              </ul>
+            </div>
+
+            <!-- Resultado Final -->
+            <div class="dropdown d-inline-block">
+              <button class="btn btn-success btn-sm dropdown-toggle" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="fas fa-flag-checkered me-1"></i>Resultado Final
+              </button>
+              <ul class="dropdown-menu">
+                <li><a class="dropdown-item btn-aprovado-tipo" href="#" data-tipo="aprovado_simbolico">
+                  ✅ Aprovado Simbolicamente
+                </a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item btn-aprovado-tipo" href="#" data-tipo="aprovado_nominal">
+                  🗳️ Aprovado — buscar votos
+                </a></li>
+                <li><a class="dropdown-item btn-aprovado-tipo" href="#" data-tipo="rejeitado_nominal">
+                  ❌ Rejeitado — buscar votos
+                </a></li>
+              </ul>
+            </div>
+
+            <!-- Resultado Requerimento -->
+            <div class="dropdown d-inline-block">
+              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="fas fa-clipboard-check me-1"></i>Resultado Requerimento
+              </button>
+              <ul class="dropdown-menu">
+                <li><h6 class="dropdown-header">Urgência</h6></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Urgência" data-tipo="aprovado_simbolico">✅ Aprovado Simbolicamente</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Urgência" data-tipo="aprovado_nominal">🗳️ Aprovado — buscar votos</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Urgência" data-tipo="rejeitado_nominal">❌ Rejeitado — buscar votos</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><h6 class="dropdown-header">Retirada de Pauta</h6></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Retirada de Pauta" data-tipo="aprovado_simbolico">✅ Aprovado Simbolicamente</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Retirada de Pauta" data-tipo="aprovado_nominal">🗳️ Aprovado — buscar votos</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Retirada de Pauta" data-tipo="rejeitado_nominal">❌ Rejeitado — buscar votos</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><h6 class="dropdown-header">Adiamento de Discussão</h6></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Discussão" data-tipo="aprovado_simbolico">✅ Aprovado Simbolicamente</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Discussão" data-tipo="aprovado_nominal">🗳️ Aprovado — buscar votos</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Discussão" data-tipo="rejeitado_nominal">❌ Rejeitado — buscar votos</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><h6 class="dropdown-header">Adiamento de Votação</h6></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Votação" data-tipo="aprovado_simbolico">✅ Aprovado Simbolicamente</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Votação" data-tipo="aprovado_nominal">🗳️ Aprovado — buscar votos</a></li>
+                <li><a class="dropdown-item btn-resultado-req" href="#" data-req="Adiamento de Votação" data-tipo="rejeitado_nominal">❌ Rejeitado — buscar votos</a></li>
+              </ul>
+            </div>
+
+            <button class="btn btn-outline-success btn-sm btn-tipo-msg" data-tipo="iniciada">
+              <i class="fas fa-play-circle me-1"></i>Iniciada
+            </button>
+            <button class="btn btn-outline-warning btn-sm btn-tipo-msg" data-tipo="encerrada_ordem">
+              <i class="fas fa-stop-circle me-1"></i>Encerrada Ordem
+            </button>
+            <button class="btn btn-outline-dark btn-sm btn-tipo-msg" data-tipo="encerrada_sessao">
+              <i class="fas fa-flag-checkered me-1"></i>Encerrada Sessão
+            </button>
+
+          </div>
+        </div>
+
+        <div class="mb-3" id="campo-objeto" style="display:none;">
+          <label class="form-label fw-bold">Objeto da Votação:</label>
+          <div class="d-flex gap-2 flex-wrap mb-2">
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Mérito">Mérito</button>
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Substitutivo">Substitutivo</button>
+            <div class="dropdown">
+              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="btnRequerimento" data-bs-toggle="dropdown" aria-expanded="false">
+                Requerimento
+              </button>
+              <ul class="dropdown-menu" aria-labelledby="btnRequerimento">
+                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Urgência">De Urgência</a></li>
+                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Adiamento de Discussão">Adiamento de Discussão</a></li>
+                <li><a class="dropdown-item btn-objeto-req" href="#" data-objeto="Requerimento de Adiamento de Votação">Adiamento de Votação</a></li>
+              </ul>
+            </div>
+            <div class="dropdown" id="dropdown-dtq-container">
+              <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button"
+                id="btnDTQ" data-bs-toggle="dropdown" aria-expanded="false"
+                onclick="carregarDestaquesDTQ()">
+                DTQ
+              </button>
+              <ul class="dropdown-menu" id="menu-dtq" aria-labelledby="btnDTQ">
+                <li><span class="dropdown-item text-muted fst-italic" id="dtq-loading">
+                  <span class="spinner-border spinner-border-sm me-1"></span>Buscando destaques...
+                </span></li>
+              </ul>
+            </div>
+            <button class="btn btn-outline-secondary btn-sm btn-objeto" data-objeto="Redação Final">Redação Final</button>
+          </div>
+          <input type="text" class="form-control" id="input-objeto" placeholder="Ou digite o objeto manualmente...">
+        </div>
+
+        <div id="preview-msg-container" style="display:none;">
+          <label class="form-label fw-bold">Mensagem Gerada:</label>
+          <textarea id="preview-msg" class="form-control" rows="12"
+            style="font-family:monospace;font-size:0.88rem;background:#f0fdf4;border:2px solid #25D366;resize:vertical;"></textarea>
+          <div class="d-flex gap-2 mt-2">
+            <button class="btn btn-success btn-sm" id="btn-copiar-msg">
+              <i class="fas fa-copy me-1"></i>Copiar Mensagem
+            </button>
+            <span id="copiado-msg" class="text-success align-self-center" style="display:none;font-size:0.85rem;">✅ Copiado!</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Dados dinâmicos para o modal de mensagens (gerados pelo servidor)
+  window.EVENTO_ID  = {{ evento_id|safe }};
+  window.ITENS_DATA = [
+    {% for item in itens %}
+    {
+      ordem:                  {{ item.ordem | tojson }},
+      id_principal:           {{ item.id_principal | tojson }},
+      projeto:                {{ item.projeto | tojson }},
+      ementa:                 {{ item.ementa | tojson }},
+      autor:                  {{ item.autor | tojson }},
+      relator:                {{ item.relator | tojson }},
+      orientacao:             {{ (item.orientacao or '') | tojson }},
+      resumo_ia:              '',
+      responsavel_username:   {{ (item.responsavel_username or '') | tojson }},
+      responsavel_nome:       "{{ (assessores | selectattr('username','equalto', item.responsavel_username) | list | first).nome if item.responsavel_username else '' }}",
+      responsavel_categoria:  "{{ (assessores | selectattr('username','equalto', item.responsavel_username) | list | first).categoria if item.responsavel_username else '' }}"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  ];
+</script>
+<script src="/static/mensagens.js"></script>
+
+<script>
+  async function verificarUltimoDoc(btn) {
+    const idPrincipal = btn.dataset.idPrincipal;
+    if (!idPrincipal) { alert('ID da proposição não encontrado.'); return; }
+
+    const resultadoDiv = btn.parentElement.querySelector('[id^="ultimo-doc-resultado-"]');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando...';
+
+    try {
+      const r = await fetch(`/verificar_doc/${idPrincipal}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+
+      let html = '';
+      const btnVerDocs = ` <button class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;"
+            onclick="verDocumentosUltimoParecer(this, '${idPrincipal}')">
+            <i class="fas fa-folder-open me-1"></i>Ver documentos
+          </button>`;
+
+      if (j.tipo) {
+        const numStr  = j.numero ? ` nº ${j.numero}` : '';
+        const dataStr = j.data   ? ` — ${j.data}` : '';
+        html = `<i class="fas fa-check-circle text-success me-1"></i>` +
+               `Último documento: <strong>${j.tipo}${numStr}</strong>${dataStr} ` +
+               `<span class="text-success">(texto disponível para análise)</span>${btnVerDocs}`;
+      } else {
+        html = `<i class="fas fa-info-circle text-warning me-1"></i>` +
+               `Nenhum PRLP ou Substitutivo encontrado — use o texto original.${btnVerDocs}`;
+      }
+
+      if (resultadoDiv) {
+        resultadoDiv.querySelector('small').innerHTML = html;
+        resultadoDiv.style.display = 'block';
+      } else {
+        const span = document.createElement('div');
+        span.className = 'mt-1';
+        span.innerHTML = `<small class="fw-bold">${html}</small>`;
+        btn.parentElement.appendChild(span);
+      }
+    } catch(e) {
+      alert('Erro ao buscar documento: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-search me-1"></i>Procurar último parecer (PRLP/Substitutivo)';
+    }
+  }
+
+  async function buscarUrlPrlp(btn, idProp, numeroPrlp) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    const urlFallback = `https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao=${idProp}`;
+    try {
+      const rRel = await fetch(
+        `https://dadosabertos.camara.leg.br/api/v2/proposicoes/${idProp}/relacionadas`,
+        {headers: {'Accept': 'application/json'}}
+      );
+      if (!rRel.ok) throw new Error('relacionadas ' + rRel.status);
+      const jRel = await rRel.json();
+      const prlps = (jRel.dados || [])
+        .filter(p => (p.siglaTipo||'').toUpperCase() === 'PRLP')
+        .sort((a,b) => (b.numero||0)-(a.numero||0));
+      const alvo = prlps.find(p => String(p.numero) === String(numeroPrlp)) || prlps[0];
+      if (!alvo) throw new Error('PRLP não encontrado');
+      const url = `https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao=${alvo.id}`;
+      window.open(url, '_blank');
+      btn.outerHTML = `<a href="${url}" target="_blank" rel="noopener"
+        class="btn btn-sm btn-outline-primary py-0 px-2 ms-1" style="font-size:0.75rem;">
+        <i class="fas fa-file-alt me-1"></i>Ver PRLP ${alvo.numero}</a>`;
+    } catch(e) {
+      console.warn('buscarUrlPrlp:', e);
+      window.open(urlFallback, '_blank');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-external-link-alt me-1"></i>Ver Pareceres';
+    }
+  }
+
+    async function verDocumentosUltimoParecer(btn, idPrincipal) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    try {
+      const r = await fetch('/listar_documentos/' + idPrincipal);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      const docs = j.documentos || [];
+      if (docs.length === 0) {
+        alert('Nenhum documento encontrado.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-folder-open me-1"></i>Ver documentos';
+        return;
+      }
+
+      document.getElementById('modal-docs-parecer')?.remove();
+      const modalEl = document.createElement('div');
+      modalEl.id = 'modal-docs-parecer';
+      modalEl.className = 'modal fade';
+      modalEl.setAttribute('tabindex', '-1');
+
+      const mDialog  = document.createElement('div'); mDialog.className = 'modal-dialog modal-lg';
+      const mContent = document.createElement('div'); mContent.className = 'modal-content';
+      const mHeader  = document.createElement('div'); mHeader.className = 'modal-header bg-primary text-white';
+      const mTitle   = document.createElement('h6');  mTitle.className = 'modal-title';
+      mTitle.textContent = 'Pareceres e Substitutivos disponíveis';
+      const mClose = document.createElement('button');
+      mClose.type = 'button'; mClose.className = 'btn-close btn-close-white';
+      mClose.setAttribute('data-bs-dismiss', 'modal');
+      mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
+
+      const mBody = document.createElement('div'); mBody.className = 'modal-body';
+      const mInfo = document.createElement('p'); mInfo.className = 'small text-muted mb-1';
+      mInfo.textContent = docs.length + ' documento(s). Selecione até 2 para comparar. Use 👁 Ver para visualizar.';
+      mBody.appendChild(mInfo);
+      mBody.appendChild(document.createElement('hr'));
+
+      // Lista com CHECKBOX (até 2 selecionados) + Ver + PDF
+      docs.forEach((d, i) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'form-check mb-1 d-flex align-items-start gap-2';
+
+        const inp = document.createElement('input');
+        inp.className = 'form-check-input mt-1';
+        inp.type = 'checkbox';
+        inp.name = 'doc_cmp';
+        inp.id = 'dcmp_' + i;
+        inp.value = String(i);
+        inp.dataset.url   = d.url;
+        inp.dataset.label = d.label;
+        // Limita a 2 selecionados
+        inp.addEventListener('change', () => {
+          const checked = mBody.querySelectorAll('input[name="doc_cmp"]:checked');
+          if (checked.length > 2) { inp.checked = false; return; }
+        });
+
+        const lbl = document.createElement('label');
+        lbl.className = 'form-check-label small flex-grow-1';
+        lbl.setAttribute('for', 'dcmp_' + i);
+        lbl.textContent = d.label;
+
+        const btnVer = document.createElement('button');
+        btnVer.type = 'button';
+        btnVer.className = 'btn btn-outline-secondary btn-sm py-0 px-1';
+        btnVer.style.fontSize = '0.7rem';
+        btnVer.textContent = '👁 Ver';
+        btnVer.addEventListener('click', () => verTextoDoc(d.url, d.label));
+
+        const btnPdf = document.createElement('a');
+        btnPdf.className = 'btn btn-outline-danger btn-sm py-0 px-1';
+        btnPdf.style.fontSize = '0.7rem';
+        btnPdf.textContent = '📄 PDF';
+        btnPdf.href = d.url; btnPdf.target = '_blank'; btnPdf.rel = 'noopener';
+
+        wrap.appendChild(inp); wrap.appendChild(lbl); wrap.appendChild(btnVer); wrap.appendChild(btnPdf);
+        mBody.appendChild(wrap);
+      });
+
+      // Área de resultado da comparação
+      const resultDiv = document.createElement('div');
+      resultDiv.id = 'cmp-resultado';
+      resultDiv.style.display = 'none';
+      resultDiv.className = 'mt-3';
+      mBody.appendChild(resultDiv);
+
+      const mFooter = document.createElement('div'); mFooter.className = 'modal-footer';
+
+      const btnFechar = document.createElement('button');
+      btnFechar.type = 'button'; btnFechar.className = 'btn btn-secondary btn-sm';
+      btnFechar.setAttribute('data-bs-dismiss', 'modal'); btnFechar.textContent = 'Fechar';
+
+      const btnComparar = document.createElement('button');
+      btnComparar.type = 'button';
+      btnComparar.className = 'btn btn-primary btn-sm';
+      btnComparar.innerHTML = '<i class="fas fa-exchange-alt me-1"></i>Comparar Textos';
+      btnComparar.addEventListener('click', async () => {
+        const checked = Array.from(mBody.querySelectorAll('input[name="doc_cmp"]:checked'));
+        if (checked.length < 2) {
+          resultDiv.innerHTML = '<div class="alert alert-warning py-1 small">Selecione exatamente 2 documentos para comparar.</div>';
+          resultDiv.style.display = 'block';
+          return;
+        }
+        const [d1, d2] = [checked[0], checked[1]];
+        btnComparar.disabled = true;
+        btnComparar.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Comparando...';
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = '<div class="text-center text-muted small py-3"><i class="fas fa-spinner fa-spin me-2"></i>A IA está analisando as diferenças entre os documentos...</div>';
+
+        try {
+          const r2 = await fetch('/comparar_documentos', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              url_doc1: d1.dataset.url, label_doc1: d1.dataset.label,
+              url_doc2: d2.dataset.url, label_doc2: d2.dataset.label,
+            })
+          });
+          const j2 = await r2.json();
+          if (j2.comparacao) {
+            resultDiv.innerHTML =
+              '<div class="border rounded p-3 bg-light">' +
+                '<h6 class="text-primary mb-2"><i class="fas fa-exchange-alt me-1"></i>Comparação de Textos</h6>' +
+                '<div class="small" style="white-space:pre-wrap;line-height:1.6;">' + j2.comparacao + '</div>' +
+              '</div>';
+          } else {
+            resultDiv.innerHTML = '<div class="alert alert-danger py-1 small">Erro: ' + (j2.error||'Falha na comparação') + '</div>';
+          }
+        } catch(e) {
+          resultDiv.innerHTML = '<div class="alert alert-danger py-1 small">Erro: ' + e.message + '</div>';
+        } finally {
+          btnComparar.disabled = false;
+          btnComparar.innerHTML = '<i class="fas fa-exchange-alt me-1"></i>Comparar Textos';
+        }
+      });
+
+      mFooter.appendChild(btnFechar);
+      mFooter.appendChild(btnComparar);
+
+      mContent.appendChild(mHeader); mContent.appendChild(mBody); mContent.appendChild(mFooter);
+      mDialog.appendChild(mContent); modalEl.appendChild(mDialog);
+      document.body.appendChild(modalEl);
+      new bootstrap.Modal(modalEl).show();
+
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-folder-open me-1"></i>Ver documentos';
+    } catch(e) {
+      alert('Erro: ' + e.message);
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-folder-open me-1"></i>Ver documentos';
+    }
+  }
+
+  function gerarTabelaDestaques(projetoFiltro) {
+    // Coleta todos os destaques analisados na página
+    const destaques = [];
+    document.querySelectorAll('[id^="analise-destaque-"]').forEach(box => {
+      if (box.style.display === 'none' || !box.innerHTML.trim()) return;
+      const tr = box.closest('tr');
+      const btnOrigem = tr ? tr.querySelector('[data-numero]') : null;
+      const numero    = btnOrigem ? btnOrigem.dataset.numero    : '';
+      const descricao = btnOrigem ? btnOrigem.dataset.descricao : '';
+      const autoria   = btnOrigem ? btnOrigem.dataset.autoria   : '';
+      const projeto   = btnOrigem ? btnOrigem.dataset.projeto   : (projetoFiltro || '');
+      const analise   = box.querySelector('div') ? box.querySelector('div').innerText : box.innerText;
+      if (numero) destaques.push({ numero, descricao, autoria, projeto, analise });
+    });
+
+    // Se não encontrou pela div, coleta pelos botões de quadro
+    if (destaques.length === 0) {
+      document.querySelectorAll('[data-numero][onclick*="gerarQuadroDTQ"], .btn-dark[data-numero]').forEach(bq => {
+        destaques.push({
+          numero:    bq.dataset.numero    || '',
+          descricao: bq.dataset.descricao || '',
+          autoria:   bq.dataset.autoria   || '',
+          projeto:   bq.dataset.projeto   || '',
+          analise:   bq.dataset.analise   ? bq.dataset.analise.replace(/<[^>]+>/g,'').substring(0,200) : '',
+        });
+      });
+    }
+
+    const popup = window.open('', '_blank', 'width=1000,height=700,scrollbars=yes,resizable=yes');
+    const pd = popup.document;
+    pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Tabela de Destaques</title></head><body></body></html>'); pd.close();
+    const st = pd.createElement('style');
+    st.textContent = `body{font-family:Arial,sans-serif;padding:24px;background:#fff}
+      h2{color:#1a1a2e;border-bottom:3px solid #1a1a2e;padding-bottom:8px;margin-bottom:16px}
+      table{width:100%;border-collapse:collapse;font-size:12px}
+      th{background:#1a1a2e;color:#fff;padding:8px 10px;text-align:left}
+      td{border:1px solid #ccc;padding:8px 10px;vertical-align:top}
+      tr:nth-child(even){background:#f5f7ff}
+      .num{font-weight:bold;color:#2c3e6b;white-space:nowrap}
+      .analise{font-size:11px;color:#444;max-width:400px}
+      .btn-print{margin-top:16px;padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px}
+      @media print{.btn-print{display:none}}`;
+    pd.head.appendChild(st);
+
+    const h2 = pd.createElement('h2');
+    h2.textContent = `Tabela de Destaques — ${projetoFiltro || 'Todos'}`;
+    pd.body.appendChild(h2);
+
+    if (destaques.length === 0) {
+      const p = pd.createElement('p'); p.textContent = 'Nenhum destaque analisado encontrado.';
+      pd.body.appendChild(p);
+    } else {
+      const tbl = pd.createElement('table');
+      const thead = pd.createElement('thead');
+      thead.innerHTML = '<tr><th>#</th><th>Número</th><th>Autoria</th><th>Descrição</th><th>Análise resumida</th></tr>';
+      tbl.appendChild(thead);
+      const tbody = pd.createElement('tbody');
+      destaques.forEach((d, i) => {
+        const tr = pd.createElement('tr');
+        tr.innerHTML = `<td>${i+1}</td>
+          <td class="num">${d.numero}</td>
+          <td>${d.autoria||'—'}</td>
+          <td>${d.descricao||'—'}</td>
+          <td class="analise">${d.analise||'—'}</td>`;
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      pd.body.appendChild(tbl);
+    }
+
+    const btnPr = pd.createElement('button'); btnPr.className = 'btn-print';
+    btnPr.textContent = '🖨️ Imprimir / Salvar PDF';
+    btnPr.onclick = () => popup.print();
+    pd.body.appendChild(btnPr);
+  }
+
+  async function gerarQuadroDTQ(btn) {
+    const projeto   = btn.dataset.projeto;
+    const numero    = btn.dataset.numero;
+    const autoria   = btn.dataset.autoria || '';
+    const descricao = btn.dataset.descricao;
+    const analise   = btn.dataset.analise;
+    const urlDoc    = btn.dataset.urlDoc;
+    const labelDoc  = btn.dataset.labelDoc;
+
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Gerando quadro...';
+
+    try {
+      const r = await fetch('/gerar_quadro_dtq', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ projeto, numero, descricao, analise_html: analise, url_documento: urlDoc, label_documento: labelDoc })
+      });
+      const j = await r.json();
+      if (!j.ok) { alert('Erro: ' + j.error); return; }
+      const d = j.dados;
+
+      // Constrói popup via DOM — sem document.write com template literal
+      const popup = window.open('', '_blank', 'width=900,height=700,scrollbars=yes,resizable=yes');
+      const pd = popup.document;
+      pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Quadro DTQ</title></head><body></body></html>'); pd.close();
+
+      const st = pd.createElement('style');
+      st.textContent = '* {box-sizing:border-box;margin:0;padding:0} body{font-family:Arial,sans-serif;padding:30px;background:#fff} .quadro{border:2px solid #1a1a2e;border-radius:4px;overflow:hidden;max-width:820px;margin:0 auto} .header{background:#1a1a2e;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center} .header-titulo{font-size:14px;font-weight:bold;flex:1} .header-logos{background:#fff;padding:4px 8px;border-radius:3px;display:flex;align-items:center;gap:8px} .header-logos img{height:34px;width:100px;object-fit:contain} .dtq-bar{background:#2c3e6b;color:#fff;text-align:center;padding:6px;font-size:13px;font-weight:bold} .descricao{background:#f0f4ff;text-align:center;padding:8px 16px;font-size:12px;color:#333;border-bottom:1px solid #ccc} .votos{display:grid;grid-template-columns:1fr 1fr} .voto-sim{border-right:1px solid #ccc;padding:12px} .voto-nao{padding:12px} .voto-label-sim{color:#1A6B3A;font-weight:bold;font-size:12px;margin-bottom:6px} .voto-label-nao{color:#cc0000;font-weight:bold;font-size:12px;margin-bottom:6px} .voto-conteudo-sim{color:#1A6B3A;font-size:13px;font-weight:bold;line-height:1.4} .voto-conteudo-nao{color:#cc0000;font-size:13px;font-weight:bold;line-height:1.4} .explicacao{background:#f9f9f9;border-top:2px solid #1a1a2e;padding:12px 16px} .explicacao-titulo{text-align:center;font-weight:bold;font-size:12px;color:#1a1a2e;margin-bottom:8px;letter-spacing:1px} .explicacao-texto{font-size:12px;color:#333;line-height:1.6} .btn-imprimir{display:block;margin:16px auto 0;padding:8px 24px;background:#1a1a2e;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px} @media print{.btn-imprimir{display:none}body{padding:0}}';
+      pd.head.appendChild(st);
+
+      const origin = window.location.origin;
+
+      // Monta quadro via DOM para evitar XSS e facilitar edição
+      const quadro = pd.createElement('div'); quadro.className = 'quadro';
+
+      // Header — proposição + DTQ + autoria
+      const header = pd.createElement('div'); header.className = 'header';
+      const hTitulo = pd.createElement('div'); hTitulo.className = 'header-titulo';
+      const hProj = pd.createElement('div');
+      hProj.style.cssText = 'font-size:13px;font-weight:400;opacity:.8;margin-bottom:2px;';
+      hProj.contentEditable = 'false';
+      hProj.textContent = projeto;
+      const hNum = pd.createElement('div');
+      hNum.style.cssText = 'font-size:15px;font-weight:900;letter-spacing:.5px;';
+      hNum.contentEditable = 'false';
+      hNum.textContent = numero + (autoria ? ' — ' + autoria : '');
+      const hDesc = pd.createElement('div');
+      hDesc.style.cssText = 'font-size:12px;font-weight:400;margin-top:4px;opacity:.9;';
+      hDesc.contentEditable = 'false';
+      hDesc.textContent = descricao;
+      hTitulo.appendChild(hProj); hTitulo.appendChild(hNum); hTitulo.appendChild(hDesc);
+
+      const hLogos = pd.createElement('div'); hLogos.className = 'header-logos';
+      ['logo_oposicao.png','logo_minoria.png'].forEach(fn => {
+        const img = pd.createElement('img');
+        img.src = origin + '/static/' + fn;
+        img.onerror = function(){ this.style.display='none'; };
+        hLogos.appendChild(img);
+      });
+      header.appendChild(hTitulo); header.appendChild(hLogos);
+      quadro.appendChild(header);
+
+      // Votos
+      const votos = pd.createElement('div'); votos.className = 'votos';
+      const vSim = pd.createElement('div'); vSim.className = 'voto-sim';
+      const vSimLabel = pd.createElement('div'); vSimLabel.className = 'voto-label-sim';
+      vSimLabel.contentEditable = 'false';
+      vSimLabel.textContent = 'Voto SIM: ' + (d.sim_label||'');
+      const vSimCont = pd.createElement('div'); vSimCont.className = 'voto-conteudo-sim';
+      vSimCont.contentEditable = 'false';
+      vSimCont.textContent = d.sim_conteudo||'';
+      vSim.appendChild(vSimLabel); vSim.appendChild(vSimCont);
+
+      const vNao = pd.createElement('div'); vNao.className = 'voto-nao';
+      const vNaoLabel = pd.createElement('div'); vNaoLabel.className = 'voto-label-nao';
+      vNaoLabel.contentEditable = 'false';
+      vNaoLabel.textContent = 'Voto NÃO: ' + (d.nao_label||'');
+      const vNaoCont = pd.createElement('div'); vNaoCont.className = 'voto-conteudo-nao';
+      vNaoCont.contentEditable = 'false';
+      vNaoCont.textContent = d.nao_conteudo||'';
+      vNao.appendChild(vNaoLabel); vNao.appendChild(vNaoCont);
+      votos.appendChild(vSim); votos.appendChild(vNao);
+      quadro.appendChild(votos);
+
+      // Orientação (nova seção editável)
+      const ori = pd.createElement('div');
+      ori.style.cssText = 'background:#eaf4ea;border-top:2px solid #1A6B3A;padding:10px 16px;';
+      const oriTit = pd.createElement('div');
+      oriTit.style.cssText = 'text-align:center;font-weight:bold;font-size:12px;color:#1A6B3A;margin-bottom:6px;letter-spacing:1px;';
+      oriTit.textContent = 'ORIENTAÇÃO';
+      const oriTxt = pd.createElement('div'); oriTxt.className = 'orientacao-texto';
+      oriTxt.style.cssText = 'font-size:13px;font-weight:bold;color:#1A6B3A;text-align:center;';
+      oriTxt.contentEditable = 'false';
+      oriTxt.textContent = d.orientacao || '';
+      ori.appendChild(oriTit); ori.appendChild(oriTxt);
+      quadro.appendChild(ori);
+
+      // Explicação
+      const expl = pd.createElement('div'); expl.className = 'explicacao';
+      const explTit = pd.createElement('div'); explTit.className = 'explicacao-titulo';
+      explTit.textContent = 'EXPLICAÇÃO';
+      const explTxt = pd.createElement('div'); explTxt.className = 'explicacao-texto';
+      explTxt.contentEditable = 'false';
+      explTxt.textContent = d.explicacao||'';
+      expl.appendChild(explTit); expl.appendChild(explTxt);
+      quadro.appendChild(expl);
+
+      pd.body.appendChild(quadro);
+
+      const btnPrint = pd.createElement('button');
+      btnPrint.className = 'btn-imprimir';
+      btnPrint.textContent = '🖨️ Imprimir / Salvar PDF';
+      btnPrint.onclick = function() { popup.print(); };
+      pd.body.appendChild(btnPrint);
+
+      // Botão editar — torna TODOS os campos editáveis
+      const btnEdit = pd.createElement('button');
+      btnEdit.className = 'btn-imprimir';
+      btnEdit.style.marginLeft = '8px';
+      btnEdit.style.background = '#2c3e6b';
+      btnEdit.textContent = '✏️ Editar Quadro';
+      btnEdit.onclick = function() {
+        const editing = btnEdit.textContent.includes('Editar');
+        pd.querySelectorAll(
+          '.header-titulo div, .voto-label-sim, .voto-conteudo-sim, ' +
+          '.voto-label-nao, .voto-conteudo-nao, ' +
+          '.orientacao-texto, .explicacao-texto'
+        ).forEach(el => {
+          el.contentEditable = editing ? 'true' : 'false';
+          el.style.outline = editing ? '2px dashed #f90' : '';
+          el.style.minHeight = editing ? '1.2em' : '';
+        });
+        btnEdit.textContent = editing ? '✅ Concluir edição' : '✏️ Editar Quadro';
+      };
+      pd.body.appendChild(btnEdit);
+
+    } catch(e) {
+      alert('Erro: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '🖼️ Criar Quadro do DTQ';
+    }
+  }
+
+  async function verTextoDoc(urlDoc, label) {
+    const popup = window.open('', '_blank', 'width=800,height=700,scrollbars=yes,resizable=yes');
+    const pd = popup.document;
+    pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body></body></html>'); pd.close();
+    const st = pd.createElement('style');
+    st.textContent = 'body{font-family:monospace;font-size:13px;padding:20px;line-height:1.6;color:#222} h3{color:#1A6B3A;border-bottom:2px solid #1A6B3A;padding-bottom:8px;margin-bottom:12px} pre{white-space:pre-wrap;word-break:break-word;background:#f8f8f8;padding:15px;border-radius:4px}';
+    pd.head.appendChild(st);
+    const h3 = pd.createElement('h3'); h3.textContent = label; pd.body.appendChild(h3);
+    const loading = pd.createElement('p'); loading.textContent = '⏳ Extraindo texto do PDF...'; loading.style.color = '#666'; pd.body.appendChild(loading);
+    try {
+      const r = await fetch('/extrair_texto_doc', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url_documento: urlDoc})
+      });
+      const j = await r.json();
+      const texto = j.texto || '(texto não extraído — verifique se o PDF está acessível)';
+      loading.remove();
+      const info = pd.createElement('p'); info.style.fontSize = '0.8rem'; info.style.color = '#666';
+      info.textContent = 'Total: ' + texto.length + ' caracteres';
+      pd.body.appendChild(info);
+      const pre = pd.createElement('pre'); pre.textContent = texto; pd.body.appendChild(pre);
+    } catch(e) {
+      loading.textContent = 'Erro: ' + e.message; loading.style.color = 'red';
+    }
+  }
+
+  async function analisarDestaque(btn) {
+    const idPrincipal = btn.dataset.idPrincipal;
+    const descricao   = btn.dataset.descricao || '';
+    const numero      = btn.dataset.numero    || '';
+    const projeto     = btn.dataset.projeto   || '';
+    const autoria     = btn.dataset.autoria   || '';
+
+    if (!idPrincipal) { alert('ID da proposição não encontrado.'); return; }
+
+    // Detecta se é destaque de emenda
+    const ehEmenda = /emenda|emd|subemenda|preferência|preferencia/i.test(descricao);
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+
+    if (ehEmenda) {
+      // número do DTQ (ex: "DTQ 2") — descarta
+      // número da emenda está na descrição (ex: "Emenda de Plenário 3" → 3)
+      // Pega o último número da descrição
+      const todosNumsDesc = descricao.match(/\d+/g) || [];
+      const todosNumsTit  = numero.match(/\d+/g) || [];
+      // Prefere último número da descrição; fallback último do título
+      const numEmenda = todosNumsDesc.length > 0
+        ? todosNumsDesc[todosNumsDesc.length - 1]
+        : (todosNumsTit.length > 0 ? todosNumsTit[todosNumsTit.length - 1] : '');
+
+      let urlEmenda = '';
+      try {
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Buscando Emenda ' + (numEmenda || '') + '...';
+        const urlLista = `https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao=${idPrincipal}&subst=0`;
+        const rLista = await fetch(urlLista);
+        if (!rLista.ok) throw new Error('HTTP ' + rLista.status);
+
+        const html = await rLista.text();
+        const parser = new DOMParser();
+        const doc2 = parser.parseFromString(html, 'text/html');
+
+        if (numEmenda) {
+          // Estratégia 1: âncora emp{N} — padrão oficial da Câmara
+          const anchor = doc2.getElementById('emp' + numEmenda)
+                      || doc2.querySelector('[name="emp' + numEmenda + '"]');
+          if (anchor) {
+            // Coleta links do bloco desta emenda (linha da âncora + próximas linhas)
+            const blocos = [anchor.closest('tr'), anchor.parentElement];
+            let next = (anchor.closest('tr') || anchor).nextElementSibling;
+            for (let i = 0; i < 8 && next; i++, next = next.nextElementSibling) {
+              // Para na próxima âncora emp
+              if (next.querySelector('[id^="emp"], [name^="emp"]')) break;
+              blocos.push(next);
+            }
+            for (const bloco of blocos) {
+              if (!bloco) continue;
+              for (const a of bloco.querySelectorAll('a[href]')) {
+                const href = a.getAttribute('href') || '';
+                const txt  = (a.textContent || '').toLowerCase();
+                // Inteiro Teor é o link correto para o PDF da emenda
+                if (txt.includes('inteiro teor') || txt.includes('texto da emenda') || href.includes('codteor')) {
+                  urlEmenda = href.startsWith('http') ? href : 'https://www.camara.leg.br' + href;
+                  console.log('[DTQ] Emenda ' + numEmenda + ' via âncora emp:', urlEmenda);
+                  break;
+                }
+              }
+              if (urlEmenda) break;
+            }
+          }
+
+          // Estratégia 2: varre linhas com o padrão "EMD N" ou "Emenda N" no texto
+          if (!urlEmenda) {
+            const reNum = new RegExp('(?:EMD|Emenda)\\s*(?:n[º°.]?\\s*)?0*' + numEmenda + '(?!\\d)', 'i');
+            for (const row of doc2.querySelectorAll('tr')) {
+              if (!reNum.test(row.textContent)) continue;
+              for (const a of row.querySelectorAll('a[href]')) {
+                const href = a.getAttribute('href') || '';
+                const txt  = (a.textContent || '').toLowerCase();
+                if (txt.includes('inteiro teor') || href.includes('codteor')) {
+                  urlEmenda = href.startsWith('http') ? href : 'https://www.camara.leg.br' + href;
+                  console.log('[DTQ] Emenda ' + numEmenda + ' via varredura:', urlEmenda);
+                  break;
+                }
+              }
+              if (urlEmenda) break;
+            }
+          }
+        }
+      } catch(eBusca) {
+        console.warn('[DTQ] Erro ao buscar emenda:', eBusca.message);
+      }
+
+      // segue para análise silenciosamente
+
+      _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria, num_emenda: numEmenda, url_emenda: urlEmenda});
+      return;
+    }
+    _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, {autoria, ehEmenda});
+  }
+
+  async function _executarAnaliseDestaque(btn, idPrincipal, descricao, numero, projeto, extraParams) {
+    const autoria    = (extraParams && extraParams.autoria)    || '';
+    const numEmenda  = (extraParams && extraParams.num_emenda) || '';
+    const urlEmenda  = (extraParams && extraParams.url_emenda) || '';
+    const ehEmenda   = /emenda|emd|subemenda/i.test(descricao);
+
+    // Para emenda: vai direto para análise sem modal de seleção de documento
+    if (ehEmenda) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      try {
+        const r = await fetch('/analisar_destaque', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            id_principal: idPrincipal, descricao, numero, projeto,
+            num_emenda: numEmenda, url_emenda: urlEmenda,
+          })
+        });
+        const j = await r.json();
+        if (j.resumo) {
+          const numKey = numero.replace(/\s/g, '-');
+          let box = document.getElementById('analise-destaque-' + numKey);
+          if (!box) {
+            const tr = btn.closest('tr');
+            const ntr = tr ? tr.nextElementSibling : null;
+            if (ntr) box = ntr.querySelector('[id^="analise-destaque-"]');
+          }
+          if (!box) {
+            box = document.createElement('div');
+            box.className = 'mt-2 p-2 border rounded bg-light';
+            btn.closest('td')?.appendChild(box);
+          }
+          box.style.display = 'block';
+          box.innerHTML = j.resumo;
+          // Botão criar quadro
+          const dBtn = document.createElement('div'); dBtn.className = 'mt-2 d-flex gap-2 flex-wrap';
+          const bq = document.createElement('button'); bq.className = 'btn btn-sm btn-dark';
+          bq.textContent = '🖼️ Criar Quadro do DTQ';
+          bq.dataset.projeto = projeto; bq.dataset.numero = numero; bq.dataset.autoria = autoria;
+          bq.dataset.descricao = descricao; bq.dataset.analise = j.resumo;
+          bq.dataset.urlDoc = ''; bq.dataset.labelDoc = j.doc_usado || '';
+          bq.onclick = function() { window.gerarQuadroDTQ(this); };
+          dBtn.appendChild(bq); box.appendChild(dBtn);
+        } else {
+          alert('Erro: ' + (j.error || 'Falha na análise'));
+        }
+      } catch(e) {
+        alert('Erro: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-robot"></i>';
+      }
+      return;
+    }
+
+    try {
+      const r = await fetch('/listar_documentos/' + idPrincipal);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      const docs = j.documentos || [];
+      if (docs.length === 0) { alert('Nenhum documento encontrado.'); return; }
+
+      // === MONTA MODAL VIA DOM (sem innerHTML com dados dinâmicos) ===
+      document.getElementById('modal-sel-doc')?.remove();
+
+      const modalEl  = document.createElement('div');
+      modalEl.id     = 'modal-sel-doc';
+      modalEl.className = 'modal fade';
+      modalEl.setAttribute('tabindex', '-1');
+
+      const mDialog  = document.createElement('div');
+      mDialog.className = 'modal-dialog';
+      const mContent = document.createElement('div');
+      mContent.className = 'modal-content';
+
+      // Header
+      const mHeader = document.createElement('div');
+      mHeader.className = 'modal-header bg-primary text-white';
+      const mTitle = document.createElement('h6');
+      mTitle.className = 'modal-title';
+      mTitle.textContent = 'Selecione o documento para análise';
+      const mClose = document.createElement('button');
+      mClose.type = 'button';
+      mClose.className = 'btn-close btn-close-white';
+      mClose.setAttribute('data-bs-dismiss', 'modal');
+      mHeader.appendChild(mTitle);
+      mHeader.appendChild(mClose);
+
+      // Body
+      const mBody = document.createElement('div');
+      mBody.className = 'modal-body';
+      const mInfo = document.createElement('p');
+      mInfo.className = 'small text-muted mb-2';
+      const mStrong = document.createElement('strong');
+      mStrong.textContent = numero;
+      mInfo.appendChild(mStrong);
+      mInfo.appendChild(document.createTextNode(' — ' + descricao));
+      mBody.appendChild(mInfo);
+      mBody.appendChild(document.createElement('hr'));
+
+      // Opções de documentos
+      docs.forEach((d, i) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'form-check mb-1 d-flex align-items-start gap-2';
+
+        const inp = document.createElement('input');
+        inp.className = 'form-check-input mt-1';
+        inp.type = 'radio';
+        inp.name = 'doc_sel';
+        inp.id   = 'doc_' + i;
+        inp.value = String(i);
+        if (i === 0) inp.checked = true;
+
+        const lbl = document.createElement('label');
+        lbl.className = 'form-check-label small flex-grow-1';
+        lbl.setAttribute('for', 'doc_' + i);
+        lbl.textContent = d.label;
+
+        const btnVer = document.createElement('button');
+        btnVer.type = 'button';
+        btnVer.className = 'btn btn-outline-secondary btn-sm py-0 px-1';
+        btnVer.style.fontSize = '0.7rem';
+        btnVer.textContent = '👁 Ver';
+        btnVer.addEventListener('click', () => verTextoDoc(d.url, d.label));
+
+        wrap.appendChild(inp);
+        wrap.appendChild(lbl);
+        wrap.appendChild(btnVer);
+        mBody.appendChild(wrap);
+      });
+
+      // Footer
+      const mFooter = document.createElement('div');
+      mFooter.className = 'modal-footer';
+
+      const btnCancelar = document.createElement('button');
+      btnCancelar.type = 'button';
+      btnCancelar.className = 'btn btn-secondary btn-sm';
+      btnCancelar.setAttribute('data-bs-dismiss', 'modal');
+      btnCancelar.textContent = 'Cancelar';
+
+      const btnDebug = document.createElement('button');
+      btnDebug.type = 'button';
+      btnDebug.className = 'btn btn-outline-warning btn-sm';
+      btnDebug.innerHTML = '<i class="fas fa-search me-1"></i>Procurar no texto';
+
+      const btnConfirmar = document.createElement('button');
+      btnConfirmar.type = 'button';
+      btnConfirmar.className = 'btn btn-primary btn-sm';
+      btnConfirmar.innerHTML = '<i class="fas fa-robot me-1"></i>Analisar';
+
+      mFooter.appendChild(btnCancelar);
+      mFooter.appendChild(btnDebug);
+      mFooter.appendChild(btnConfirmar);
+
+      mContent.appendChild(mHeader);
+      mContent.appendChild(mBody);
+      mContent.appendChild(mFooter);
+      mDialog.appendChild(mContent);
+      modalEl.appendChild(mDialog);
+      document.body.appendChild(modalEl);
+
+      const modal = new bootstrap.Modal(modalEl);
+      modal.show();
+
+      // === BOTÃO DEBUG ===
+      btnDebug.addEventListener('click', async () => {
+        const sel = mBody.querySelector('input[name="doc_sel"]:checked');
+        if (!sel) return;
+        const doc = docs[parseInt(sel.value)];
+        btnDebug.disabled = true;
+        btnDebug.textContent = '⏳ Carregando...';
+        try {
+          const rd = await fetch('/debug_destaque', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url_documento: doc.url, descricao: descricao})
+          });
+          const jd = await rd.json();
+
+          // Popup via DOM
+          const pu = window.open('', '_blank', 'width=950,height=750,scrollbars=yes,resizable=yes');
+          const pd = pu.document;
+          pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body></body></html>'); pd.close();
+
+          const st = pd.createElement('style');
+          st.textContent = 'body{font-family:Arial,sans-serif;font-size:13px;padding:20px}h3{color:#1A6B3A;margin-bottom:8px}.info{background:#f0f8f0;border-left:3px solid #1A6B3A;padding:8px;margin:8px 0;font-size:12px}.instrucao{background:#fff3cd;border:1px solid #ffc107;padding:10px;border-radius:4px;margin:10px 0}textarea{width:100%;font-family:monospace;font-size:12px;border:1px solid #ccc;padding:8px;resize:vertical}#btn-an{background:#1A6B3A;color:#fff;border:none;padding:8px 20px;border-radius:4px;cursor:pointer;margin-top:8px}#btn-an:disabled{background:#aaa}#res{margin-top:12px;padding:10px;border:1px solid #ccc;border-radius:4px;display:none;background:#f9f9f9}.ok{color:green}.err{color:red}';
+          pd.head.appendChild(st);
+
+          const h3 = pd.createElement('h3'); h3.textContent = '📄 ' + doc.label; pd.body.appendChild(h3);
+          const inf = pd.createElement('div'); inf.className = 'info';
+          inf.innerHTML = 'Chars: ' + jd.total_chars + ' | Refs: ' + JSON.stringify(jd.refs_extraidas) + ' | ' +
+            (jd.busca_info||[]).map(l => '<span class="' + (l.startsWith('✅')?'ok':'err') + '">' + l + '</span>').join(' | ');
+          pd.body.appendChild(inf);
+
+          const ins = pd.createElement('div'); ins.className = 'instrucao';
+          ins.textContent = '💡 Selecione o trecho relevante, cole abaixo e clique em Analisar.';
+          pd.body.appendChild(ins);
+
+          const l1 = pd.createElement('label'); l1.textContent = 'Texto completo:'; pd.body.appendChild(l1);
+          const ta1 = pd.createElement('textarea'); ta1.readOnly = true; ta1.style.height = '280px';
+          ta1.value = jd.texto_completo || jd.primeiros_500 || ''; pd.body.appendChild(ta1);
+
+          const l2 = pd.createElement('label'); l2.style.marginTop = '8px'; l2.style.display = 'block';
+          l2.textContent = 'Trecho para análise:'; pd.body.appendChild(l2);
+          const ta2 = pd.createElement('textarea'); ta2.style.height = '100px';
+          ta2.placeholder = 'Cole o trecho aqui...';
+          ta2.value = (jd.trecho_relevante && !jd.trecho_relevante.startsWith('(não')) ? jd.trecho_relevante : '';
+          pd.body.appendChild(ta2);
+
+          const bAn = pd.createElement('button'); bAn.id = 'btn-an'; bAn.textContent = '🤖 Analisar com IA';
+          pd.body.appendChild(bAn);
+          const divRes = pd.createElement('div'); divRes.id = 'res'; pd.body.appendChild(divRes);
+
+          // Botão salvar no DTQ (aparece após análise)
+          const bSalvar = pd.createElement('button');
+          bSalvar.id = 'btn-salvar-dtq';
+          bSalvar.textContent = '💾 Salvar análise no DTQ';
+          bSalvar.style.cssText = 'display:none;margin-top:8px;margin-left:8px;background:#0d2b5e;color:#fff;border:none;padding:8px 20px;border-radius:4px;cursor:pointer;';
+          pd.body.appendChild(bSalvar);
+
+          bAn.addEventListener('click', async () => {
+            const trecho = ta2.value.trim();
+            if (!trecho) { pu.alert('Cole o trecho antes de analisar.'); return; }
+            bAn.disabled = true; bAn.textContent = '⏳ Analisando...';
+            try {
+              const rr = await fetch('/analisar_destaque', {
+                method: 'POST', credentials: 'same-origin',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id_principal: idPrincipal, descricao, numero, projeto,
+                  url_documento: doc.url, label_documento: doc.label, trecho_manual: trecho})
+              });
+              const jj = await rr.json();
+              divRes.style.display = 'block';
+              divRes.innerHTML = jj.resumo || ('<span style="color:red">Erro: ' + (jj.error||'') + '</span>');
+              if (jj.resumo) bSalvar.style.display = 'inline-block';
+            } catch(err) { pu.alert('Erro: ' + err.message); }
+            finally { bAn.disabled = false; bAn.textContent = '🤖 Analisar com IA'; }
+          });
+
+          bSalvar.addEventListener('click', () => {
+            const analiseHtml = divRes.innerHTML;
+            // Injeta no box de análise na janela principal
+            let box = window.document.getElementById('analise-destaque-' + numero.replace(/\s/g,'-'));
+            if (!box) {
+              // Cria o box e injeta na tabela
+              const trs = window.document.querySelectorAll(`[data-numero="${numero}"]`);
+              const trOrig = trs.length ? trs[0].closest('tr') : null;
+              if (trOrig) {
+                const ntr = trOrig.nextElementSibling;
+                if (ntr) box = ntr.querySelector('[id^="analise-destaque-"]');
+              }
+            }
+            if (!box) {
+              box = window.document.createElement('div');
+              box.id = 'analise-destaque-' + numero.replace(/\s/g,'-');
+              box.className = 'mt-2 p-2 border rounded bg-light';
+              // Tenta adicionar na célula IA
+              const btnOrig = window.document.querySelector(`[data-numero="${numero}"]`);
+              if (btnOrig) btnOrig.closest('td').appendChild(box);
+            }
+            // Monta o conteúdo com botões
+            const inner = box.querySelector('div') || (() => { const d = window.document.createElement('div'); box.appendChild(d); return d; })();
+            inner.innerHTML = '';
+            const dRes = window.document.createElement('div'); dRes.innerHTML = analiseHtml; inner.appendChild(dRes);
+            // Botões criar quadro + editar análise + tabela
+            const dBtn = window.document.createElement('div'); dBtn.className = 'mt-2 d-flex gap-2 flex-wrap';
+            const bq = window.document.createElement('button'); bq.className = 'btn btn-sm btn-dark';
+            bq.textContent = '🖼️ Criar Quadro do DTQ';
+            bq.dataset.projeto = projeto; bq.dataset.numero = numero; bq.dataset.autoria = autoria;
+            bq.dataset.descricao = descricao; bq.dataset.analise = analiseHtml;
+            bq.dataset.urlDoc = doc.url; bq.dataset.labelDoc = doc.label;
+            bq.onclick = function() { window.gerarQuadroDTQ(this); };
+            dBtn.appendChild(bq);
+            const bEdit = window.document.createElement('button'); bEdit.className = 'btn btn-sm btn-outline-secondary';
+            bEdit.textContent = '✏️ Editar Análise';
+            bEdit.onclick = function() {
+              const ta = window.document.createElement('textarea');
+              ta.className = 'form-control mt-1'; ta.rows = 6; ta.style.fontSize = '0.8rem'; ta.value = dRes.innerHTML;
+              const bSv = window.document.createElement('button'); bSv.className = 'btn btn-sm btn-success mt-1'; bSv.textContent = '💾 Salvar edição';
+              bSv.onclick = () => { dRes.innerHTML = ta.value; bq.dataset.analise = ta.value; ta.remove(); bSv.remove(); };
+              inner.appendChild(ta); inner.appendChild(bSv);
+            };
+            dBtn.appendChild(bEdit);
+            const bTab = window.document.createElement('button'); bTab.className = 'btn btn-sm btn-outline-primary';
+            bTab.textContent = '📋 Tabela de Destaques';
+            bTab.onclick = function() { window.gerarTabelaDestaques(projeto); };
+            dBtn.appendChild(bTab);
+            inner.appendChild(dBtn);
+            box.style.display = 'block';
+            bSalvar.textContent = '✅ Salvo!';
+            bSalvar.style.background = '#1A6B3A';
+            setTimeout(() => pu.close(), 1500);
+          });
+
+        } catch(e) { alert('Erro: ' + e.message); }
+        finally { btnDebug.disabled = false; btnDebug.innerHTML = '<i class="fas fa-search me-1"></i>Procurar no texto'; }
+      });
+
+      // === BOTÃO ANALISAR ===
+      btnConfirmar.addEventListener('click', async () => {
+        const sel = mBody.querySelector('input[name="doc_sel"]:checked');
+        if (!sel) return;
+        const doc = docs[parseInt(sel.value)];
+        modal.hide();
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        try {
+          const r2 = await fetch('/analisar_destaque', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({id_principal: idPrincipal, descricao, numero, projeto,
+              url_documento: doc.url, label_documento: doc.label,
+              ...(extraParams || {})})
+          });
+          const j2 = await r2.json();
+          if (j2.resumo) {
+            // Encontra container de resultado
+            const numKey = numero.replace(/\s/g, '-');
+            let box = document.getElementById('analise-destaque-' + numKey);
+            if (!box) {
+              const tr = btn.closest('tr');
+              const ntr = tr ? tr.nextElementSibling : null;
+              if (ntr) box = ntr.querySelector('[id^="analise-destaque-"]');
+            }
+            if (!box) {
+              box = document.createElement('div');
+              box.className = 'mt-2 p-2 border rounded bg-light';
+              btn.closest('td').appendChild(box);
+            }
+            // Insere resultado
+            const inner = box.querySelector('div') || box;
+            inner.innerHTML = '';
+            const dRes = document.createElement('div');
+            dRes.innerHTML = j2.resumo;
+            inner.appendChild(dRes);
+            // Botão criar quadro + editar análise + tabela global
+            const dBtn = document.createElement('div');
+            dBtn.className = 'mt-2 d-flex gap-2 flex-wrap';
+
+            // Botão Criar Quadro DTQ
+            const bq = document.createElement('button');
+            bq.className = 'btn btn-sm btn-dark';
+            bq.textContent = '🖼️ Criar Quadro do DTQ';
+            bq.dataset.projeto   = projeto;
+            bq.dataset.numero    = numero;
+            bq.dataset.autoria   = autoria;
+            bq.dataset.descricao = descricao;
+            bq.dataset.analise   = j2.resumo;
+            bq.dataset.urlDoc    = doc.url;
+            bq.dataset.labelDoc  = doc.label;
+            bq.onclick = function() { gerarQuadroDTQ(this); };
+            dBtn.appendChild(bq);
+
+            // Botão Editar Análise
+            const bEdit = document.createElement('button');
+            bEdit.className = 'btn btn-sm btn-outline-secondary';
+            bEdit.textContent = '✏️ Editar Análise';
+            bEdit.onclick = function() {
+              const dRes2 = inner.querySelector('div');
+              if (!dRes2) return;
+              const ta = document.createElement('textarea');
+              ta.className = 'form-control mt-1'; ta.rows = 8; ta.style.fontSize = '0.8rem';
+              ta.value = dRes2.innerHTML;
+              const bSave = document.createElement('button');
+              bSave.className = 'btn btn-sm btn-success mt-1'; bSave.textContent = '💾 Salvar edição';
+              bSave.onclick = () => {
+                dRes2.innerHTML = ta.value;
+                bq.dataset.analise = ta.value;
+                ta.remove(); bSave.remove(); bEdit.textContent = '✏️ Editar Análise';
+              };
+              inner.appendChild(ta); inner.appendChild(bSave);
+              bEdit.textContent = '↩️ Cancelar';
+            };
+            dBtn.appendChild(bEdit);
+
+            // Botão Tabela de Destaques
+            const bTab = document.createElement('button');
+            bTab.className = 'btn btn-sm btn-outline-primary';
+            bTab.textContent = '📋 Tabela de Destaques';
+            bTab.onclick = function() { gerarTabelaDestaques(projeto); };
+            dBtn.appendChild(bTab);
+
+            inner.appendChild(dBtn);
+            box.style.display = 'block';
+          } else {
+            alert('Erro: ' + (j2.error || 'Resposta vazia'));
+          }
+        } catch(e) { alert('Erro: ' + e.message); }
+        finally { btn.disabled = false; btn.innerHTML = '<i class="fas fa-robot"></i>'; }
+      });
+
+      // Limpa ao fechar
+      modalEl.addEventListener('hidden.bs.modal', () => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-robot"></i>';
+        modalEl.remove();
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('padding-right');
+      });
+
+    } catch(e) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-robot"></i>';
+    }
+  } // fim _executarAnaliseDestaque
+
+  async function limparResumosIA(eventoId) {
+    if (!confirm("Remover resumos IA salvos? Serão regenerados ao recarregar.")) return;
+    const r = await fetch(`/limpar_resumos_ia/${eventoId}`, {method:'POST', credentials:'same-origin'});
+    const j = await r.json();
+    alert(j.message || j.error);
+    if (j.message) location.reload();
+  }
+
+  async function limparCacheEvento(eventoId) {
+    if (!confirm("Limpar cache desta pauta? Os títulos de REQ serão reprocessados ao atualizar.")) return;
+    const r = await fetch(`/limpar_cache/${eventoId}`, {
+      method: 'POST',
+      credentials: 'same-origin'
+    });
+    if (!r.ok) {
+      alert('Erro HTTP: ' + r.status);
+      return;
+    }
+    const j = await r.json();
+    if (j.message) {
+      window.location.href = window.location.href.split('?')[0] + '?force_reload=true';
+    } else {
+      alert(j.error || 'Erro ao limpar cache');
+    }
+  }
+</script>
+
+<!-- MODAL ORIENTAÇÕES v2 -->
+<div class="modal fade" id="modalOrientacoes" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#B8860B,#DAA520);">
+        <h5 class="modal-title text-white">
+          <i class="fas fa-vote-yea me-2"></i>Orientações — Pauta do Plenário
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <div id="ori-loading" class="text-center p-4">
+          <div class="spinner-border text-warning"></div>
+          <p class="mt-2">Carregando orientações...</p>
+        </div>
+        <div id="ori-conteudo" style="display:none; overflow-x:auto;">
+          <table class="table table-bordered table-sm mb-0" id="tabela-orientacoes"
+                 style="font-size:0.82rem; min-width:1000px;">
+            <thead>
+              <tr style="background:#f0f0f0;">
+                <th style="width:35px;">#</th>
+                <th style="width:130px;">Proposição</th>
+                <th>Ementa</th>
+                <th style="width:150px;">Orientação PL</th>
+                <th style="width:150px;">Orientação NOVO</th>
+                <th style="width:150px;">Orientação Oposição</th>
+                <th style="width:150px;">Orientação Minoria</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-orientacoes"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <small class="text-muted me-auto">
+          <i class="fas fa-info-circle me-1"></i>
+          Cada grupo edita apenas sua coluna. Salvo automaticamente ao selecionar.
+        </small>
+        <button class="btn btn-outline-danger btn-sm" onclick="exportarOrientacoesPDF()">
+          <i class="fas fa-file-pdf me-2"></i>Exportar PDF
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// MODAL ORIENTAÇÕES
+// ============================================================
+const USER_CATEGORIA = "{{ user_categoria }}";
+const EVENTO_ID_ORI  = {{ evento_id|safe }};
+
+const ITENS_ORI = [
+  {% for item in itens %}
+  {
+    ordem:                "{{ item.ordem }}",
+    id_principal:         "{{ item.id_principal }}",
+    projeto:              "{{ item.projeto | replace('"','') | replace("'",'') }}",
+    ementa:               {{ item.ementa | tojson }},
+    responsavel_username: "{{ item.responsavel_username or '' }}",
+    responsavel_nome:     "{{ (assessores | selectattr('username','equalto', item.responsavel_username) | list | first).nome if item.responsavel_username else '' }}",
+    responsavel_foto:     "{{ (assessores | selectattr('username','equalto', item.responsavel_username) | list | first).foto if item.responsavel_username else '' }}"
+  }{% if not loop.last %},{% endif %}
+  {% endfor %}
+];
+
+const ORI_OPCOES = ['SIM', 'NÃO', 'NEGOCIAÇÃO', 'LIBERADO', 'OBSTRUÇÃO', 'ABSTENÇÃO'];
+const ORI_CORES  = {
+  'SIM':        '#d4edda',
+  'NÃO':        '#f8d7da',
+  'NEGOCIAÇÃO': '#fff3cd',
+  'LIBERADO':   '#cce5ff',
+  'OBSTRUÇÃO':  '#ffe5d0',
+  'ABSTENÇÃO':  '#e2e3e5',
+  '':           '#ffffff',
+};
+
+function grupoDoUsuario() {
+  const un = "{{ current_user.username }}".toUpperCase();
+  if (un === 'LUISA.MARRECO') return 'todos';
+  if (USER_CATEGORIA === 'restrito') {
+    if (un === 'PL')   return 'PL';
+    if (un === 'NOVO') return 'NOVO';
+  }
+  if (USER_CATEGORIA === 'oposicao') return 'oposicao';
+  if (USER_CATEGORIA === 'minoria')  return 'minoria';
+  return 'todos';
+}
+
+const COLUNAS = [
+  { grupo: 'PL',       label: 'PL'       },
+  { grupo: 'NOVO',     label: 'NOVO'     },
+  { grupo: 'oposicao', label: 'Oposição' },
+  { grupo: 'minoria',  label: 'Minoria'  },
+];
+
+let oriData = {};
+
+async function carregarOrientacoes() {
+  const elLoading  = document.getElementById('ori-loading');
+  const elConteudo = document.getElementById('ori-conteudo');
+  if (elLoading)  elLoading.style.display  = 'block';
+  if (elConteudo) elConteudo.style.display = 'none';
+  try {
+    const r = await fetch(`/get_orientacoes/${EVENTO_ID_ORI}`);
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      if (r.url.includes('login') || r.status === 401) {
+        alert('Sessão expirada. Faça login novamente.');
+        window.location.href = '/login';
+        return;
+      }
+      throw new Error(`Erro do servidor (HTTP ${r.status}) — tente recarregar a página`);
+    }
+    const j = await r.json();
+    console.log('Orientações carregadas:', j.length, j);
+    oriData = {};
+    j.forEach(o => {
+      const key = `${o.id_principal}|${o.grupo}`;
+      oriData[key] = {
+        orientacao: o.orientacao || '',
+        comentario: o.comentario || ''
+      };
+    });
+    renderizarTabela();
+  } catch(e) {
+    console.error('Erro ao carregar orientações:', e);
+    alert('Erro ao carregar orientações: ' + e.message);
+  } finally {
+    if (elLoading)  elLoading.style.display  = 'none';
+    if (elConteudo) elConteudo.style.display = 'block';
+  }
+}
+
+function renderizarTabela() {
+  const tbody    = document.getElementById('tbody-orientacoes');
+  const meuGrupo = grupoDoUsuario();
+  tbody.innerHTML = '';
+
+  ITENS_ORI.forEach((item) => {
+    const tr = document.createElement('tr');
+    const resumoEl = document.getElementById('resumo-ia-' + item.id_principal);
+    const resumo = (resumoEl && resumoEl.textContent.trim()) || '';
+    const ementaHtml = `<span style="color:#333">${item.ementa || ''}</span>` +
+      (resumo ? `<br><span style="color:#1A6B3A;font-weight:500">Resumo: ${resumo}</span>` : '');
+
+    // Responsável: foto + nome em itálico azul
+    let respHtml = '';
+    if (item.responsavel_nome) {
+      const foto = item.responsavel_foto
+        ? `<img src="${item.responsavel_foto}" style="width:20px;height:20px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:4px;border:1px solid #ccc;">`
+        : `<i class="fas fa-user-circle" style="color:#0D2B5E;margin-right:4px;"></i>`;
+      respHtml = `<div style="margin-top:4px;font-size:0.72rem;color:#0D2B5E;font-style:italic;">${foto}${item.responsavel_nome}</div>`;
+    }
+
+    tr.innerHTML = `
+      <td class="text-center fw-bold align-top">${item.ordem}</td>
+      <td class="align-top"><strong>${item.projeto}</strong>${respHtml}</td>
+      <td style="font-size:0.78rem; min-width:200px; white-space:normal; word-break:break-word;">${ementaHtml}</td>`;
+
+    COLUNAS.forEach(col => {
+      const key   = `${item.id_principal}|${col.grupo}`;
+      const salvo = oriData[key] || {orientacao: '', comentario: ''};
+      const podeEditar = (meuGrupo === 'todos' || meuGrupo === col.grupo);
+      const corSelect  = ORI_CORES[salvo.orientacao] || '#fff';
+
+      const td = document.createElement('td');
+      td.style.background = ORI_CORES[salvo.orientacao] || '#ffffff';
+      td.style.padding = '5px';
+      td.style.verticalAlign = 'top';
+      td.style.transition = 'background 0.2s';
+
+      if (podeEditar) {
+        td.innerHTML = `
+          <select class="form-select form-select-sm mb-1"
+                  style="background:${corSelect}; font-size:0.78rem; font-weight:600;"
+                  onchange="salvarOrientacao('${item.id_principal}','${col.grupo}',this.value,this)">
+            <option value="">— selecione —</option>
+            ${ORI_OPCOES.map(op =>
+              `<option value="${op}" ${salvo.orientacao===op?'selected':''}>${op}</option>`
+            ).join('')}
+          </select>
+          <textarea class="form-control form-control-sm"
+                    rows="4"
+                    placeholder="Comentário / justificativa..."
+                    style="font-size:0.75rem; resize:vertical; min-height:80px;"
+                    onchange="salvarComentario('${item.id_principal}','${col.grupo}',this.value)"
+                    >${salvo.comentario}</textarea>`;
+      } else {
+        const badgeCor = salvo.orientacao === 'SIM' ? '#1A6B3A'
+                       : salvo.orientacao === 'NÃO' || salvo.orientacao === 'OBSTRUÇÃO' ? '#8B0000'
+                       : salvo.orientacao === 'LIBERADO' ? '#7B5C00'
+                       : '#555';
+        td.innerHTML = salvo.orientacao
+          ? `<div style="background:${ORI_CORES[salvo.orientacao]};border-radius:4px;padding:3px 6px;
+                         color:${badgeCor};font-weight:700;font-size:0.78rem;text-align:center;">
+               ${salvo.orientacao}
+             </div>
+             ${salvo.comentario
+               ? `<div style="font-size:0.72rem;color:#555;margin-top:4px;white-space:pre-wrap;">${salvo.comentario}</div>`
+               : ''}`
+          : `<span class="text-muted" style="font-size:0.75rem;">—</span>`;
+      }
+      tr.appendChild(td);
+    });
+
+    tbody.appendChild(tr);
+  });
+}
+
+async function salvarOrientacao(id_principal, grupo, orientacao, selectEl) {
+  const cor = ORI_CORES[orientacao] || '#ffffff';
+  selectEl.style.background = cor;
+  const td = selectEl.closest('td');
+  if (td) td.style.background = cor;
+  const key = `${id_principal}|${grupo}`;
+  if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
+  oriData[key].orientacao = orientacao;
+  await _enviarOrientacao(id_principal, grupo);
+}
+
+async function salvarComentario(id_principal, grupo, comentario) {
+  const key = `${id_principal}|${grupo}`;
+  if (!oriData[key]) oriData[key] = {orientacao: '', comentario: ''};
+  oriData[key].comentario = comentario;
+  await _enviarOrientacao(id_principal, grupo);
+}
+
+async function _enviarOrientacao(id_principal, grupo) {
+  const key   = `${id_principal}|${grupo}`;
+  const dados = oriData[key] || {};
+  try {
+    await fetch('/salvar_orientacoes', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        evento_id: EVENTO_ID_ORI,
+        orientacoes: [{
+          id_principal,
+          grupo,
+          orientacao: dados.orientacao || '',
+          comentario: dados.comentario || ''
+        }]
+      })
+    });
+  } catch(e) {
+    console.error('Erro ao salvar:', e);
+  }
+}
+
+async function exportarOrientacoesPDF() {
+  const payload = {
+    evento_id: EVENTO_ID_ORI,
+    itens: ITENS_ORI,
+    orientacoes: oriData,
+    colunas: COLUNAS.map(c => ({grupo: c.grupo, label: c.label}))
+  };
+  const r = await fetch('/exportar_orientacoes_pdf', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const blob = await r.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `orientacoes_plenario_${EVENTO_ID_ORI}.pdf`;
+  a.click();
+}
+</script>
+
+<!-- ═══ MODAL PAUTA ICONOGRÁFICA ══════════════════════════════════════════ -->
+<div class="modal fade" id="modalIconografica" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width:95vw;">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);color:#fff;">
+        <h5 class="modal-title"><i class="fas fa-th-large me-2"></i>Pauta Iconográfica</h5>
+        <div class="ms-auto me-3 d-flex gap-2">
+          <span id="icon-status" class="badge bg-warning text-dark" style="font-size:0.75rem;"></span>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0" style="background:#f4ede1;">
+        <!-- Preview em tempo real -->
+        <div id="icon-preview-container" style="padding:16px;">
+          <div id="icon-preview" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:794px;margin:0 auto;">
+            <!-- Cards gerados via JS -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+        <button class="btn btn-primary" id="btn-gerar-iconografica"
+          onclick="window._gerarIconografica && window._gerarIconografica()">
+          <i class="fas fa-print me-1"></i>Imprimir / Salvar PDF
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Modal de alerta do monitoramento -->
+<div class="modal fade" id="modalMonitorAlerta" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header text-white" style="background:linear-gradient(135deg,#C0392B,#922B21);">
+        <h5 class="modal-title fw-bold">
+          <i class="fas fa-satellite-dish me-2"></i>
+          <span id="monitor-alerta-titulo">Item Em Análise</span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body text-center py-4">
+        <div style="font-size:3rem;margin-bottom:12px;">🔔</div>
+        <div id="monitor-alerta-corpo" style="font-size:1.15rem;font-weight:700;color:#2c3e50;"></div>
+        <div id="monitor-alerta-detalhe" class="text-muted mt-2" style="font-size:0.88rem;"></div>
+        <div id="monitor-alerta-horario" class="mt-2" style="font-size:0.8rem;color:#888;"></div>
+      </div>
+      <div class="modal-footer justify-content-center gap-2">
+        <button type="button" class="btn btn-danger fw-bold px-4" data-bs-dismiss="modal">
+          <i class="fas fa-check me-2"></i>Entendido
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  // ── Agente de Monitoramento da Pauta ──────────────────────────────────────
+  // Faz polling via rota interna /monitor_status que tenta múltiplas fontes.
+  // Dispara popup apenas uma vez por status novo detectado.
+
+  const EVENTO_ID_MON  = window.EVENTO_ID;
+  const INTERVALO_MS   = 45000;
+
+  let _ativo           = false;
+  let _timer           = null;
+  let _baseline        = null;   // snapshot do primeiro fetch
+  let _jaAlertados     = new Set(); // "termo" — dispara só uma vez
+
+  // ── API pública ──────────────────────────────────────────────────────────
+  window.toggleMonitoramento = function() {
+    _ativo ? parar() : iniciar();
+  };
+
+  function iniciar() {
+    _ativo    = true;
+    _baseline = null;
+    _jaAlertados.clear();
+    setBotao(true);
+    setStatus('⏳ iniciando...');
+    checar();
+    _timer = setInterval(checar, INTERVALO_MS);
+  }
+
+  function parar() {
+    _ativo = false;
+    clearInterval(_timer);
+    _timer = null;
+    setBotao(false);
+  }
+
+  function setBotao(ativo) {
+    const btn   = document.getElementById('btn-monitorar');
+    const label = document.getElementById('btn-monitorar-label');
+    const txt   = document.getElementById('monitor-status-txt');
+    if (btn)   btn.style.background = ativo
+      ? 'linear-gradient(135deg,#C0392B,#922B21)'
+      : 'linear-gradient(135deg,#6c757d,#495057)';
+    if (label) label.textContent = ativo ? 'Monitorando...' : 'Monitorar';
+    if (!ativo && txt) txt.textContent = '';
+  }
+
+  function setStatus(txt) {
+    const el = document.getElementById('monitor-status-txt');
+    if (el) el.textContent = txt;
+  }
+
+  // ── Polling ───────────────────────────────────────────────────────────────
+  async function checar() {
+    if (!_ativo) return;
+    const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    setStatus('⏳ verificando...');
+    try {
+      // 1. Tenta API de votações direto no browser (sem passar pelo Railway)
+      const rVot = await fetch(
+        'https://dadosabertos.camara.leg.br/api/v2/votacoes?idEvento=' + EVENTO_ID_MON + '&itens=10&ordem=DESC',
+        {headers: {'Accept':'application/json'}, cache: 'no-store'}
+      );
+      if (rVot.ok) {
+        const jVot = await rVot.json();
+        const votacoes = jVot.dados || [];
+        console.log('[Monitor] API votações OK:', votacoes.length, 'votações');
+        if (votacoes.length > 0) {
+          processarVotacoes(votacoes);
+          setStatus('✓ ' + agora + ' (API votações)');
+          return;
+        }
+      }
+    } catch(e) {
+      console.log('[Monitor] API votações bloqueada:', e.message);
+    }
+
+    try {
+      // 2. Tenta página HTML do evento direto no browser
+      const rHtml = await fetch(
+        'https://www.camara.leg.br/evento-legislativo/' + EVENTO_ID_MON,
+        {cache: 'no-store'}
+      );
+      if (rHtml.ok) {
+        const html = await rHtml.text();
+        const parser = new DOMParser();
+        const doc2 = parser.parseFromString(html, 'text/html');
+        doc2.querySelectorAll('script,style').forEach(el => el.remove());
+        const texto = (doc2.body?.textContent || '').replace(/\s+/g,' ').trim().toLowerCase();
+        console.log('[Monitor] HTML OK:', texto.length, 'chars');
+        processarTexto(texto);
+        setStatus('✓ ' + agora + ' (HTML)');
+        return;
+      }
+    } catch(e) {
+      console.log('[Monitor] HTML bloqueado:', e.message);
+    }
+
+    try {
+      // 3. Fallback: rota interna /monitor_status
+      const rInt = await fetch('/monitor_status/' + EVENTO_ID_MON, {
+        cache: 'no-store', credentials: 'same-origin'
+      });
+      if (rInt.ok) {
+        const dados = await rInt.json();
+        console.log('[Monitor] Rota interna OK. fontes:', dados.fontes_status);
+        const texto = (dados.texto || '').toLowerCase();
+        if (texto.length > 10) processarTexto(texto);
+        (dados.itens || []).forEach(it => {
+          const sit = (it.situacao || '').toLowerCase();
+          if (sit) verificarTermo(sit, it.proposicao || 'Plenário');
+        });
+        setStatus('✓ ' + agora + ' (interno)');
+        return;
+      }
+    } catch(e) {
+      console.log('[Monitor] Rota interna falhou:', e.message);
+    }
+
+    setStatus('⚠️ ' + agora + ' sem dados');
+  }
+
+  // ── Processamento ─────────────────────────────────────────────────────────
+  const TERMOS = [
+    { t: 'em análise',      l: 'Em Análise',     e: '🔴' },
+    { t: 'em votação',      l: 'Em Votação',      e: '🗳️' },
+    { t: 'votação nominal', l: 'Votação Nominal', e: '🗳️' },
+    { t: 'em discussão',    l: 'Em Discussão',    e: '💬' },
+    { t: 'em apreciação',   l: 'Em Apreciação',   e: '🔵' },
+    { t: 'aprovado',        l: 'Aprovado',        e: '✅' },
+    { t: 'rejeitado',       l: 'Rejeitado',       e: '❌' },
+    { t: 'retirado de pauta', l: 'Retirado de Pauta', e: '↩️' },
+  ];
+
+  function processarTexto(texto) {
+    if (_baseline === null) {
+      // Primeira vez — salva quais termos já existem
+      _baseline = new Set(TERMOS.filter(({t}) => texto.includes(t)).map(({t}) => t));
+      console.log('[Monitor] Baseline termos:', [..._baseline]);
+      return;
+    }
+    for (const {t, l, e} of TERMOS) {
+      if (_baseline.has(t)) continue; // já existia no início
+      if (!texto.includes(t)) continue;
+      verificarTermo(t, null, l, e, texto);
+    }
+  }
+
+  function processarVotacoes(votacoes) {
+    for (const v of votacoes) {
+      const prop = v.proposicaoObjeto || v.descricao || '';
+      const sit  = v.dataHoraRegistro ? 'Em Votação' : '';
+      const apr  = v.aprovado;
+      if (!prop) continue;
+
+      if (_baseline === null) {
+        // Primeira chamada — salva estado inicial
+        _baseline = new Set();
+        return;
+      }
+
+      const chave = prop + '|' + sit;
+      if (sit && !_jaAlertados.has(chave)) {
+        _jaAlertados.add(chave);
+        const e = apr === true ? '✅' : apr === false ? '❌' : '🗳️';
+        const l = apr === true ? 'Aprovado' : apr === false ? 'Rejeitado' : 'Em Votação';
+        alertar(e + ' ' + prop, '', l);
+      }
+    }
+  }
+
+  function verificarTermo(termo, propCtx, label, emoji, textoFull) {
+    const chave = termo;
+    if (_jaAlertados.has(chave)) return;
+    _jaAlertados.add(chave);
+
+    label = label || termo;
+    emoji = emoji || '🔴';
+
+    // Tenta casar com item da pauta pelo número
+    const itensNossos = window.ITENS_DATA || [];
+    let itemCasado = null;
+    if (textoFull) {
+      const idx = textoFull.indexOf(termo);
+      const contexto = textoFull.substring(Math.max(0,idx-200), idx+300);
+      for (const it of itensNossos) {
+        const nums = (it.projeto||'').match(/\d{3,}/g) || [];
+        if (nums.some(n => contexto.includes(n))) { itemCasado = it; break; }
+      }
+    }
+    if (!itemCasado && propCtx) {
+      const nums = propCtx.match(/\d{3,}/g) || [];
+      itemCasado = itensNossos.find(it =>
+        (it.projeto||'').match(/\d{3,}/g)?.some(n => nums.includes(n))
+      );
+    }
+
+    const titulo  = itemCasado ? emoji + ' ' + itemCasado.projeto : emoji + ' Plenário';
+    const detalhe = itemCasado ? (itemCasado.ementa||'').substring(0,120) : (propCtx || '');
+    alertar(titulo, detalhe, label);
+  }
+
+  // ── Alerta ────────────────────────────────────────────────────────────────
+  function alertar(titulo, detalhe, situacao) {
+    console.log('[Monitor] ALERTA:', titulo, '|', situacao);
+    const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
+    const s = id => document.getElementById(id);
+    if (s('monitor-alerta-titulo'))  s('monitor-alerta-titulo').textContent  = situacao || 'Mudança';
+    if (s('monitor-alerta-corpo'))   s('monitor-alerta-corpo').textContent   = titulo;
+    if (s('monitor-alerta-detalhe')) s('monitor-alerta-detalhe').textContent = detalhe || '';
+    if (s('monitor-alerta-horario')) s('monitor-alerta-horario').textContent = 'Detectado às ' + agora;
+
+    // Som
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [0, 0.25, 0.5].forEach(t => {
+        const osc = ctx.createOscillator(), g = ctx.createGain();
+        osc.connect(g); g.connect(ctx.destination);
+        osc.frequency.value = 880;
+        g.gain.setValueAtTime(0.3, ctx.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.2);
+        osc.start(ctx.currentTime + t);
+        osc.stop(ctx.currentTime + t + 0.22);
+      });
+    } catch(_) {}
+
+    // Notificação nativa
+    if (Notification.permission === 'granted') {
+      new Notification('🔔 ' + titulo, {body: situacao, icon: '/static/logo_minoria.png'});
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission();
+    }
+
+    // Modal
+    try {
+      bootstrap.Modal.getOrCreateInstance(
+        document.getElementById('modalMonitorAlerta')
+      ).show();
+    } catch(_) {}
+  }
+
+})();
+</script>
+
+
+<script>
+(function() {
+  const _imagens     = {}; // dataURL por id
+  const _imgBusy     = {}; // flag carregando
+  let _cardScale = {}; // escala individual por id (1.0 = padrão)
+  const IMG_H_BASE = 100; // altura padrão de imagem em px
+
+  const C = {cream:"#f4ede1",ink:"#1e3550",inkSoft:"#34547a",forest:"#3d8b4a",leaf:"#7ab450",ruby:"#c0392b",amber:"#f4c542"};
+
+  function oriCfg(o){
+    o=(o||'').toUpperCase();
+    if(o==='SIM')        return{bg:'#2e7d32',icon:'check'};
+    if(o==='NÃO')        return{bg:'#c0392b',icon:'cross'};
+    if(o==='OBSTRUÇÃO')  return{bg:'#c0392b',icon:'lock'};
+    if(o==='NEGOCIAÇÃO') return{bg:'#e6a817',icon:'check'};
+    if(o==='LIBERADO')   return{bg:'#e6a817',icon:'check'};
+    if(o==='ABSTENÇÃO')  return{bg:'#9e9e9e',icon:'check'};
+    return{bg:'#9e9e9e',icon:'check'};
+  }
+
+  function svgIco(t,c){
+    if(t==='check')return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M20 33 L29 42 L45 24" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    if(t==='cross')return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M22 22 L42 42 M42 22 L22 42" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round"/></svg>`;
+    if(t==='lock') return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M24 30 v-4 a8 8 0 0 1 16 0" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/><rect x="22" y="30" width="20" height="16" rx="2" fill="#fff"/></svg>`;
+    return'';
+  }
+
+  function e(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+  // Busca imagem via backend (Gemini para keywords + Pexels)
+  async function buscarImagem(resumo, id) {
+    try {
+      const r = await fetch('/buscar_imagem_item', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({resumo, id_principal: id})
+      });
+      if (!r.ok) return null;
+      const j = await r.json();
+      return j.imagem_url || null;
+    } catch { return null; }
+  }
+
+  const ICON_ORI_OPCOES = ['SIM','NÃO','NEGOCIAÇÃO','LIBERADO','OBSTRUÇÃO','ABSTENÇÃO','—'];
+
+  // Orientação local (editada na pauta iconográfica)
+  const _orientacoes = {}; // sobrescreve a orientação da pauta geral
+  const _marcadores  = {}; // texto customizado do marcador, ex: "PRIORIDADE", "URGENTE"
+
+  // Renderiza um card no preview
+  function renderCard(item, container) {
+    const id  = String(item.id_principal);
+    const scale = _cardScale[id] || 1.0;
+    const imgH = Math.round(IMG_H_BASE * scale);
+    // Orientação: local override > da pauta geral
+    const oriAtual = _orientacoes[id] !== undefined ? _orientacoes[id] : (item.orientacao||'');
+    const cfg = oriCfg(oriAtual);
+    const resumoEl = document.getElementById('resumo-ia-' + id);
+    const resumo = (resumoEl && resumoEl.textContent.trim()) || (window.resumoCache && window.resumoCache[String(item.id_principal)]) || item.resumo_ia || '';
+    const descricao = (resumo || item.ementa || '').substring(0, 180);
+    const imgSrc   = _imagens[id];
+    const marcador = _marcadores[id]; // texto do marcador ou undefined
+    const temMarcador = !!marcador;
+    const shadow   = temMarcador ? `0 0 0 3px ${C.amber},0 6px 14px rgba(0,0,0,.10)` : '0 3px 10px rgba(0,0,0,.06)';
+
+    const selectOri = ICON_ORI_OPCOES.map(o =>
+      `<option value="${o}" ${o===oriAtual?'selected':''}>${o}</option>`
+    ).join('');
+
+    container.innerHTML = `
+      <div style="background:#fff;border-radius:10px;padding:11px 12px 0;position:relative;
+        box-shadow:${shadow};overflow:hidden;font-family:Barlow,sans-serif;">
+        <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${cfg.bg};"></div>
+        ${temMarcador ? `<div style="position:absolute;top:6px;right:6px;background:${C.amber};color:#fff;font-size:8px;font-weight:900;letter-spacing:.8px;padding:2px 6px;border-radius:4px;">★ ${e(marcador)}</div>` : ''}
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;padding-top:2px;">
+          <button class="icon-zoom-btn" data-id="${id}" data-fator="1.2" title="Aumentar" style="border:1px solid #ccc;border-radius:4px;padding:0px 7px;font-size:14px;background:#f8f8f8;cursor:pointer;line-height:1.6;">＋</button>
+          <button class="icon-zoom-btn" data-id="${id}" data-fator="0.83" title="Diminuir" style="border:1px solid #ccc;border-radius:4px;padding:0px 7px;font-size:14px;background:#f8f8f8;cursor:pointer;line-height:1.6;">－</button>
+          <select class="icon-ori-select" data-id="${id}"
+            style="font-size:10px;padding:2px 4px;border:1px solid ${cfg.bg};border-radius:4px;color:${cfg.bg};font-weight:700;background:#fff;cursor:pointer;">
+            ${selectOri}
+          </select>
+          <label style="cursor:pointer;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;padding:2px 7px;font-size:10px;white-space:nowrap;color:#444;">
+            ${imgSrc ? 'Alterar foto' : 'Inserir foto'}
+            <input type="file" accept="image/*" class="d-none icon-img-inline" data-id="${id}">
+          </label>
+          <button class="icon-marcar-btn" data-id="${id}"
+            style="cursor:pointer;background:${temMarcador?C.amber:'#f0f0f0'};color:${temMarcador?'#fff':'#444'};border:1px solid ${temMarcador?C.amber:'#ccc'};border-radius:4px;padding:2px 7px;font-size:10px;white-space:nowrap;">
+            ${temMarcador ? `★ ${e(marcador)}` : 'Marcar'}
+          </button>
+        </div>
+
+        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;padding-left:2px;">
+          <div style="width:22px;height:22px;border-radius:50%;background:${C.inkSoft};color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">${e(item.ordem)}</div>
+          <div style="font-family:Barlow Condensed,sans-serif;font-size:15px;font-weight:800;color:${C.ink};line-height:1.1;">${e(item.projeto||'')}</div>
+        </div>
+
+        ${imgSrc ? `
+        <div class="icon-img-wrapper" data-id="${id}" style="width:100%;margin:5px 0;border-radius:6px;overflow:hidden;background:#f5f5f5;height:${imgH}px;position:relative;">
+          <img src="${imgSrc}" style="width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;">
+          <div class="icon-resize-e" data-id="${id}" style="position:absolute;top:0;right:0;width:10px;height:100%;cursor:ew-resize;background:rgba(30,53,80,0.18);display:flex;align-items:center;justify-content:center;">
+            <div style="width:3px;height:30px;border-radius:2px;background:rgba(255,255,255,0.7);"></div>
+          </div>
+          <div class="icon-resize-n" data-id="${id}" style="position:absolute;top:0;left:0;right:0;height:10px;cursor:ns-resize;background:rgba(30,53,80,0.18);display:flex;align-items:center;justify-content:center;">
+            <div style="width:30px;height:3px;border-radius:2px;background:rgba(255,255,255,0.7);"></div>
+          </div>
+          <div class="icon-resize-ne" data-id="${id}" style="position:absolute;top:0;right:0;width:18px;height:18px;cursor:nesw-resize;background:rgba(30,53,80,0.35);border-radius:0 6px 0 4px;"></div>
+        </div>` : ''}
+
+        <div style="font-size:9px;color:${C.inkSoft};line-height:1.5;padding-left:2px;">
+          <div><strong>Autor:</strong> ${e((item.autor||'N/D').substring(0,60))}</div>
+          <div><strong>Relator:</strong> ${e((item.relator||'N/D').substring(0,60))}</div>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px;margin-top:6px;padding-left:2px;padding-bottom:8px;">
+          <div style="flex:1;font-size:10px;color:#2c3e50;line-height:1.4;">${e(descricao)}</div>
+          <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
+            ${svgIco(cfg.icon, cfg.bg)}
+            <div style="font-size:8px;font-weight:900;color:${cfg.bg};margin-top:2px;letter-spacing:.5px;">${e(oriAtual||'—')}</div>
+          </div>
+        </div>
+        <div style="height:4px;background:linear-gradient(90deg,${C.leaf} 0%,${C.forest} 100%);margin-left:-12px;margin-right:-12px;"></div>
+      </div>`;
+
+    // Listeners de zoom (botões +/-)
+    container.querySelectorAll('.icon-zoom-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        const fator = parseFloat(b.dataset.fator);
+        _cardScale[id] = Math.min(3.0, Math.max(0.4, (_cardScale[id]||1.0) * fator));
+        renderCard(item, container);
+      });
+    });
+
+    // Resize por arraste nas alças da imagem
+    function makeResizeListener(handle, mode) {
+      if (!handle) return;
+      function startResize(clientX, clientY) {
+        const wrapper = container.querySelector('.icon-img-wrapper');
+        if (!wrapper) return;
+        const startX = clientX, startY = clientY;
+        const startW = wrapper.offsetWidth;
+        const startH = wrapper.offsetHeight;
+        function onMove(cx, cy) {
+          if (mode === 'e' || mode === 'ne') {
+            const newW = Math.max(60, startW + (cx - startX));
+            wrapper.style.width = newW + 'px';
+          }
+          if (mode === 'n' || mode === 'ne') {
+            // arrastar para cima diminui, para baixo aumenta (invertido: top fixo)
+            const newH = Math.max(30, startH - (cy - startY));
+            wrapper.style.height = newH + 'px';
+            _cardScale[id] = newH / IMG_H_BASE;
+          }
+        }
+        function onMouseMove(e) { e.preventDefault(); onMove(e.clientX, e.clientY); }
+        function onTouchMove(e) { e.preventDefault(); onMove(e.touches[0].clientX, e.touches[0].clientY); }
+        function cleanup() {
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', cleanup);
+          document.removeEventListener('touchmove', onTouchMove);
+          document.removeEventListener('touchend', cleanup);
+        }
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', cleanup);
+        document.addEventListener('touchmove', onTouchMove, {passive:false});
+        document.addEventListener('touchend', cleanup);
+      }
+      handle.addEventListener('mousedown',  e => { e.preventDefault(); startResize(e.clientX, e.clientY); });
+      handle.addEventListener('touchstart', e => { e.preventDefault(); startResize(e.touches[0].clientX, e.touches[0].clientY); }, {passive:false});
+    }
+    makeResizeListener(container.querySelector('.icon-resize-e'),  'e');
+    makeResizeListener(container.querySelector('.icon-resize-n'),  'n');
+    makeResizeListener(container.querySelector('.icon-resize-ne'), 'ne');
+
+    // Listener: select de orientação
+    container.querySelector('.icon-ori-select')?.addEventListener('change', function() {
+      _orientacoes[id] = this.value;
+      renderCard(item, container);
+    });
+
+    // Listener: trocar imagem
+    container.querySelector('.icon-img-inline')?.addEventListener('change', function() {
+      const file = this.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => { _imagens[id] = ev.target.result; renderCard(item, container); };
+      reader.readAsDataURL(file);
+    });
+
+    // Listener: marcar com texto customizado
+    container.querySelector('.icon-marcar-btn')?.addEventListener('click', function() {
+      if (temMarcador) {
+        // Já tem marcador — remove ou edita
+        const acao = confirm(`Marcador atual: "${marcador}"\n\nOK = editar   Cancelar = remover`);
+        if (acao) {
+          const novo = prompt('Texto do marcador:', marcador);
+          if (novo !== null) { if (novo.trim()) _marcadores[id] = novo.trim().toUpperCase(); else delete _marcadores[id]; }
+        } else {
+          delete _marcadores[id];
+        }
+      } else {
+        const txt = prompt('Texto do marcador (ex: PRIORIDADE, URGENTE, DESTAQUE):', 'PRIORIDADE');
+        if (txt && txt.trim()) _marcadores[id] = txt.trim().toUpperCase();
+      }
+      renderCard(item, container);
+    });
+  }
+
+  // Busca imagens para todos os itens
+  async function buscarTodasImagens(itens) {
+    const status = document.getElementById('icon-status');
+    let n = 0;
+    for (const item of itens) {
+      const id = String(item.id_principal);
+      if (_imagens[id]) { n++; continue; }
+      const resumoEl = document.getElementById('resumo-ia-' + id);
+      const resumo = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || item.ementa || '';
+      const query = resumo.substring(0, 80);
+      if (!query) continue;
+      _imgBusy[id] = true;
+      if (status) status.textContent = `Buscando imagens… ${n+1}/${itens.length}`;
+      // Atualiza placeholder
+      const ph = document.querySelector(`.icon-img-placeholder[data-id="${id}"]`);
+      if (ph) ph.textContent = '⏳ Buscando…';
+      const dataUrl = await buscarImagem(query, id);
+      _imgBusy[id] = false;
+      if (dataUrl) _imagens[id] = dataUrl;
+      n++;
+      // Re-renderiza o card
+      const container = document.querySelector(`[data-card-id="${id}"]`);
+      if (container) {
+        const itemData = itens.find(i => String(i.id_principal) === id);
+        if (itemData) renderCard(itemData, container);
+      }
+    }
+    if (status) status.textContent = '✅ Pronto';
+  }
+
+  async function abrirModalIconografica() {
+    const preview = document.getElementById('icon-preview');
+    if (!preview) return;
+    const itens = window.ITENS_DATA || [];
+
+    // Limpa e renderiza grid
+    preview.innerHTML = '';
+    itens.forEach(item => {
+      const wrapper = document.createElement('div');
+      wrapper.dataset.cardId = String(item.id_principal);
+      wrapper.dataset.iconWrapper = String(item.id_principal);
+      preview.appendChild(wrapper);
+      renderCard(item, wrapper);
+    });
+
+    const modal = new bootstrap.Modal(document.getElementById('modalIconografica'));
+    modal.show();
+  }
+
+  async function b64url(url){
+    try{
+      const r=await fetch(url);const blob=await r.blob();
+      return await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(blob);});
+    }catch{return null;}
+  }
+
+  function buildPrintHTML(data){
+    var PAGE_W=794, PAGE_H=1123, HDR_H=82, GPAD=8, GAP=5, COLS=2, MAX_PP=16;
+
+    var pages=[];
+    for(var pi=0; pi<data.items.length; pi+=MAX_PP)
+      pages.push(data.items.slice(pi,pi+MAX_PP));
+
+    // Fontes fixas em pt — mesmas do preview, escalam se não couberem
+    var F_NOME=16, F_META=14, F_DESC=12, F_ROD=8;
+
+    // Reduz fonte px por px até texto caber em (maxW px largura, maxH px altura, nLines linhas)
+    function fitFont(fPt, text, maxW, maxH, nLines){
+      var f = fPt;
+      while(f > 6){
+        var charsPerLine = Math.max(1, Math.floor(maxW / (f * 0.55)));
+        var linesNeeded  = Math.ceil((text||' ').length / charsPerLine);
+        var heightNeeded = linesNeeded * f * 1.3;
+        if(linesNeeded <= nLines && heightNeeded <= maxH) break;
+        f -= 0.5;
+      }
+      return Math.max(6, f);
+    }
+
+    function buildPage(items, isFirst){
+      var rows  = Math.ceil(items.length / COLS);
+      var hdrH  = isFirst ? HDR_H + 2 : 0;
+      // Margem de segurança de 6px para garantir que nada corta
+      var cardH = Math.floor((PAGE_H - hdrH - GPAD*2 - GAP*(rows-1) - 16) / rows);
+      var cardW = Math.floor((PAGE_W - GPAD*2 - GAP) / COLS);
+
+      // Estrutura interna do card — igual ao preview:
+      // [barra esquerda 4px] [padding 10px lados] [conteúdo]
+      // Linha 1: número + nome proposição (posição absoluta do ícone: canto superior direito)
+      // Linha 2: imagem (se houver)
+      // Linha 3: autor + relator
+      // Linha 4: descrição + ícone canto inferior direito
+      // Linha 5: barra colorida rodapé + assessor
+
+      var PAD   = 10;   // padding lateral
+      var BAR   = 4;    // barra esquerda colorida
+      var txtW  = cardW - BAR - PAD*2; // largura útil do texto
+
+      // Alturas fixas de cada bloco (sem flex, sem surpresa)
+      var icoW   = Math.min(60, Math.max(28, Math.round(cardH * 0.18))); // ícone — máx 60px
+      var H_nome = Math.max(16, Math.round(cardH * 0.16)); // nome
+      var H_meta = Math.max(20, Math.round(cardH * 0.20)); // autor+relator
+      // Responsável removido — descrição ocupa o espaço restante
+      var H_desc = Math.max(16, cardH - H_nome - H_meta - 4);
+
+      // Calcula fMeta global: menor fonte que cabe em TODOS os cards
+      // para que autor/relator fique no mesmo tamanho em todos
+      var fMetaGlobal = F_META;
+      items.forEach(function(it){
+        var metaTxt = 'Autor: '+(it.autor_breve||it.autor||'')+'  |  Relator: '+(it.relator_breve||it.relator||'');
+        var icoWLocal = Math.max(28, Math.round(cardH*0.18));
+        var f = fitFont(F_META, metaTxt, cardW - BAR - PAD*2 - icoWLocal - 10, H_meta, 1);
+        if(f < fMetaGlobal) fMetaGlobal = f;
+      });
+      var fMetaStr = fMetaGlobal + 'pt';
+
+      function buildCard(it){
+        var cfg    = oriCfg(it.orientacao);
+        var numW   = Math.max(14, Math.round(H_nome * 0.85));
+        var txtWNome = txtW - numW - 6 - icoW - 4; // largura para o nome
+
+        // Fontes: fixas, reduzem se não couberem
+        var txtWMeta = txtW - icoW - 10;
+        // Nome: cabe em 1 linha
+        var fNome = fitFont(F_NOME, it.codigo, txtWNome, H_nome, 1) + 'pt';
+        // Meta: usa fonte global (igual em todos os cards), mínimo 10pt
+        var fMeta1 = Math.max(8, fMetaGlobal) + 'pt';
+        var fDesc = fitFont(F_DESC, it.descricao, txtW-2, H_desc, 20) + 'pt';
+
+        var fNum  = Math.max(6, Math.round(numW*0.55)) + 'pt';
+        var fOri  = Math.max(5, Math.round(icoW*0.30)) + 'pt';
+
+        var ico = svgIco(cfg.icon, cfg.bg)
+          .replace(/width="40" height="40"/, 'width="'+icoW+'" height="'+icoW+'"');
+        var oriLbl = '<div style="font-size:'+fOri+';font-weight:900;color:'+cfg.bg+';text-align:center;line-height:1;white-space:nowrap;margin-top:1px;">'+e(it.orientacao||'—')+'</div>';
+
+
         return ''
-    s = re.sub(r'<[^>]+>', '', raw, flags=re.S | re.I)
-    s = ihtml.unescape(s)
-    return re.sub(r'\s+', ' ', s, flags=re.S).strip()
-
-@app.route('/destaques/<id_proposicao>')
-@login_required
-def buscar_destaques(id_proposicao):
-    """Busca destaques em tempo real para uma proposição via scraping do site da Câmara."""
-    url = f"https://www.camara.leg.br/pplen/destaques.html?codOrgao=180&codProposicao={id_proposicao}"
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        html = r.text
-        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, flags=re.S | re.I)
-        destaques = []
-        for row in rows:
-            cols = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, flags=re.S | re.I)
-            if len(cols) < 5:
-                continue
-            numero    = _clean_html(cols[0])
-            autoria   = _clean_html(cols[1])
-            descricao = _clean_html(cols[2])
-            tipo      = _clean_html(cols[3])
-            situacao  = _clean_html(cols[4])
-            if 'DTQ' not in numero.upper():
-                continue
-            destaques.append({
-                'numero':        numero,
-                'autoria':       autoria,
-                'descricao':     descricao,
-                'tipo_destaque': tipo,
-                'situacao':      situacao,
-            })
-        return jsonify({'destaques': destaques, 'total': len(destaques)})
-    except Exception as e:
-        logger.warning(f"Falha ao buscar destaques de {id_proposicao}: {e}")
-        return jsonify({'destaques': [], 'total': 0, 'erro': str(e)})
-
-def buscar_texto_prlp_ou_sbt(id_proposicao):
-    """
-    Busca o texto do último PRLP ou Substitutivo de plenário.
-    Usa o Avulso e as últimas tramitações, verificando o conteúdo do PDF.
-    """
-    from bs4 import BeautifulSoup
-    import pdfplumber
-    from io import BytesIO
-
-    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
-
-    try:
-        url_pag = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}"
-        r = requests.get(url_pag, headers=headers, timeout=12)
-        if not r.ok:
-            return None
-
-        soup = BeautifulSoup(r.text, 'html.parser')
-
-        # Coleta links: primeiro PRLP/SBT pelo filename, depois tramitações recentes, depois avulso
-        prlp_sbt_urls = []  # [(label, url)] com PRLP/SBT no filename
-        tramitacoes   = []  # [(num, url)]
-        avulso_url    = None
-
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            if 'codteor' not in href.lower():
-                continue
-            url_doc  = camara_url(href)
-            m_fn     = re.search(r'filename=([^&"]+)', href)
-            filename = (m_fn.group(1) if m_fn else '').upper()
-
-            # PRLP ou SBT no filename — prioridade máxima
-            # Filenames: PRLP-1-PL-X, SBT-1-PL-X, Parecer-PLEN-*, Substitutivo-*
-            eh_prlp_fn = any(p in filename for p in ['PRLP', 'SBT', 'SUBSTITUT'])
-            eh_parecer_plen = ('PARECER' in filename and
-                               any(p in filename for p in ['PLEN', 'PLENARIO', 'PLENÁRIO']))
-
-            if eh_prlp_fn or eh_parecer_plen:
-                tipo = 'Substitutivo' if any(p in filename for p in ['SBT', 'SUBSTITUT']) else 'PRLP'
-                prlp_sbt_urls.append((tipo, url_doc))
-            elif 'AVULSO' in filename:
-                avulso_url = url_doc
-            else:
-                m_tram = re.search(r'Tramitacao-(\d+)-', filename)
-                if m_tram:
-                    tramitacoes.append((int(m_tram.group(1)), url_doc))
-
-        # Ordena: PRLP/SBT por filename → tramitações recentes (verifica PDF) → avulso
-        tramitacoes.sort(key=lambda x: x[0], reverse=True)
-        candidatos = []
-        for tipo, url in reversed(prlp_sbt_urls):
-            candidatos.append((tipo, url))
-        for num, url in tramitacoes[:8]:  # aumenta para 8 tramitações
-            candidatos.append((f'tram-{num}', url))
-        if avulso_url:
-            candidatos.append(('avulso', avulso_url))
-
-        # Estratégia extra: rastreia links próximos às menções de PRLP/SBT no HTML
-        # As menções são "Apresentação do PRLP n. X PLEN" mas o link está na linha anterior/posterior
-        texto_html = r.text
-        for m in re.finditer(r'PRLP|SUBSTITUT', texto_html, re.IGNORECASE):
-            # Pega trecho ao redor da menção
-            inicio = max(0, m.start() - 500)
-            fim    = min(len(texto_html), m.end() + 500)
-            trecho = texto_html[inicio:fim]
-            # Extrai codteors do trecho
-            for ct in re.findall(r'codteor=(\d+)', trecho):
-                url_doc = f"https://www.camara.leg.br/proposicoesWeb/prop_mostrarintegra?codteor={ct}"
-                # Evita duplicatas
-                if not any(url_doc in c[1] for c in candidatos):
-                    candidatos.append((f'prlp-html-{ct}', url_doc))
-
-        # Remove duplicatas preservando ordem
-        vistos = set()
-        candidatos_unicos = []
-        for label, url in candidatos:
-            if url not in vistos:
-                vistos.add(url)
-                candidatos_unicos.append((label, url))
-        candidatos = candidatos_unicos
-
-        numero_ultimo_prlp = None
-        url_ultimo_prlp = None
-        try:
-            url_pareceres = f"https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao={id_proposicao}"
-            r_par = requests.get(url_pareceres, headers=headers, timeout=12)
-            logger.info(f"Página pareceres: status={r_par.status_code}, tamanho={len(r_par.text)}")
-            if r_par.ok:
-                from bs4 import BeautifulSoup as _BS
-                soup_par = _BS(r_par.text, 'html.parser')
-                # Coleta todos os PRLPs com seus números e links
-                prlps_encontrados = []
-                for row in soup_par.find_all('tr'):
-                    row_txt = row.get_text(' ', strip=True).upper()
-                    if 'PRLP' not in row_txt:
-                        continue
-                    # Extrai número do PRLP
-                    m_num = re.search(r'PRLP\s*[Nn]?[º°.\s]*(\d+)', row_txt, re.IGNORECASE)
-                    if not m_num:
-                        continue
-                    num = int(m_num.group(1))
-                    # Pega o link do PDF
-                    for a in row.find_all('a', href=True):
-                        href = a['href']
-                        if 'codteor' in href.lower():
-                            if href.startswith('http'):
-                                url_doc = href
-                            elif href.startswith('/'):
-                                url_doc = f"https://www.camara.leg.br{href}"
-                            else:
-                                url_doc = f"https://www.camara.leg.br/{href}"
-                            prlps_encontrados.append((num, url_doc))
-                            break
-
-                if prlps_encontrados:
-                    # Pega o PRLP com maior número
-                    prlps_encontrados.sort(key=lambda x: x[0], reverse=True)
-                    numero_ultimo_prlp = str(prlps_encontrados[0][0])
-                    url_ultimo_prlp    = prlps_encontrados[0][1]
-                    logger.info(f"Último PRLP via pareceres: nº {numero_ultimo_prlp} → {url_ultimo_prlp}")
-                else:
-                    # Fallback: extrai só números
-                    todos_prlp = re.findall(r'PRLP\s*[Nn]?[º°.\s]*(\d+)', r_par.text, re.IGNORECASE)
-                    if todos_prlp:
-                        numero_ultimo_prlp = str(max(int(n) for n in todos_prlp))
-                    logger.info(f"PRLPs encontrados (fallback): {todos_prlp} → último: {numero_ultimo_prlp}")
-        except Exception as e:
-            logger.warning(f"Erro ao scrappear pareceres: {e}")
-
-        # Se já temos a URL do último PRLP, coloca no topo dos candidatos
-        if url_ultimo_prlp:
-            candidatos = [(f'prlp-{numero_ultimo_prlp}', url_ultimo_prlp)] + [
-                (l, u) for l, u in candidatos if u != url_ultimo_prlp
-            ]
-
-        # Se já temos URL e número do último PRLP, retorna direto sem baixar PDFs
-        if url_ultimo_prlp and numero_ultimo_prlp:
-            url_pdf_direto = url_ultimo_prlp + ('&' if '?' in url_ultimo_prlp else '?') + 'tipo=PDF'
-            logger.info(f"✅ Retorno direto PRLP {numero_ultimo_prlp}: {url_pdf_direto}")
-            # Tenta confirmar que é PDF válido
-            try:
-                rp_test = requests.get(url_pdf_direto, headers=headers, timeout=15)
-                if rp_test.ok and 'pdf' in rp_test.headers.get('Content-Type','').lower():
-                    import pdfplumber
-                    with pdfplumber.open(BytesIO(rp_test.content)) as pdf:
-                        texto_conf = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
-                    return {
-                        'tipo': 'PRLP',
-                        'numero': numero_ultimo_prlp,
-                        'data': '',
-                        'texto': texto_conf[:8000],
-                        'url_pdf': url_pdf_direto
-                    }
-            except Exception as e:
-                logger.warning(f"Erro ao confirmar PRLP direto: {e}")
-            # Retorna mesmo sem confirmar — a URL está correta
-            return {
-                'tipo': 'PRLP',
-                'numero': numero_ultimo_prlp,
-                'data': '',
-                'texto': '',
-                'url_pdf': url_pdf_direto
-            }
-
-        palavras_prlp_sbt = [
-            'PRLP', 'PARECER PRELIMINAR', 'SUBSTITUTIVO',
-            'PARECER DE PLEN', 'PARECER DO RELATOR DE PLEN',
-        ]
-
-        for label, url_doc in candidatos:
-            url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
-            try:
-                rp = requests.get(url_pdf, headers=headers, timeout=20)
-                if not rp.ok or 'pdf' not in rp.headers.get('Content-Type','').lower():
-                    continue
-                with pdfplumber.open(BytesIO(rp.content)) as pdf:
-                    pag1  = (pdf.pages[0].extract_text() or '').upper()
-                    texto = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
-
-                # PRLP/SBT identificados pelo filename: aceita sempre
-                # Tramitações e Avulso: só aceita se contiver PRLP/Substitutivo
-                eh_prlp_fn = label in ('PRLP', 'Substitutivo')
-                eh_prlp_txt = any(p in pag1 for p in palavras_prlp_sbt)
-
-                if not eh_prlp_fn and not eh_prlp_txt:
-                    continue
-
-                tipo = label if eh_prlp_fn else (
-                    'Substitutivo' if 'SUBSTITUTIVO' in pag1 else 'PRLP'
-                )
-
-                # Número do PRLP: API tem prioridade sobre extração do PDF/HTML
-                numero_prlp = numero_ultimo_prlp  # já calculado via API acima
-
-                # Confirma/sobrescreve com busca no PDF
-                for busca_num in [pag1, texto.upper()[:3000]]:
-                    for pat in [r'PRLP\s*N[º°.]?\s*(\d+)', r'N\.\s*(\d+)\s*PLEN']:
-                        m_num = re.search(pat, busca_num, re.IGNORECASE)
-                        if m_num:
-                            numero_prlp = m_num.group(1)
-                            break
-                    if numero_prlp:
-                        break
-
-                # Fallback: busca no HTML com janela ampla ao redor do codteor
-                if not numero_prlp:
-                    codteor_atual = re.search(r'codteor=(\d+)', url_doc)
-                    if codteor_atual:
-                        ct = codteor_atual.group(1)
-                        for m_ct in re.finditer(rf'codteor={ct}', texto_html):
-                            ini = max(0, m_ct.start() - 3000)
-                            fim = min(len(texto_html), m_ct.end() + 3000)
-                            trecho = texto_html[ini:fim]
-                            logger.info(f"Trecho HTML ao redor de codteor={ct}: {trecho[:500]}")
-                            m_prlp = re.search(r'PRLP\s+[Nn]?[º°.\s]*(\d+)', trecho, re.IGNORECASE)
-                            if m_prlp:
-                                numero_prlp = m_prlp.group(1)
-                                break
-
-                # Último fallback: maior número no HTML + 1 se o doc é mais recente
-                if not numero_prlp:
-                    todos_prlp = re.findall(r'PRLP\s+[Nn][º°.\s]*(\d+)', texto_html, re.IGNORECASE)
-                    if todos_prlp:
-                        maior = max(int(n) for n in todos_prlp)
-                        # Se o documento é uma tramitação recente não listada, é maior+1
-                        if label.startswith('prlp-html-') or label.startswith('tram-'):
-                            numero_prlp = str(maior + 1)
-                        else:
-                            numero_prlp = str(maior)
-                        logger.info(f"Número PRLP estimado: {numero_prlp} (maior no HTML={maior})")
-
-                # Extrai data — busca em todo o texto do documento
-                data = ''
-                texto_busca_data = texto.upper()[:3000]
-                for padrao_data in [
-                    r'APRESENTA[CÇ][AÃ]O[:\s]+(\d{2}/\d{2}/\d{4})',
-                    r'APRESENTA[CÇ][AÃ]O\s*:\s*(\d{2}/\d{2}/\d{4})',
-                ]:
-                    m_data = re.search(padrao_data, texto_busca_data, re.IGNORECASE)
-                    if m_data:
-                        data = m_data.group(1)
-                        break
-
-                if not data:
-                    todas_datas = re.findall(r'(\d{2}/\d{2}/\d{4})', texto_busca_data)
-                    datas_recentes = [d for d in todas_datas if int(d[6:]) >= 2024]
-                    if datas_recentes:
-                        data = datas_recentes[-1]
-                    elif todas_datas:
-                        data = todas_datas[-1]
-
-                # Se não achou no PDF, busca na API
-                if not data:
-                    try:
-                        r_api = requests.get(
-                            f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}",
-                            headers=headers, timeout=8
-                        )
-                        if r_api.ok:
-                            dh = r_api.json().get('dados', {}).get('statusProposicao', {}).get('dataHora', '')
-                            if dh:
-                                data = datetime.fromisoformat(str(dh)[:10]).strftime('%d/%m/%Y')
-                    except Exception:
-                        pass
-                logger.info(f"PDF pag1 (300 chars): {pag1[:300]}")
-                logger.info(f"Documento {tipo} ({label}) para {id_proposicao}: {len(texto)} chars, PRLP nº {numero_prlp}, data {data}")
-                return {'tipo': tipo, 'numero': numero_prlp, 'data': data, 'texto': texto[:8000], 'url_pdf': url_pdf}
-            except Exception as e:
-                logger.warning(f"Erro ao processar {label}: {e}")
-                continue
-
-        return None
-
-    except Exception as e:
-        logger.warning(f"Erro buscar_texto_prlp_ou_sbt({id_proposicao}): {e}")
-    return None
-
-def _extrair_nome_doc_despacho(despacho, tipo_label):
-    """Extrai nome descritivo do documento a partir do texto do despacho."""
-    if not despacho:
-        return tipo_label
-    m = re.search(
-        r'adotad[ao]\s+pel[ao]\s+(?:relator[a]?\s+)?(?:dep\.\s+)?(.{5,80}?)(?:\s*[\.\(]|$)',
-        despacho, re.IGNORECASE
-    )
-    if m:
-        quem = m.group(1).strip().rstrip('.,;')
-        return f"{tipo_label} adotado por {quem}"
-    return f"{tipo_label} ({despacho[:80].strip()}...)" if len(despacho) > 80 else tipo_label
-
-def buscar_ultimo_parecer(id_proposicao):
-    """
-    Busca o último PRLP ou Substitutivo de Plenário via tramitações da proposição.
-    Filtra apenas documentos do Plenário (PLEN, MESA, PRLP, SBT em plenário).
-    """
-    headers = {'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}
-
-    ORGAOS_PLENARIO = {'PLEN', 'MESA', 'PRESID', 'CVT'}
-    SIGLAS_DOC      = {'PRLP', 'SBT', 'SUBSTITUT', 'PARECER PRELIMINAR DE PLEN'}
-
-    try:
-        # Busca tramitações em ordem DESC (mais recente primeiro)
-        url = (f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
-               f"/{id_proposicao}/tramitacoes?itens=50&ordem=DESC")
-        r = requests.get(url, headers=headers, timeout=12)
-
-        if r.ok:
-            trams = r.json().get('dados', [])
-            for t in trams:
-                sigla_orgao = (t.get('siglaOrgao') or '').upper()
-                descricao   = (t.get('descricaoTramitacao') or '').upper()
-                despacho    = (t.get('despacho') or '').upper()
-                texto_busca = f"{descricao} {despacho}"
-
-                # Só plenário
-                eh_plenario = (sigla_orgao in ORGAOS_PLENARIO or
-                               'PLEN' in sigla_orgao or
-                               'PLENÁRIO' in texto_busca or
-                               'PLENARIO' in texto_busca)
-                if not eh_plenario:
-                    continue
-
-                # Verifica se é PRLP ou Substitutivo
-                eh_prlp_ou_sbt = (
-                    'PRLP' in texto_busca or
-                    'SUBSTITUT' in texto_busca or
-                    'PARECER PRELIMINAR' in texto_busca
-                )
-                if not eh_prlp_ou_sbt:
-                    continue
-
-                # Encontrou — extrai data e tipo
-                data_hora = t.get('dataHora', '') or ''
-                data_fmt  = ''
-                if data_hora:
-                    try:
-                        dt = datetime.fromisoformat(str(data_hora)[:10])
-                        data_fmt = dt.strftime('%d/%m/%Y')
-                    except Exception:
-                        data_fmt = str(data_hora)[:10]
-
-                tipo_label = 'Substitutivo' if 'SUBSTITUT' in texto_busca else 'Parecer Preliminar de Plenário (PRLP)'
-                despacho_orig = t.get('despacho', '') or ''
-                nome_doc = _extrair_nome_doc_despacho(despacho_orig, tipo_label)
-
-                logger.info(f"Parecer plenário encontrado para {id_proposicao}: {tipo_label} em {data_fmt}")
-                return {
-                    'tipo':  tipo_label,
-                    'nome':  nome_doc,
-                    'data':  data_fmt,
-                    'orgao': t.get('siglaOrgao', ''),
-                }
-
-        # Fallback: usa statusProposicao do endpoint principal
-        r2 = requests.get(
-            f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}",
-            headers=headers, timeout=10
-        )
-        if r2.ok:
-            status = r2.json().get('dados', {}).get('statusProposicao', {}) or {}
-            despacho   = (status.get('despacho', '') or '').upper()
-            tramitacao = (status.get('descricaoTramitacao', '') or '').upper()
-            sigla_orgao = (status.get('siglaOrgao', '') or '').upper()
-            data_hora   = status.get('dataHora', '') or ''
-
-            eh_plenario   = sigla_orgao in ORGAOS_PLENARIO or 'PLEN' in sigla_orgao
-            eh_prlp_ou_sbt = ('SUBSTITUT' in despacho or 'PRLP' in despacho or
-                               'SUBSTITUT' in tramitacao or 'PRLP' in tramitacao)
-
-            if eh_plenario and eh_prlp_ou_sbt:
-                data_fmt = ''
-                if data_hora:
-                    try:
-                        dt = datetime.fromisoformat(str(data_hora)[:10])
-                        data_fmt = dt.strftime('%d/%m/%Y')
-                    except Exception:
-                        data_fmt = str(data_hora)[:10]
-
-                despacho_orig = status.get('despacho', '') or ''
-                tramitacao_orig = status.get('descricaoTramitacao', '') or ''
-                texto_upper = f"{despacho_orig} {tramitacao_orig}".upper()
-                tipo_label = 'Substitutivo' if 'SUBSTITUT' in texto_upper else 'PRLP'
-
-                # Extrai nome descritivo do despacho
-                nome_doc = _extrair_nome_doc_despacho(despacho_orig, tipo_label)
-
-                return {
-                    'tipo':  tipo_label,
-                    'nome':  nome_doc,
-                    'data':  data_fmt,
-                    'orgao': status.get('siglaOrgao', ''),
-                }
-
-    except Exception as e:
-        logger.warning(f"Erro ao buscar parecer de {id_proposicao}: {e}")
-
-    return None
-
-@app.route('/analisar_ia', methods=['POST'])
-@login_required
-def analisar_ia():
-    data         = request.get_json()
-    projeto      = data.get('projeto', '')
-    ementa       = data.get('ementa', '')
-    autor        = data.get('autor', '')
-    relator      = data.get('relator', '')
-    id_principal = data.get('id_principal', '')
-    url_doc_sel  = data.get('url_documento', '')
-    label_doc    = data.get('label_documento', '')
-
-    gemini_key = os.environ.get('GEMINI_API_KEY', '')
-    groq_key   = os.environ.get('GROQ_API_KEY', '')
-
-    # ── Tratamento especial para REQ de Urgência ──────────────────────────
-    # Analisa o PL referenciado, não o requerimento em si
-    siglas_req = ('REQ', 'RQS', 'RQU', 'REC')
-    proj_base  = projeto.split(' ao ')[0].strip()
-    eh_req     = any(proj_base.upper().startswith(s) for s in siglas_req)
-
-    if eh_req:
-        # Extrai referência ao PL na ementa ou projeto
-        id_pl_ref = None
-        projeto_pl = projeto
-        ementa_pl  = ementa
-        autor_pl   = autor
-        relator_pl = relator
-
-        m_pl = None
-        for txt in [ementa, projeto]:
-            m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL|PLC)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', txt, re.IGNORECASE)
-            if m_pl: break
-            m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL|PLC)\s+([\d.]+)[/\-](\d{4})', txt, re.IGNORECASE)
-            if m_pl: break
-
-        if m_pl:
-            sigla_ref = m_pl.group(1).upper()
-            num_ref   = m_pl.group(2).replace('.', '')
-            ano_ref   = m_pl.group(3)
-            try:
-                r_api = requests.get(
-                    f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
-                    headers={'Accept': 'application/json'}, timeout=8
-                )
-                if r_api.ok:
-                    dados = r_api.json().get('dados', [])
-                    if dados:
-                        id_pl_ref  = str(dados[0].get('id', ''))
-                        ementa_pl  = dados[0].get('ementa', ementa)
-                        projeto_pl = f"{sigla_ref} {num_ref}/{ano_ref}"
-                        logger.info(f"REQ → analisando {projeto_pl} (id={id_pl_ref})")
-            except Exception as e:
-                logger.warning(f"Erro buscar PL do REQ: {e}")
-
-        # Usa dados do PL referenciado para a análise
-        projeto      = projeto_pl
-        ementa       = ementa_pl
-        id_principal = id_pl_ref or id_principal
-        nota_req     = f"<p><em>Este requerimento solicita <strong>urgência</strong> para o {projeto_pl}.</em></p><br>"
-    else:
-        nota_req = ''
-
-    # ── Busca último documento disponível ────────────────────────────────
-    doc_plenario = None
-    parecer_info = None
-
-    # Se usuário selecionou um documento específico, usa ele
-    if url_doc_sel:
-        texto_sel = extrair_texto_documento(url_doc_sel) or ''
-        if texto_sel and not texto_sel.startswith('[PDF escaneado'):
-            doc_plenario = {'tipo': label_doc or 'Documento selecionado', 'numero': '', 'data': '', 'texto': texto_sel[:8000], 'url_pdf': url_doc_sel}
-    
-    if not doc_plenario and id_principal:
-        doc_plenario = buscar_texto_prlp_ou_sbt(id_principal)
-        if not doc_plenario:
-            parecer_info = buscar_ultimo_parecer(id_principal)
-
-    # Monta contexto
-    if doc_plenario and doc_plenario.get('texto'):
-        num_str   = f" nº {doc_plenario['numero']}" if doc_plenario.get('numero') else ''
-        ref_linha = f"{doc_plenario['tipo']}{num_str}" + (f" de {doc_plenario['data']}" if doc_plenario.get('data') else '')
-        contexto_doc = f"\nDocumento de referência: {ref_linha}\n\nTEXTO:\n{doc_plenario['texto']}\n\n---\nFaça a análise com base no texto acima."
-    elif parecer_info:
-        ref_linha    = f"{parecer_info['tipo']} de {parecer_info.get('data','')}"
-        contexto_doc = f"\nDocumento de referência: {ref_linha}"
-    else:
-        ref_linha    = 'texto original da proposição'
-        contexto_doc = ''
-
-    # Detecta se autoria/relator é de partido de esquerda ou governo
-    PARTIDOS_ESQUERDA = {'PT', 'REDE', 'PSOL', 'PCdoB', 'PDT', 'SOLIDARIEDADE', 'GOVERNO'}
-    def tem_partido_esquerda(texto):
-        if not texto: return False
-        for p in PARTIDOS_ESQUERDA:
-            if re.search(rf'\b{re.escape(p)}\b', texto, re.IGNORECASE):
-                return True
-        return False
-
-    eh_esquerda = tem_partido_esquerda(autor) or tem_partido_esquerda(relator)
-
-    secao_criticas = ""
-    if eh_esquerda:
-        secao_criticas = """
-<br>
-<p><strong style="color:#8B0000;">⚠️ CRÍTICAS E PONTOS DE COMBATE</strong><br>
-<em style="color:#8B0000;">[Autoria ou relatoria de partido de esquerda/governo]</em></p>
-<ul>
-<li><strong>Críticas ao mérito:</strong> [principais críticas técnicas — contradições, falhas, impactos negativos]</li>
-<li><strong>Contradições com o discurso da esquerda:</strong> [onde o projeto contradiz posições históricas do PT/PSOL/PCdoB — privatizações, redução de direitos, favorecimento de setores privados]</li>
-<li><strong>Discurso de combate para o Plenário:</strong> [argumento direto e combativo para pronunciamento — inclua exemplos de declarações contraditórias de parlamentares da esquerda]</li>
-<li><strong>Questionamentos ao relator:</strong> [perguntas incisivas para fazer ao relator no plenário]</li>
-</ul>"""
-
-    prompt = f"""Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil, trabalhando para a Oposição e Minoria (bancada do PL e aliados).
-
-**Proposição:** {projeto}
-**Autor(es):** {autor}
-**Relator:** {relator}
-**Ementa:** {ementa}
-{contexto_doc}
-
-Gere uma nota técnica em texto puro seguindo EXATAMENTE esta estrutura.
-REGRA CRÍTICA: cada título de seção (com emoji) deve estar SOZINHO em sua linha, seguido de linha em branco, depois o texto. Nunca coloque texto na mesma linha do emoji/título.
-
-Formato obrigatório:
-
-📘 Resumo técnico
-
-[parágrafo 1]
-
-[parágrafo 2]
-
-🟢 Pontos positivos
-
-[parágrafo 1]
-
-[parágrafo 2]
-
-🔴 Pontos negativos
-
-[parágrafo 1]
-
-[parágrafo 2]
-
-⚖️ Riscos políticos e de imagem
-
-[parágrafo 1]
-
-[parágrafo 2]
-
-↔️ Orientação sugerida
-
-[parágrafo 1]
-
-[parágrafo 2]
-
-Regras de estilo:
-- Sem HTML, sem asteriscos, sem ###
-- Apenas os emojis dos títulos, sem outros emojis no texto
-- Detalhado, estratégico e político
-- Máximo 500 palavras no total
-{secao_criticas}"""
-
-    # Tenta Gemini primeiro, fallback para Groq
-    if gemini_key:
-        try:
-            r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
-                headers={"Content-Type": "application/json"},
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.3}
-                },
-                timeout=30
-            )
-            r.raise_for_status()
-            texto = r.json()['candidates'][0]['content']['parts'][0]['text']
-
-            # Pós-processamento: garante que cada título de seção fique sozinho na linha
-            titulos_secao = ['📘', '🟢', '🔴', '⚖️', '↔️', '⚠️']
-            linhas = texto.split('\n')
-            linhas_corrigidas = []
-            for linha in linhas:
-                linha_strip = linha.strip()
-                # Se a linha começa com emoji de seção mas tem texto depois
-                for emoji in titulos_secao:
-                    if linha_strip.startswith(emoji) and len(linha_strip) > len(emoji) + 30:
-                        # Separa o título do texto
-                        # Encontra onde termina o título (até o primeiro ponto ou dois pontos longo)
-                        idx_sep = linha_strip.find('\n')
-                        # Tenta separar após o nome da seção (ex: "📘 Resumo técnico\nTexto...")
-                        partes = linha_strip.split(None, 5)
-                        if len(partes) >= 3:
-                            # Heurística: título são as primeiras 2-4 palavras com o emoji
-                            titulo_palavras = [partes[0]]  # emoji
-                            i = 1
-                            while i < len(partes) and i < 4:
-                                titulo_palavras.append(partes[i])
-                                i += 1
-                                # Para quando encontrar palavra que parece início de parágrafo
-                                if partes[i-1][-1:] in '.,:' or len(' '.join(titulo_palavras)) > 30:
-                                    break
-                            titulo = ' '.join(titulo_palavras)
-                            resto = linha_strip[len(titulo):].strip()
-                            if resto:
-                                linhas_corrigidas.append(titulo)
-                                linhas_corrigidas.append('')
-                                linhas_corrigidas.append(resto)
-                                break
-                else:
-                    linhas_corrigidas.append(linha)
-
-            texto = '\n'.join(linhas_corrigidas)
-            return jsonify({'resumo': texto, 'fonte': 'gemini', 'parecer': parecer_info})
-        except Exception as e:
-            status = getattr(getattr(e, 'response', None), 'status_code', None)
-            import traceback
-            logger.error(f"Gemini falhou analisar_ia status={status}: {e}\n{traceback.format_exc()[-500:]}")
-            if status == 429:
-                return jsonify({'error': 'Limite de requisições atingido. Aguarde alguns segundos e tente novamente.'}), 429
-            return jsonify({'error': f'Erro Gemini ({status}): {str(e)}'}), 500
-
-    return jsonify({'error': 'GEMINI_API_KEY não configurada.'}), 500
-
-@app.route('/infografico/<int:evento_id>')
-@login_required
-def gerar_infografico(evento_id):
-    from gerar_infografico import gerar_infografico_pdf
-    itens, _ = fetch_pauta(evento_id, force_reload=False)
-    try:
-        r = requests.get(f"https://dadosabertos.camara.leg.br/api/v2/eventos/{evento_id}", timeout=10)
-        d = r.json().get("dados", {})
-        evento = {
-            'id': evento_id,
-            'dataHoraInicio': d.get('dataHoraInicio', ''),
-            'situacao': d.get('situacao', ''),
-            'descricao': d.get('descricao', 'Sessão Deliberativa'),
-            'local': d.get('localCamara', {}).get('nome', 'Plenário') if isinstance(d.get('localCamara'), dict) else 'Plenário'
-        }
-    except Exception:
-        evento = {'id': evento_id, 'dataHoraInicio': '', 'situacao': '', 'descricao': 'Sessão Deliberativa', 'local': 'Plenário'}
-
-    static_path = os.path.join(app.root_path, 'static')
-    # Carrega resumos IA
-    resumos_ia = {}
-    try:
-        conn_ri = get_conn()
-        c_ri = conn_ri.cursor()
-        c_ri.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
-        resumos_ia = {str(r[0]): r[1] for r in c_ri.fetchall()}
-        conn_ri.close()
-    except Exception:
-        pass
-    pdf = gerar_infografico_pdf(evento, itens,
-                                 os.path.join(static_path, 'logo_minoria.png'),
-                                 os.path.join(static_path, 'logo_oposicao.png'),
-                                 resumos_ia=resumos_ia)
-    resp = make_response(pdf)
-    resp.headers['Content-Type'] = 'application/pdf'
-    resp.headers['Content-Disposition'] = f'inline; filename="infografico_plenario_{evento_id}.pdf"'
-    return resp
-
-@app.route('/export-resumo/<int:evento_id>')
-@login_required
-def export_resumo(evento_id):
-    return redirect(url_for('exportar.exportar_pauta', evento_id=evento_id))
-
-from exportar_pauta import exportar_bp
-app.register_blueprint(exportar_bp)
-
-@app.route('/trocar-senha', methods=['GET', 'POST'])
-@login_required
-def trocar_senha():
-    if request.method == 'POST':
-        data         = request.get_json()
-        senha_atual  = data.get('senha_atual', '')
-        nova_senha   = data.get('nova_senha', '').strip()
-        confirma     = data.get('confirma', '').strip()
-        if not nova_senha or len(nova_senha) < 4:
-            return jsonify({'error': 'Nova senha deve ter ao menos 4 caracteres.'}), 400
-        if nova_senha != confirma:
-            return jsonify({'error': 'Nova senha e confirmação não coincidem.'}), 400
-        conn = get_conn()
-        c    = conn.cursor()
-        c.execute('SELECT password FROM users WHERE id=?', (current_user.id,))
-        row = c.fetchone()
-        if not row or not bcrypt.check_password_hash(row[0], senha_atual):
-            conn.close()
-            return jsonify({'error': 'Senha atual incorreta.'}), 400
-        nova_hash = bcrypt.generate_password_hash(nova_senha).decode('utf-8')
-        c.execute('UPDATE users SET password=? WHERE id=?', (nova_hash, current_user.id))
-        conn.commit()
-        conn.close()
-        return jsonify({'message': 'Senha alterada com sucesso!'})
-    return render_template('trocar_senha.html')
-
-@app.route('/admin/usuarios')
-@login_required
-def admin_usuarios():
-    if current_user.role.lower() != 'admin':
-        flash('Acesso restrito.', 'error')
-        return redirect(url_for('selecionar_data'))
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('SELECT id, username, role, categoria, nome_display, foto, responsavel_pauta FROM users ORDER BY id DESC')
-    usuarios = c.fetchall()
-    conn.close()
-    return render_template('admin_usuarios.html', usuarios=usuarios)
-
-@app.route('/admin/usuarios/add', methods=['POST'])
-@login_required
-def add_usuario():
-    if current_user.role.lower() != 'admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    data      = request.get_json()
-    username  = data.get('username', '').strip()
-    password  = data.get('password', '').strip()
-    role      = data.get('role', 'Assessor').strip()
-    categoria = data.get('categoria', 'geral').strip()
-    nome_display = data.get('nome_display', '').strip()
-    if not username or not password:
-        return jsonify({'error': 'Usuário e senha obrigatórios'}), 400
-    hashed = bcrypt.generate_password_hash(password).decode('utf-8')
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        # Verifica se já existe
-        c.execute('SELECT id FROM users WHERE username=?', (username,))
-        if c.fetchone():
-            return jsonify({'error': 'Usuário já existe'}), 409
-        c.execute('INSERT INTO users (username, password, role, categoria, nome_display) VALUES (?, ?, ?, ?, ?)',
-                  (username, hashed, role, categoria, nome_display or username))
-        conn.commit()
-        return jsonify({'message': 'Usuário criado!'})
-    except Exception as e:
-        logger.error(f"Erro add_usuario: {e}")
-        if 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
-            return jsonify({'error': 'Usuário já existe'}), 409
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conn.close()
-
-@app.route('/admin/usuarios/foto/<int:user_id>', methods=['POST'])
-@login_required
-def upload_foto_usuario(user_id):
-    if current_user.role.lower() != 'admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    if 'foto' not in request.files:
-        return jsonify({'error': 'Nenhum arquivo enviado'}), 400
-    f = request.files['foto']
-    if not f.filename:
-        return jsonify({'error': 'Arquivo inválido'}), 400
-    ext = f.filename.rsplit('.', 1)[-1].lower()
-    if ext not in ('jpg', 'jpeg', 'png', 'gif', 'webp'):
-        return jsonify({'error': 'Formato inválido'}), 400
-    import base64
-    data = base64.b64encode(f.read()).decode('utf-8')
-    foto_data = f'data:image/{ext};base64,{data}'
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('UPDATE users SET foto=? WHERE id=?', (foto_data, user_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Foto atualizada!'})
-
-@app.route('/admin/usuarios/nome_display/<int:user_id>', methods=['POST'])
-@login_required
-def update_nome_display(user_id):
-    if current_user.role.lower() != 'admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    data = request.get_json()
-    nome = data.get('nome_display', '').strip()
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('UPDATE users SET nome_display=? WHERE id=?', (nome, user_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Nome atualizado!'})
-
-@app.route('/admin/usuarios/responsavel_pauta/<int:user_id>', methods=['POST'])
-@login_required
-def set_responsavel_pauta(user_id):
-    if current_user.role.lower() != 'admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    data = request.get_json()
-    ativo = 1 if data.get('ativo') else 0
-    conn = get_conn()
-    c = conn.cursor()
-    if ativo:
-        c.execute('UPDATE users SET responsavel_pauta=? WHERE id=?', (ativo, user_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Responsável atualizado!'})
-
-@app.route('/atribuir_responsavel', methods=['POST'])
-@login_required
-def atribuir_responsavel():
-    """Atribui assessor a uma proposição. Admin e responsáveis pela pauta podem fazer isso."""
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        # Admin sempre pode; outros só se forem responsável pela pauta
-        if current_user.role.lower() != 'admin':
-            c.execute('SELECT responsavel_pauta FROM users WHERE id=?', (current_user.id,))
-            row = c.fetchone()
-            if not row or not row[0]:
-                return jsonify({'error': 'Apenas o responsável pela pauta pode atribuir proposições'}), 403
-
-        data = request.get_json()
-        item_key             = data.get('item_key', '')
-        evento_id            = data.get('evento_id', '')
-        responsavel_username = data.get('responsavel_username', '')
-
-        if not item_key:
-            return jsonify({'error': 'item_key obrigatório'}), 400
-
-        # Verifica se nota já existe
-        c.execute('SELECT item_key FROM notas WHERE item_key=?', (item_key,))
-        existe = c.fetchone()
-        if existe:
-            c.execute('UPDATE notas SET responsavel_username=? WHERE item_key=?',
-                      (responsavel_username, item_key))
-        else:
-            c.execute('INSERT INTO notas (item_key, evento_id, responsavel_username) VALUES (?,?,?)',
-                      (item_key, evento_id, responsavel_username))
-        conn.commit()
-        return jsonify({'message': 'Responsável atribuído!'})
-    except Exception as e:
-        logger.error(f"Erro atribuir_responsavel: {e}")
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conn.close()
-
-@app.route('/listar_assessores')
-@login_required
-def listar_assessores():
-    """Lista usuários disponíveis para atribuição de proposição."""
-    try:
-        conn = get_conn()
-        c = conn.cursor()
-        c.execute('SELECT username, nome_display, foto, categoria FROM users WHERE categoria != ? ORDER BY nome_display, username', ('restrito',))
-        rows = c.fetchall()
-        conn.close()
-        assessores = [{'username': r[0], 'nome': r[1] or r[0], 'foto': r[2] or '', 'categoria': r[3] or 'geral'} for r in rows]
-        return jsonify({'assessores': assessores})
-    except Exception as e:
-        logger.error(f"Erro listar_assessores: {e}")
-        return jsonify({'assessores': [], 'error': str(e)})
-
-@app.route('/exportar_orientacoes_pdf', methods=['POST'])
-@login_required
-def exportar_orientacoes_pdf():
-    from io import BytesIO
-    from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.units import cm
-    from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT
-    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                     Table, TableStyle, HRFlowable)
-
-    data     = request.get_json()
-    itens    = data.get('itens', [])
-    ori_data = data.get('orientacoes', {})
-    colunas  = data.get('colunas', [])
-    evento_id = data.get('evento_id', '')
-
-    COR_VERDE  = colors.HexColor("#1A6B3A")
-    COR_AZUL   = colors.HexColor("#0D2B5E")
-    COR_CINZA  = colors.HexColor("#555555")
-    CORES_ORI  = {
-        'SIM':        colors.HexColor("#d4edda"),
-        'NÃO':        colors.HexColor("#f8d7da"),
-        'NEGOCIAÇÃO': colors.HexColor("#fff3cd"),
-        'LIBERADO':   colors.HexColor("#cce5ff"),
-        'OBSTRUÇÃO':  colors.HexColor("#ffe5d0"),
-        'ABSTENÇÃO':  colors.HexColor("#e2e3e5"),
-        '—':         colors.white,
-        '':          colors.white,
-    }
-    CORES_COL = {
-        'PL':       colors.HexColor("#dceefb"),
-        'NOVO':     colors.HexColor("#fde8d8"),
-        'oposicao': colors.HexColor("#fdeaea"),
-        'minoria':  colors.HexColor("#e8f5ee"),
+          // Card externo: altura e largura fixas, overflow:hidden absoluto
+          +'<div style="background:#fff;border-radius:8px;position:relative;'
+          +'height:'+cardH+'px;width:'+cardW+'px;box-sizing:border-box;'
+          +'overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,.08);font-family:Arial,sans-serif;">'
+
+          // Barra esquerda colorida
+          +'<div style="position:absolute;left:0;top:0;bottom:0;width:'+BAR+'px;background:'+cfg.bg+';"></div>'
+
+          // Ícone + orientação: canto superior direito (absoluto)
+          +'<div style="position:absolute;top:6px;right:6px;display:flex;flex-direction:column;align-items:center;z-index:2;">'
+            +ico+oriLbl
+          +'</div>'
+
+          // Conteúdo principal
+          +'<div style="margin-left:'+BAR+'px;padding:6px '+PAD+'px 0;height:'+cardH+'px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;">'
+
+            // LINHA 1: número + nome — altura H_nome
+            +'<div style="height:'+H_nome+'px;display:flex;align-items:center;gap:5px;overflow:hidden;padding-right:'+(icoW+10)+'px;">'
+              +'<div style="width:'+numW+'px;height:'+numW+'px;min-width:'+numW+'px;border-radius:50%;'
+                +'background:'+C.inkSoft+';color:#fff;font-size:'+fNum+';font-weight:900;'
+                +'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
+              // Nome: white-space:nowrap + font calculada para caber em 1 linha — nunca corta
+              +'<div contenteditable="true" style="font-size:'+fNome+';font-weight:800;color:'+C.ink+';line-height:1.1;'
+                +'flex:1;overflow:hidden;white-space:nowrap;outline:none;cursor:text;">'+e(it.codigo)+'</div>'
+            +'</div>'
+
+            // LINHA 2: autor + relator em 1 linha — tudo negrito
+            +'<div style="height:'+H_meta+'px;display:flex;align-items:center;overflow:hidden;padding-right:'+(icoW+10)+'px;">'
+              +'<div contenteditable="true" style="font-size:'+fMeta1+';font-weight:900;color:'+C.inkSoft+';line-height:1.2;overflow:hidden;white-space:nowrap;outline:none;cursor:text;">'
+                +'Autor: '+e(it.autor_breve||it.autor||'')
+                +'<span style="margin:0 5px;opacity:.35;">|</span>'
+                +'Relator: '+e(it.relator_breve||it.relator||'')
+              +'</div>'
+            +'</div>'
+
+            // LINHA 3: descrição — ocupa espaço restante
+            +'<div style="flex:1;min-height:'+H_desc+'px;overflow:hidden;">'
+              +'<div contenteditable="true" data-field="desc" style="font-size:'+fDesc+';color:#2c3e50;line-height:1.3;outline:none;cursor:text;word-break:break-word;height:100%;min-height:'+H_desc+'px;">'+e(it.descricao)+'</div>'
+            +'</div>'
+
+
+
+          +'</div>'
+          +'</div>';
+      }
+
+      var hdrHtml='';
+      if(isFirst){
+        var lMin=data.logo_min
+          ?'<img src="'+data.logo_min+'" style="height:46px;object-fit:contain;">'
+          :'<span style="font-size:9pt;font-weight:900;color:'+C.forest+';">MIN</span>';
+        var lOpo=data.logo_opo
+          ?'<img src="'+data.logo_opo+'" style="height:46px;object-fit:contain;">'
+          :'<span style="font-size:9pt;font-weight:900;color:'+C.ruby+';">OPO</span>';
+        hdrHtml='<div style="height:'+HDR_H+'px;overflow:hidden;box-sizing:border-box;'
+          +'padding:8px 18px 4px;border-bottom:2px solid rgba(30,53,80,.15);'
+          +'display:flex;align-items:center;gap:10px;">'
+          // Logos à esquerda — juntos, sem espaço entre eles
+          +'<div style="display:flex;align-items:center;gap:0;flex-shrink:0;">'+lMin+lOpo+'</div>'
+          // Título: cresce para preencher toda a largura restante, mesma altura dos logos
+          +'<div style="flex:1;display:flex;flex-direction:column;justify-content:center;height:'+(HDR_H-16)+'px;">'
+            +'<div style="font-size:'+Math.round((HDR_H-20)/2.2)+'px;font-weight:900;color:'+C.ink+';line-height:1;white-space:nowrap;overflow:hidden;">Pauta Iconográfica — Plenário da Câmara</div>'
+            +'<div style="font-size:13px;font-weight:600;color:'+C.inkSoft+';margin-top:5px;">'+e(data.data)+'</div>'
+          +'</div>'
+          +'</div>';
+      }
+
+      return '<div style="width:'+PAGE_W+'px;height:'+PAGE_H+'px;overflow:hidden;'
+        +'background:'+C.cream+';page-break-after:always;box-sizing:border-box;">'
+        +hdrHtml
+        +'<div style="padding:'+GPAD+'px;box-sizing:border-box;width:'+PAGE_W+'px;'
+          +'display:grid;grid-template-columns:'+cardW+'px '+cardW+'px;'
+          +'gap:'+GAP+'px;overflow:hidden;">'
+          +items.map(buildCard).join('')
+        +'</div></div>';
     }
 
-    buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
-                            leftMargin=1.2*cm, rightMargin=1.2*cm,
-                            topMargin=1.5*cm, bottomMargin=1.5*cm)
-    SS = getSampleStyleSheet()
-    T  = ParagraphStyle("T", parent=SS["Title"],  fontSize=12, textColor=COR_VERDE, alignment=TA_CENTER)
-    S  = ParagraphStyle("S", parent=SS["Normal"], fontSize=7.5, textColor=COR_CINZA, leading=10, wordWrap='CJK')
-    SB = ParagraphStyle("SB",parent=SS["Normal"], fontSize=7.5, fontName="Helvetica-Bold", leading=10, wordWrap='CJK')
-    SC = ParagraphStyle("SC",parent=SS["Normal"], fontSize=7,   textColor=COR_CINZA, leading=9, wordWrap='CJK', alignment=TA_CENTER)
-
-    story = []
-    story.append(Paragraph("Quadro de Orientações — Plenário da Câmara dos Deputados", T))
-    story.append(Paragraph(f"Gerado em: {now_brasilia().strftime('%d/%m/%Y %H:%M')}", ParagraphStyle("sm", parent=SS["Normal"], fontSize=7.5, textColor=COR_CINZA, alignment=TA_CENTER)))
-    story.append(Spacer(1, 8))
-    story.append(HRFlowable(width="100%", thickness=1, color=COR_VERDE))
-    story.append(Spacer(1, 6))
-
-    # Cabeçalho
-    header = [Paragraph("<b>#</b>", SC),
-              Paragraph("<b>Proposição</b>", SC),
-              Paragraph("<b>Ementa</b>", SC)]
-    for col in colunas:
-        header.append(Paragraph(f"<b>{col['label']}</b>", SC))
-
-    rows = [header]
-    col_widths = [0.7*cm, 2.5*cm, 7*cm] + [4.5*cm] * len(colunas)
-
-    style_cmds = [
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#f0f0f0")),
-        ("GRID",       (0,0), (-1,-1), 0.4, colors.HexColor("#CCCCCC")),
-        ("VALIGN",     (0,0), (-1,-1), "TOP"),
-        ("TOPPADDING", (0,0), (-1,-1), 3),
-        ("BOTTOMPADDING",(0,0),(-1,-1),3),
-        ("FONTSIZE",   (0,0), (-1,-1), 7.5),
-    ]
-
-    for i, item in enumerate(itens):
-        row_num = i + 1
-        row = [
-            Paragraph(str(item.get('ordem','')), SC),
-            Paragraph(f"<b>{item.get('projeto','')}</b>", SB),
-            Paragraph(item.get('ementa',''), S),
-        ]
-        for j, col in enumerate(colunas):
-            key   = f"{item.get('id_principal')}|{col['grupo']}"
-            salvo = ori_data.get(key, {}) or {}
-            ori   = salvo.get('orientacao', '') if isinstance(salvo, dict) else ''
-            com   = salvo.get('comentario', '') if isinstance(salvo, dict) else ''
-            texto = f"<b>{ori}</b>" if ori else "—"
-            if com:
-                texto += f"<br/><font size='6.5' color='#555555'>{com}</font>"
-            row.append(Paragraph(texto, ParagraphStyle("oc", parent=S, alignment=TA_CENTER)))
-            # Cor de fundo da célula
-            cor_bg = CORES_ORI.get(ori, colors.white)
-            col_idx = 3 + j
-            style_cmds.append(("BACKGROUND", (col_idx, row_num), (col_idx, row_num), cor_bg))
-        rows.append(row)
-
-    tbl = Table(rows, colWidths=col_widths, repeatRows=1)
-    tbl.setStyle(TableStyle(style_cmds))
-    story.append(tbl)
-
-    doc.build(story)
-    pdf = buf.getvalue(); buf.close()
-
-    resp = make_response(pdf)
-    resp.headers["Content-Type"] = "application/pdf"
-    resp.headers["Content-Disposition"] = f'attachment; filename="orientacoes_{evento_id}.pdf"'
-    return resp
-
-def buscar_documentos_disponiveis(id_proposicao):
-    """
-    Busca todos os documentos da página prop_pareceres_substitutivos_votos.
-    Sempre inclui o Avulso (texto consolidado) no topo.
-    """
-    from bs4 import BeautifulSoup
-    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
-    docs = []
-    vistos = set()
-
-    # 1. Busca o Avulso (texto integral consolidado) da ficha de tramitação — sempre no topo
-    try:
-        url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}"
-        r_tram = requests.get(url_tram, headers=headers, timeout=12)
-        if r_tram.ok:
-            soup_tram = BeautifulSoup(r_tram.text, 'html.parser')
-            for a in soup_tram.find_all('a', href=True):
-                href = a['href']
-                txt_link = a.get_text(strip=True).lower()
-                if 'codteor' not in href.lower():
-                    continue
-                m_fn = re.search(r'filename=([^&"]+)', href)
-                fn   = (m_fn.group(1) if m_fn else '').upper()
-                # Pega avulso pelo texto do link OU pelo filename
-                eh_avulso = ('AVULSO' in fn and 'LEGISLACAO' not in fn) or txt_link in ('avulsos', 'avulso')
-                if eh_avulso:
-                    url_doc = camara_url(href)
-                    docs.append({
-                        'label':    '📄 Avulso — Texto Integral da Proposição',
-                        'url':      url_doc,
-                        'filename': fn,
-                        'tipo':     'Avulso',
-                        'data':     '',
-                    })
-                    vistos.add(url_doc)
-                    break
-        # Fallback: se scraping falhou (403 etc), adiciona link da ficha de tramitação
-        if not any(d['tipo'] == 'Avulso' for d in docs):
-            docs.append({
-                'label': '📄 Texto da Proposição (ficha de tramitação)',
-                'url':   url_tram,
-                'filename': '',
-                'tipo': 'Avulso',
-                'data': '',
-            })
-    except Exception as e:
-        logger.warning(f"Erro ao buscar avulso: {e}")
-        url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_proposicao}"
-        docs.append({
-            'label': '📄 Texto da Proposição (ficha de tramitação)',
-            'url':   url_tram,
-            'filename': '',
-            'tipo': 'Avulso',
-            'data': '',
-        })
-
-    # 2. Busca todos os documentos da página de pareceres/substitutivos
-    try:
-        url = f"https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao={id_proposicao}"
-        r = requests.get(url, headers=headers, timeout=12)
-        logger.info(f"Página pareceres {id_proposicao}: status={r.status_code}, size={len(r.text)}")
-        if r.ok:
-            soup = BeautifulSoup(r.text, 'html.parser')
-            for row in soup.find_all('tr'):
-                cols = row.find_all('td')
-                if len(cols) < 3:
-                    continue
-                sigla = cols[0].get_text(strip=True)
-                tipo  = cols[1].get_text(strip=True)
-                data  = cols[2].get_text(strip=True)
-                if not sigla:
-                    continue
-                for a in row.find_all('a', href=True):
-                    href = a['href']
-                    if 'codteor' not in href.lower():
-                        continue
-                    url_doc = camara_url(href)
-                    if url_doc in vistos:
-                        continue
-                    vistos.add(url_doc)
-                    label = f"📋 {sigla} — {tipo}"
-                    if data:
-                        label += f" ({data})"
-                    docs.append({
-                        'label':    label,
-                        'url':      url_doc,
-                        'filename': sigla,
-                        'tipo':     tipo,
-                        'data':     data,
-                    })
-    except Exception as e:
-        logger.warning(f"Erro ao buscar pareceres: {e}")
-
-    # 3. Busca emendas via tramitações da API (fonte alternativa quando fichadetramitacao dá 403)
-    try:
-        r_tram = requests.get(
-            f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_proposicao}/tramitacoes?itens=50&ordem=DESC",
-            headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0'}, timeout=10
-        )
-        if r_tram.ok:
-            for t in r_tram.json().get('dados', []):
-                despacho = (t.get('despacho', '') or '').upper()
-                # Detecta menção de emenda no despacho
-                m_emd = re.search(r'EMENDA\s*(?:N[Âº°.]?\s*)?(\d+)', despacho)
-                if m_emd:
-                    num_emd = m_emd.group(1)
-                    label = f"📋 EMD nº {num_emd} — mencionada em tramitação"
-                    # Sem URL direta — será resolvida manualmente
-                    chave = f"EMD{num_emd}"
-                    if chave not in vistos:
-                        vistos.add(chave)
-                        docs.append({
-                            'label':    label,
-                            'url':      '',
-                            'filename': f'EMD{num_emd}',
-                            'tipo':     'Emenda',
-                            'data':     t.get('dataHora', '')[:10],
-                        })
-    except Exception as e:
-        logger.warning(f"Erro busca emendas tramitações: {e}")
-
-    logger.info(f"Total documentos: {len(docs)} — {[d['label'] for d in docs]}")
-    return docs
-
-def extrair_texto_documento(url_doc):
-    """Baixa PDF e extrai texto completo."""
-    import pdfplumber
-    from io import BytesIO
-
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'application/pdf,*/*',
-        'Referer': 'https://www.camara.leg.br/',
-    }
-
-    # Garante URL correta
-    if url_doc.startswith('http') and '/proposicoesWeb/' not in url_doc and 'codteor' in url_doc:
-        m_ct = re.search(r'codteor=(\d+)', url_doc)
-        if m_ct:
-            codteor = m_ct.group(1)
-            url_doc = f"https://www.camara.leg.br/proposicoesWeb/prop_mostrarintegra?codteor={codteor}"
-
-    m_ct = re.search(r'codteor=(\d+)', url_doc)
-    codteor = m_ct.group(1) if m_ct else None
-
-    url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
-    urls_tentar = [url_pdf]
-    if codteor:
-        urls_tentar.append(
-            f"https://www.camara.leg.br/proposicoesWeb/prop_mostrarintegra?codteor={codteor}&tipo=PDF"
-        )
-
-    for url in urls_tentar:
-        try:
-            logger.info(f"Tentando PDF: {url[:120]}")
-            rp = requests.get(url, headers=headers, timeout=60, allow_redirects=True)
-            logger.info(f"  → status={rp.status_code}, CT={rp.headers.get('Content-Type','')[:40]}, size={len(rp.content)}")
-
-            if not rp.ok or len(rp.content) < 1000:
-                continue
-            ct = rp.headers.get('Content-Type', '').lower()
-            if 'pdf' not in ct and not rp.content[:4] == b'%PDF':
-                continue
-
-            with pdfplumber.open(BytesIO(rp.content)) as pdf:
-                n_pags = len(pdf.pages)
-                partes = []
-                for page in pdf.pages:
-                    txt = page.extract_text()
-                    if txt:
-                        partes.append(txt)
-                    else:
-                        # Tenta extract_text com layout para PDFs complexos
-                        txt2 = page.extract_text(layout=True)
-                        if txt2:
-                            partes.append(txt2)
-                texto = '\n'.join(partes).strip()
-
-            logger.info(f"  ✅ Extraído: {len(texto)} chars de {n_pags} páginas")
-
-            if len(texto) < 100 and n_pags > 0:
-                logger.warning(f"  ⚠️ PDF com poucas chars — pode ser PDF de imagem (escaneado)")
-                # Retorna aviso no texto para a IA
-                return f"[PDF escaneado — texto não extraível automaticamente. O documento tem {n_pags} páginas.]\n\nURL: {url}"
-
-            return texto
-        except Exception as e:
-            logger.warning(f"  ❌ Erro em {url[:80]}: {e}")
-            continue
-
-    logger.warning(f"Nenhuma URL funcionou para extrair PDF")
-    return None
-
-@app.route('/extrair_texto_doc', methods=['POST'])
-@login_required
-def extrair_texto_doc():
-    """Extrai e retorna o texto de um PDF para visualização."""
-    data    = request.get_json()
-    url_doc = data.get('url_documento', '')
-    if not url_doc:
-        return jsonify({'texto': '', 'erro': 'URL não fornecida'})
-    texto = extrair_texto_documento(url_doc) or '(texto não extraído — verifique se o PDF está acessível)'
-    return jsonify({'texto': texto, 'chars': len(texto)})
-
-@app.route('/listar_documentos/<int:id_prop>')
-@login_required
-def listar_documentos(id_prop):
-    docs = buscar_documentos_disponiveis(id_prop)
-    return jsonify({'documentos': docs})
-
-@app.route('/gerar_quadro_dtq', methods=['POST'])
-@login_required
-def gerar_quadro_dtq():
-    """Gera conteúdo do quadro DTQ: sim/não e explicação."""
-    data         = request.get_json()
-    projeto      = data.get('projeto', '')
-    numero       = data.get('numero', '')
-    descricao    = data.get('descricao', '')
-    analise_html = data.get('analise_html', '')
-    url_doc_sel  = data.get('url_documento', '')
-    label_doc    = data.get('label_documento', '')
-
-    gemini_key = os.environ.get('GEMINI_API_KEY', '')
-    groq_key   = os.environ.get('GROQ_API_KEY', '')
-
-    # Extrai texto limpo da análise já feita
-    analise_texto = re.sub(r'<[^>]+>', ' ', analise_html).strip()
-
-    # Detecta tipo de destaque pela descrição
-    descricao_upper = descricao.upper()
-
-    # DESTAQUE DE EMENDA ou DESTAQUE DE PREFERÊNCIA:
-    #   SIM = aprova a emenda/preferência → ALTERA o texto do relator
-    #   NÃO = rejeita → MANTÉM o texto do relator
-    eh_emenda_ou_preferencia = (
-        'DESTAQUE DE EMENDA' in descricao_upper or
-        'DESTAQUE DE PREFERÊNCIA' in descricao_upper or
-        'DESTAQUE DE PREFERENCIA' in descricao_upper or
-        any(p in descricao_upper for p in ['EMD ', 'SUBEMENDA', 'EMENDA AGLUTINATIVA'])
-    )
-
-    # DESTAQUE (em separado, supressivo, etc.) — lógica inversa:
-    #   SIM = mantém o texto do relator
-    #   NÃO = altera o texto do relator
-    eh_destaque_separado = not eh_emenda_ou_preferencia
-
-    if eh_emenda_ou_preferencia:
-        regra_sim_nao = """REGRA FUNDAMENTAL para DESTAQUE DE EMENDA e DESTAQUE DE PREFERÊNCIA:
-- O destaque quer votar a emenda/preferência em separado para aprová-la
-- Voto SIM = APROVA a emenda/preferência → ALTERA o texto do relator (acata a mudança)
-- Voto NÃO = REJEITA a emenda/preferência → MANTÉM o texto do relator"""
-        sim_label_default = "Aprova / Altera o texto do relator"
-        nao_label_default = "Rejeita / Mantém o texto do relator"
-    else:
-        regra_sim_nao = """REGRA FUNDAMENTAL para DESTAQUE (em separado, supressivo, etc.):
-- O destaque quer votar um trecho do texto do relator em separado
-- Voto SIM = MANTÉM o texto do relator (aprovado como está)
-- Voto NÃO = ALTERA ou SUPRIME o texto do relator"""
-        sim_label_default = "Mantém o texto do relator"
-        nao_label_default = "Altera / Suprime o texto do relator"
-
-    prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
-
-**Proposição:** {projeto}
-**Destaque:** {numero}
-**Descrição:** {descricao}
-**Análise já realizada:** {analise_texto}
-
-{regra_sim_nao}
-
-Com base na descrição e análise acima, gere APENAS um JSON válido (sem markdown, sem explicações):
-
-{{
-  "titulo": "{projeto} – [título curto da proposição, máx 60 chars]",
-  "dtq": "{numero} - [autoria resumida]",
-  "descricao": "[descrição resumida do destaque, máx 120 chars]",
-  "sim_label": "{sim_label_default}",
-  "sim_conteudo": "[O que significa votar SIM — efeito prático em 1-2 frases curtas]",
-  "nao_label": "{nao_label_default}",
-  "nao_conteudo": "[O que significa votar NÃO — efeito prático em 1-2 frases curtas]",
-  "explicacao": "[Explicação completa do dispositivo destacado e impacto, 3-5 frases]"
-}}
-
-Responda APENAS com o JSON, sem ```json, sem comentários."""
-
-    if gemini_key:
-        try:
-            r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
-                headers={"Content-Type": "application/json"},
-                json={"contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"maxOutputTokens": 512, "temperature": 0.2}},
-                timeout=30
-            )
-            r.raise_for_status()
-            texto = r.json()['candidates'][0]['content']['parts'][0]['text']
-            texto = re.sub(r'```(?:json)?|```', '', texto).strip()
-            dados = json.loads(texto)
-            return jsonify({'ok': True, 'dados': dados})
-        except Exception as e:
-            status = getattr(getattr(e, 'response', None), 'status_code', None)
-            if status == 429:
-                return jsonify({'ok': False, 'error': 'Limite de requisições atingido. Aguarde alguns segundos.'}), 429
-            logger.warning(f"Erro ao gerar quadro DTQ: {e}")
-
-    return jsonify({'ok': False, 'error': 'Falha na IA — verifique a chave Gemini.'}), 500
-
-@app.route('/monitor_status/<int:evento_id>')
-@login_required
-def monitor_status(evento_id):
-    """
-    Retorna status atual dos itens da pauta para o agente de monitoramento.
-    Tenta múltiplas fontes: API votações, API pauta, página HTML.
-    """
-    resultado = {'evento_id': evento_id, 'itens': [], 'texto': '', 'fonte': '', 'fontes_status': {}}
-
-    headers_camara = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/html, */*',
-        'Accept-Language': 'pt-BR,pt;q=0.9',
-        'Referer': 'https://www.camara.leg.br/',
-    }
-
-    # Fonte 1: API de votações
-    try:
-        r = requests.get(
-            f'https://dadosabertos.camara.leg.br/api/v2/votacoes?idEvento={evento_id}&itens=10&ordem=DESC',
-            headers={**headers_camara, 'Accept': 'application/json'}, timeout=8
-        )
-        resultado['fontes_status']['api_votacoes'] = r.status_code
-        if r.ok:
-            votacoes = r.json().get('dados', [])
-            for v in votacoes:
-                resultado['itens'].append({
-                    'proposicao': v.get('proposicaoObjeto', '') or v.get('descricao', ''),
-                    'situacao': 'Em Votação' if v.get('dataHoraRegistro') else '',
-                    'aprovado': v.get('aprovado'),
-                    'sim': v.get('totalVotosSim', ''),
-                    'nao': v.get('totalVotosNao', ''),
-                })
-            resultado['fonte'] = 'api_votacoes'
-    except Exception as e:
-        resultado['fontes_status']['api_votacoes'] = str(e)
-
-    # Fonte 2: Página HTML do evento
-    try:
-        r2 = requests.get(
-            f'https://www.camara.leg.br/evento-legislativo/{evento_id}',
-            headers=headers_camara, timeout=12
-        )
-        resultado['fontes_status']['html_evento'] = r2.status_code
-        if r2.ok and len(r2.text) > 100:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(r2.text, 'html.parser')
-            for tag in soup(['script', 'style', 'noscript']):
-                tag.decompose()
-            texto = ' '.join(soup.get_text(' ').split())
-            resultado['texto'] = texto[:5000]
-            resultado['fonte'] += '+html'
-    except Exception as e:
-        resultado['fontes_status']['html_evento'] = str(e)
-
-    # Fonte 3: API de pauta
-    try:
-        r3 = requests.get(
-            f'https://dadosabertos.camara.leg.br/api/v2/eventos/{evento_id}/pauta',
-            headers={**headers_camara, 'Accept': 'application/json'}, timeout=8
-        )
-        resultado['fontes_status']['api_pauta'] = r3.status_code
-        if r3.ok:
-            pauta = r3.json().get('dados', [])
-            for item in pauta:
-                sit = item.get('situacaoItem', '') or ''
-                if sit:
-                    resultado['itens'].append({
-                        'proposicao': item.get('proposicao', {}).get('siglaTipo', '') + ' ' + str(item.get('proposicao', {}).get('numero', '')),
-                        'situacao': sit,
-                        'aprovado': None,
-                    })
-            if pauta:
-                resultado['fonte'] += '+api_pauta'
-    except Exception as e:
-        logger.warning(f"monitor_status pauta: {e}")
-
-    return jsonify(resultado)
-
-@app.route('/buscar_votos/<int:evento_id>')
-@login_required
-def buscar_votos(evento_id):
-    """Busca resultado das votações do evento via scraping."""
-    from bs4 import BeautifulSoup
-    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
-    votacoes = []
-    try:
-        # Tenta API aberta primeiro
-        r = requests.get(
-            f"https://dadosabertos.camara.leg.br/api/v2/votacoes?idEvento={evento_id}&itens=50&ordem=DESC",
-            headers={'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'},
-            timeout=10
-        )
-        if r.ok:
-            for v in r.json().get('dados', []):
-                votacoes.append({
-                    'id':         v.get('id', ''),
-                    'descricao':  v.get('descricao', '') or '',
-                    'proposicao': v.get('proposicaoObjeto', '') or '',
-                    'sim':        v.get('totalVotosSim', ''),
-                    'nao':        v.get('totalVotosNao', ''),
-                    'abstencao':  v.get('totalVotosAbstencao', '') or 0,
-                    'aprovado':   v.get('aprovado', None),
-                })
-            if votacoes:
-                return jsonify({'votacoes': votacoes, 'total': len(votacoes)})
-    except Exception as e:
-        logger.warning(f"API votações falhou: {e}")
-
-    # Fallback: scraping da página de votações
-    try:
-        url = f"https://www.camara.leg.br/presenca-comissoes/votacao-portal?reuniao={evento_id}"
-        r2 = requests.get(url, headers=headers, timeout=12)
-        if r2.ok:
-            soup = BeautifulSoup(r2.text, 'html.parser')
-            # Procura dados de votação na página
-            for row in soup.find_all('tr'):
-                cols = row.find_all('td')
-                if len(cols) < 3:
-                    continue
-                texto = ' '.join(c.get_text(strip=True) for c in cols)
-                # Procura padrões SIM/NAO
-                m_sim = re.search(r'(\d+)\s*sim', texto, re.IGNORECASE)
-                m_nao = re.search(r'(\d+)\s*n[ãa]o', texto, re.IGNORECASE)
-                if m_sim or m_nao:
-                    votacoes.append({
-                        'descricao':  cols[0].get_text(strip=True) if cols else '',
-                        'proposicao': texto[:80],
-                        'sim':        m_sim.group(1) if m_sim else '',
-                        'nao':        m_nao.group(1) if m_nao else '',
-                        'abstencao':  '',
-                    })
-    except Exception as e:
-        logger.warning(f"Scraping votações falhou: {e}")
-
-    if votacoes:
-        return jsonify({'votacoes': votacoes, 'total': len(votacoes)})
-
-    # Se nada funcionar, retorna vazio para o frontend pedir manual
-    return jsonify({'votacoes': [], 'total': 0, 'info': 'Votos não encontrados automaticamente — insira manualmente.'})
-
-@app.route('/debug_destaque', methods=['POST'])
-@login_required
-def debug_destaque():
-    """Debug: mostra texto extraído e trecho localizado para análise de destaque."""
-    data         = request.get_json()
-    url_doc_sel  = data.get('url_documento', '')
-    descricao    = data.get('descricao', '')
-
-    texto_doc = extrair_texto_documento(url_doc_sel) if url_doc_sel else ''
-
-    refs_leis = re.findall(r'[Ll]ei\s+(?:n[º°.]?\s*)?([\d.]+)[/\-](\d{4})', descricao)
-    texto_relevante = ''
-    busca_info = []
-
-    if texto_doc and refs_leis:
-        for num_lei, ano_lei in refs_leis:
-            num_limpo = num_lei.replace('.', '')
-            for padrao in [num_limpo, num_lei, f"{num_limpo[:1]}.{num_limpo[1:]}"]:
-                m = re.search(re.escape(padrao), texto_doc)
-                if m:
-                    ini = max(0, m.start() - 200)
-                    fim = min(len(texto_doc), m.end() + 3000)
-                    texto_relevante = texto_doc[ini:fim]
-                    busca_info.append(f"✅ Encontrado '{padrao}' na posição {m.start()}")
-                    break
-                else:
-                    busca_info.append(f"❌ Não encontrado '{padrao}'")
-
-    return jsonify({
-        'total_chars':      len(texto_doc),
-        'primeiros_500':    texto_doc[:500],
-        'texto_completo':   texto_doc[:50000],  # até 50k chars para o popup
-        'refs_extraidas':   refs_leis,
-        'busca_info':       busca_info,
-        'trecho_relevante': texto_relevante[:3000] if texto_relevante else '(não localizado)',
-    })
-
-def buscar_texto_emenda(id_proposicao, descricao, num_emenda=None):
-    """
-    Busca o texto da emenda referenciada na descrição do destaque.
-    Acessa prop_emendas e extrai o PDF da emenda específica.
-    """
-    from bs4 import BeautifulSoup
-    import pdfplumber
-    from io import BytesIO
-
-    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
-
-    # Usa o número passado diretamente; só extrai da descrição como fallback
-    if not num_emenda:
-        m_num = re.search(r'(\d+)\s*$', descricao.strip())
-        if not m_num:
-            m_num = re.search(r'(?:EMD|Emenda|EMENDA)\s*(?:[^\d]*)(\d+)', descricao, re.IGNORECASE)
-        num_emenda = m_num.group(1) if m_num else None
-
-    logger.info(f"buscar_texto_emenda: id={id_proposicao} num_emenda={num_emenda}")
-
-    try:
-        url = f"https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao={id_proposicao}&subst=0"
-        r = requests.get(url, headers=headers, timeout=12)
-        if not r.ok:
-            logger.warning(f"Página de emendas retornou {r.status_code}")
-            return None, None
-
-        soup = BeautifulSoup(r.text, 'html.parser')
-
-        # Coleta todas as emendas com seus links
-        emendas = []
-        vistos = set()
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            if 'codteor' not in href and 'mostrarintegra' not in href:
-                continue
-            # Extrai número EXCLUSIVAMENTE pelo EMP+N no parâmetro filename
-            # Ex: filename=EMP+3+%3D%3E → num='3'
-            # Ex: filename=EMP+2+%3D%3E → num='2'  
-            m_emp = re.search(r'[?&]filename=EMP[+](\d+)', href)
-            if not m_emp:
-                # Fallback: qualquer EMP+N no href
-                m_emp = re.search(r'\bEMP[+](\d+)\b', href)
-            if not m_emp:
-                continue
-            num = m_emp.group(1)
-            if num in vistos:
-                continue
-            vistos.add(num)
-            url_doc = camara_url(href)
-            # Pega texto da linha para contexto
-            row = a.find_parent('tr')
-            txt_row = (row.get_text(' ', strip=True) if row else a.get_text(strip=True))[:120]
-            emendas.append((num, url_doc, txt_row))
-            logger.info(f"Emenda EMP+{num}: {href[:80]}")
-
-        if not emendas:
-            # Tenta links diretos com codteor
-            for a in soup.find_all('a', href=True):
-                if 'codteor' in a['href']:
-                    txt_ctx = a.get_text(strip=True)
-                    m = re.search(r'(\d+)', txt_ctx)
-                    num = m.group(1) if m else str(len(emendas)+1)
-                    emendas.append((num, camara_url(a['href']), txt_ctx[:80]))
-
-        logger.info(f"Emendas encontradas para {id_proposicao}: {[(e[0],e[2][:60]) for e in emendas]}")
-
-        # Seleciona a emenda correta
-        emenda_sel = None
-        if num_emenda:
-            # 1. Tenta pelo número exato do EMP (EMP+3 → num='3')
-            emenda_sel = next((e for e in emendas if e[0] == num_emenda), None)
-
-            # 2. Se não encontrou EMP+N, pega a N-ésima da lista (contagem ordinal)
-            # Ex: "Emenda n. 3" → 3ª emenda disponível (índice 2)
-            if not emenda_sel:
-                idx = int(num_emenda) - 1
-                if 0 <= idx < len(emendas):
-                    emenda_sel = emendas[idx]
-                    logger.info(f"EMP+{num_emenda} não encontrado — usando {idx+1}ª emenda da lista: EMP+{emenda_sel[0]}")
-                else:
-                    logger.warning(f"Emenda n. {num_emenda} não encontrada. Disponíveis: {[e[0] for e in emendas]}")
-
-        if not emenda_sel and emendas:
-            emenda_sel = emendas[0]
-
-        if not emenda_sel:
-            return None, None
-
-        num_sel, url_emenda, label_sel = emenda_sel
-        logger.info(f"Emenda selecionada: nº {num_sel} — {url_emenda}")
-
-        # Extrai texto do PDF da emenda
-        url_pdf = url_emenda + ('&' if '?' in url_emenda else '?') + 'tipo=PDF'
-        rp = requests.get(url_pdf, headers=headers, timeout=20)
-        if not rp.ok or 'pdf' not in rp.headers.get('Content-Type','').lower():
-            # Tenta sem tipo=PDF
-            rp = requests.get(url_emenda, headers=headers, timeout=20)
-
-        if rp.ok and len(rp.content) > 500:
-            with pdfplumber.open(BytesIO(rp.content)) as pdf:
-                texto = '\n'.join(p.extract_text() or '' for p in pdf.pages).strip()
-            if texto:
-                return texto, f"Emenda nº {num_sel}"
-
-    except Exception as e:
-        logger.warning(f"Erro ao buscar emenda {id_proposicao}: {e}")
-
-    return None, None
-
-
-@app.route('/listar_emendas/<int:id_prop>')
-@login_required
-def listar_emendas(id_prop):
-    """Lista todas as emendas disponíveis para uma proposição."""
-    from bs4 import BeautifulSoup
-    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
-    try:
-        url = f"https://www.camara.leg.br/proposicoesWeb/prop_emendas?idProposicao={id_prop}&subst=0"
-        r = requests.get(url, headers=headers, timeout=12)
-        if not r.ok:
-            return jsonify({'emendas': [], 'erro': f'HTTP {r.status_code}'})
-
-        soup = BeautifulSoup(r.text, 'html.parser')
-        emendas = []
-        vistos = set()
-
-        for row in soup.find_all('tr'):
-            txt = row.get_text(' ', strip=True)
-            m = re.search(r'(?:EMD|Emenda)\s*[Nn]?[º°.]?\s*(\d+)', txt, re.IGNORECASE)
-            if not m:
-                continue
-            num = m.group(1)
-            if num in vistos:
-                continue
-            vistos.add(num)
-            # Pega o link do PDF
-            link = row.find('a', href=True)
-            if link:
-                url_doc = camara_url(link['href'])
-                label = f"Emenda nº {num}"
-                # Tenta extrair mais info (autor, tipo)
-                m_tipo = re.search(r'(Aglutinativa|Substitutiva|de Plenário)', txt, re.IGNORECASE)
-                if m_tipo:
-                    label = f"Emenda {m_tipo.group(1)} nº {num}"
-                emendas.append({'num': num, 'label': label, 'url': url_doc, 'txt': txt[:100]})
-
-        # Ordena por número
-        emendas.sort(key=lambda e: int(e['num']) if e['num'].isdigit() else 0)
-        logger.info(f"Emendas para {id_prop}: {[e['label'] for e in emendas]}")
-        return jsonify({'emendas': emendas, 'total': len(emendas)})
-    except Exception as e:
-        logger.warning(f"listar_emendas {id_prop}: {e}")
-        return jsonify({'emendas': [], 'erro': str(e)})
-
-@app.route('/analisar_destaque', methods=['POST'])
-@login_required
-def analisar_destaque():
-    data         = request.get_json()
-    id_principal = data.get('id_principal', '')
-    descricao    = data.get('descricao', '')
-    numero       = data.get('numero', '')
-    projeto      = data.get('projeto', '')
-    url_doc_sel  = data.get('url_documento', '')
-    label_doc    = data.get('label_documento', '')
-    trecho_manual = data.get('trecho_manual', '')  # trecho selecionado manualmente pelo usuário
-
-    gemini_key = os.environ.get('GEMINI_API_KEY', '')
-    groq_key   = os.environ.get('GROQ_API_KEY', '')
-
-    # ── Destaque de emenda: busca e analisa o texto da emenda diretamente ──
-    descricao_upper = descricao.upper()
-    eh_emenda = any(p in descricao_upper for p in ['EMENDA', 'EMD', 'SUBEMENDA'])
-
-    # ── Destaque de emenda: usa URL passada diretamente pelo frontend ──
-    url_emenda_sel = data.get('url_emenda', '')  # URL específica da emenda selecionada
-    num_emenda_sel = data.get('num_emenda', '')
-
-    if eh_emenda and id_principal and not trecho_manual:
-        # Usa o número enviado pelo frontend (já extraído corretamente do título do DTQ)
-        num_emenda_desc = num_emenda_sel or ''
-
-        # Se não veio do frontend, tenta extrair da descrição
-        if not num_emenda_desc:
-            m_num_emd = re.search(r'(\d+)\s*$', descricao.strip())
-            if not m_num_emd:
-                m_num_emd = re.search(r'(?:EMD|Emenda)\s*(?:[^\d]*)(\d+)', descricao, re.IGNORECASE)
-            num_emenda_desc = m_num_emd.group(1) if m_num_emd else ''
-
-        logger.info(f"Analisando emenda nº '{num_emenda_desc}' (frontend enviou: '{num_emenda_sel}') | descrição: {descricao}")
-
-        # Se frontend passou URL específica, usa ela
-        if url_emenda_sel:
-            texto_emenda = extrair_texto_documento(url_emenda_sel) or ''
-            label_emenda = f"Emenda nº {num_emenda_desc}" if num_emenda_desc else 'Emenda selecionada'
-        else:
-            # Busca PDF pelo número da emenda
-            texto_emenda, label_emenda = buscar_texto_emenda(id_principal, descricao, num_emenda_desc)
-
-        if texto_emenda:
-            tipo_doc = label_emenda or 'Emenda'
-            regra = ('REGRA: Voto SIM = APROVA a emenda → altera texto do relator. '
-                     'Voto NÃO = REJEITA a emenda → mantém texto do relator.')
-            prompt_emenda = f"""Você é um assessor legislativo da Câmara dos Deputados.
-
-**Proposição:** {projeto}
-**Destaque:** {numero} — {descricao}
-**Documento:** {tipo_doc}
-
-TEXTO DA EMENDA:
-{texto_emenda[:8000]}
-
-{regra}
-
-Gere análise em HTML:
-
-<p><strong>Objeto:</strong> [o que a emenda propõe alterar em 1 frase]</p>
-<br>
-<p><strong>Texto da Emenda:</strong></p>
-<blockquote style="border-left:3px solid #1A6B3A;padding-left:10px;color:#333;font-style:italic;">
-[trecho principal da emenda, literalmente]
-</blockquote>
-<br>
-<p><strong>Voto SIM (aprova a emenda):</strong><br>[efeito prático — o que muda. Máx 80 palavras.]</p>
-<br>
-<p><strong>Voto NÃO (rejeita a emenda):</strong><br>[texto do relator prevalece — impacto. Máx 60 palavras.]</p>
-
-Não use ### ou ** fora do HTML."""
-
-            if gemini_key:
-                try:
-                    r = requests.post(
-                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
-                        headers={"Content-Type": "application/json"},
-                        json={"contents": [{"parts": [{"text": prompt_emenda}]}],
-                              "generationConfig": {"maxOutputTokens": 512, "temperature": 0.3}},
-                        timeout=30
-                    )
-                    r.raise_for_status()
-                    texto_resp = r.json()['candidates'][0]['content']['parts'][0]['text']
-                    return jsonify({'resumo': texto_resp, 'doc_usado': tipo_doc})
-                except Exception as e:
-                    status = getattr(getattr(e, 'response', None), 'status_code', None)
-                    if status == 429:
-                        return jsonify({'error': 'Limite de requisições. Aguarde e tente novamente.'}), 429
-                    logger.warning(f"Gemini falhou (emenda): {e}")
-            return jsonify({'error': 'Falha ao analisar emenda.'}), 500
-
-        # ── Bloco else: PDF não disponível, usa avulso/PRLP ──────────────
-        else:
-            logger.info(f"PDF da emenda não disponível — usando avulso com contexto do número {num_emenda_desc}")
-            doc_base = buscar_texto_prlp_ou_sbt(id_principal)
-            texto_base = doc_base.get('texto', '') if doc_base else ''
-            label_base = f"{doc_base.get('tipo','')} nº {doc_base.get('numero','')}" if doc_base else 'texto da proposição'
-
-            if not texto_base:
-                return jsonify({'error': f'Texto da Emenda nº {num_emenda_desc} não disponível. Use o botão Debug para colar o texto manualmente.'}), 400
-
-            tipo_doc = f"Emenda nº {num_emenda_desc} — {numero}" if num_emenda_desc else descricao
-            regra = ('REGRA: Voto SIM = APROVA a emenda → altera texto do relator. '
-                     'Voto NÃO = REJEITA a emenda → mantém texto do relator.')
-            prompt_emenda = f"""Você é um assessor legislativo da Câmara dos Deputados.
-
-**Proposição:** {projeto}
-**Destaque:** {numero}
-**Descrição completa do destaque:** {descricao}
-**Emenda objeto do destaque:** nº {num_emenda_desc}
-
-ATENÇÃO: Este é especificamente o destaque referente à **Emenda nº {num_emenda_desc}**.
-O texto integral desta emenda não está disponível, mas abaixo está o texto base ({label_base}).
-Baseie sua análise na descrição do destaque acima e no número da emenda.
-
-TEXTO BASE ({label_base}):
-{texto_base[:6000]}
-
-{regra}
-
-Gere análise HTML específica para a **Emenda nº {num_emenda_desc}** ({numero}):
-
-<p><strong>Emenda nº {num_emenda_desc}:</strong> [descreva o que esta emenda específica propõe, baseado na descrição do destaque e no contexto do texto base]</p>
-<br>
-<p><strong>Voto SIM — aprova a Emenda nº {num_emenda_desc}:</strong><br>[consequência direta de aprovar esta emenda específica. Máx 80 palavras.]</p>
-<br>
-<p><strong>Voto NÃO — rejeita a Emenda nº {num_emenda_desc}:</strong><br>[o texto do relator prevalece. Máx 60 palavras.]</p>
-
-Não use ### ou ** fora do HTML. Não repita análise de outras emendas."""
-
-            if gemini_key:
-                try:
-                    r = requests.post(
-                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
-                        headers={"Content-Type": "application/json"},
-                        json={"contents": [{"parts": [{"text": prompt_emenda}]}],
-                              "generationConfig": {"maxOutputTokens": 600, "temperature": 0.3}},
-                        timeout=30
-                    )
-                    r.raise_for_status()
-                    texto_resp = r.json()['candidates'][0]['content']['parts'][0]['text']
-                    return jsonify({'resumo': texto_resp, 'doc_usado': tipo_doc})
-                except Exception as e:
-                    status = getattr(getattr(e, 'response', None), 'status_code', None)
-                    if status == 429:
-                        return jsonify({'error': 'Limite de requisições. Aguarde e tente novamente.'}), 429
-                    logger.warning(f"Gemini falhou (emenda fallback): {e}")
-            return jsonify({'error': 'Falha ao analisar emenda.'}), 500
-
-    # ── Fluxo normal (não emenda) ───────────────────────────────────────────
-    if trecho_manual:
-        texto_doc = trecho_manual
-        tipo_doc  = f"{label_doc} (trecho selecionado manualmente)"
-        texto_truncado = trecho_manual
-        refs_leis = re.findall(r'[Ll]ei\s+(?:n[º°.]?\s*)?([\d.]+)[/\-](\d{4})', descricao)
-        nota_refs = ''
-        if refs_leis:
-            nota_refs = f"\n**Leis referenciadas:** {', '.join([f'Lei {n}/{a}' for n,a in refs_leis])}"
-    else:
-        # Extrai texto do documento selecionado
-        texto_doc = ''
-        tipo_doc  = label_doc or 'documento selecionado'
-        if url_doc_sel:
-            texto_doc = extrair_texto_documento(url_doc_sel) or ''
-            if texto_doc.startswith('[PDF escaneado') and id_principal:
-                logger.info("PDF escaneado — tentando PRLP como fallback")
-                doc_fb = buscar_texto_prlp_ou_sbt(id_principal)
-                if doc_fb and doc_fb.get('texto'):
-                    texto_doc = doc_fb['texto']
-                    tipo_doc = f"{doc_fb.get('tipo','')} nº {doc_fb.get('numero','')} (fallback)"
-            if not texto_doc or texto_doc.startswith('[PDF escaneado'):
-                return jsonify({'error': f'O PDF selecionado não possui texto extraível. Use o botão Debug para selecionar o trecho manualmente.'}), 400
-        elif id_principal:
-            doc = buscar_texto_prlp_ou_sbt(id_principal)
-            if doc:
-                texto_doc = doc.get('texto', '')
-                tipo_doc  = f"{doc.get('tipo','')} nº {doc.get('numero','')} de {doc.get('data','')}"
-
-        # Extrai refs de leis e localiza trecho relevante
-        refs_leis = re.findall(r'[Ll]ei\s+(?:n[º°.]?\s*)?([\d.]+)[/\-](\d{4})', descricao)
-        nota_refs = ''
-        if refs_leis:
-            leis_str = ', '.join([f"Lei {n.replace('.','')}/{a}" for n, a in refs_leis])
-            nota_refs = f"\n**Leis referenciadas no destaque:** {leis_str} (busque variações como 'Lei nº {refs_leis[0][0]}, de' no texto)"
-
-        texto_relevante = ''
-        if texto_doc and refs_leis:
-            for num_lei, ano_lei in refs_leis:
-                num_limpo = num_lei.replace('.', '')
-                variacoes = list(set([num_limpo, num_lei,
-                    '.'.join([num_limpo[:-3], num_limpo[-3:]]) if len(num_limpo) >= 4 else num_limpo]))
-                logger.info(f"Buscando Lei variações {variacoes} em {len(texto_doc)} chars")
-                melhor_pos = None
-                for variacao in variacoes:
-                    padrao_flex = variacao.replace('.', r'[.\s]?')
-                    for m in re.finditer(padrao_flex, texto_doc):
-                        pos = m.start()
-                        if melhor_pos is None or pos > melhor_pos:
-                            melhor_pos = pos
-                if melhor_pos is not None:
-                    ini = max(0, melhor_pos - 500)
-                    fim = min(len(texto_doc), melhor_pos + 4000)
-                    texto_relevante = texto_doc[ini:fim]
-                    logger.info(f"Trecho: {ini}-{fim} ({len(texto_relevante)} chars)")
-                    break
-
-        texto_truncado = texto_relevante if texto_relevante else texto_doc[:12000]
-
-    prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
-
-**Proposição:** {projeto}
-**Destaque:** {numero}
-**Descrição do Destaque:** {descricao}{nota_refs}
-**Documento analisado:** {tipo_doc}
-
-TEXTO COMPLETO DO DOCUMENTO:
-{texto_truncado if texto_truncado else '(texto não disponível)'}
-
----
-INSTRUÇÕES PARA LOCALIZAR O TRECHO:
-
-A descrição do destaque menciona leis, artigos ou dispositivos específicos. Para localizá-los:
-
-1. **Matching flexível de leis**: A descrição pode mencionar "Lei 9.096/1995" mas no texto pode aparecer como "Lei nº 9.096, de 19 de setembro de 1995" ou "Lei 9.096/95". São a mesma lei — use apenas o número para localizar.
-
-2. **Se o destaque menciona "art. X da Lei Y"**: procure no texto por:
-   - O artigo que ALTERA esse dispositivo: "Art. 2º O art. X da Lei nº Y..."
-   - Ou diretamente o artigo numerado no texto
-   - Extraia o trecho que está sendo destacado para votação em separado
-
-3. **Se o destaque menciona "art. X do substitutivo/texto"**: procure diretamente "Art. Xº" no texto
-
-4. **Copie LITERALMENTE** o trecho encontrado, incluindo caput, incisos e parágrafos relevantes
-
-Gere a análise em HTML com EXATAMENTE este formato:
-
-<p><strong>Objeto do Destaque:</strong> [descreva em uma frase o que o destaque vota em separado]</p>
-<br>
-<p><strong>Trecho do Texto:</strong></p>
-<blockquote style="border-left:3px solid #1A6B3A; padding-left:10px; color:#333; font-style:italic;">
-[Trecho literal encontrado. Se usou matching flexível, indique: "Lei X mencionada no destaque corresponde a 'Lei nº X, de DD de mês de AAAA' no documento". Se não localizar mesmo com busca flexível, explique qual número buscou.]
-</blockquote>
-<br>
-<p><strong>Análise:</strong><br>
-[Explique o que esse trecho propõe e o impacto prático de aprovar ou rejeitar este destaque. Máx 150 palavras.]
-</p>
-
-Não use ### ou ** fora do HTML."""
-
-    if gemini_key:
-        try:
-            r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
-                headers={"Content-Type": "application/json"},
-                json={"contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"maxOutputTokens": 512, "temperature": 0.3}},
-                timeout=30
-            )
-            r.raise_for_status()
-            texto = r.json()['candidates'][0]['content']['parts'][0]['text']
-            return jsonify({'resumo': texto, 'doc_usado': tipo_doc})
-        except Exception as e:
-            status = getattr(getattr(e, 'response', None), 'status_code', None)
-            if status == 429:
-                return jsonify({'error': 'Limite de requisições atingido. Aguarde alguns segundos e tente novamente.'}), 429
-            logger.warning(f"Gemini falhou em analisar_destaque: {e}")
-
-    return jsonify({'error': 'Falha ao gerar análise. Tente novamente.'}), 500
-
-@app.route('/buscar_url_prlp', methods=['POST'])
-@login_required
-def buscar_url_prlp():
-    """Encontra URL do PDF do PRLP específico pelo número."""
-    data         = request.get_json()
-    id_prop      = data.get('id_proposicao', '')
-    numero_prlp  = str(data.get('numero_prlp', ''))
-
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'pt-BR,pt;q=0.9',
-    }
-
-    # Estratégia 1: página de pareceres (scraping)
-    try:
-        from bs4 import BeautifulSoup
-        url_pag = f"https://www.camara.leg.br/proposicoesWeb/prop_pareceres_substitutivos_votos?idProposicao={id_prop}"
-        r = requests.get(url_pag, headers=headers, timeout=15)
-        if r.ok:
-            soup = BeautifulSoup(r.text, 'html.parser')
-            # Procura linha que menciona PRLP + número correto
-            for row in soup.find_all('tr'):
-                txt = row.get_text(' ', strip=True).upper()
-                if f'PRLP' not in txt:
-                    continue
-                # Verifica se tem o número correto
-                m = re.search(r'PRLP\s*[Nnº°.\s]*(\d+)', txt)
-                if not m or m.group(1) != numero_prlp:
-                    continue
-                # Pega o link
-                for a in row.find_all('a', href=True):
-                    href = a['href']
-                    if 'codteor' in href.lower():
-                        url_doc = camara_url(href)
-                        url_pdf = url_doc + ('&' if '?' in url_doc else '?') + 'tipo=PDF'
-                        logger.info(f"PRLP {numero_prlp} encontrado: {url_pdf}")
-                        return jsonify({'url_pdf': url_pdf})
-    except Exception as e:
-        logger.warning(f"Erro buscar_url_prlp estrategia1: {e}")
-
-    # Estratégia 2: ficha de tramitação
-    try:
-        url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_prop}"
-        r = requests.get(url_tram, headers=headers, timeout=15)
-        if r.ok:
-            soup = BeautifulSoup(r.text, 'html.parser')
-            # Busca todos os links com PRLP no filename
-            prlps = []
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                fn_m = re.search(r'filename=([^&"]+)', href)
-                fn = (fn_m.group(1) if fn_m else '').upper()
-                if 'PRLP' in fn or 'PRLP' in href.upper():
-                    m_num = re.search(r'PRLP[^\d]*(\d+)', fn or href, re.IGNORECASE)
-                    num = int(m_num.group(1)) if m_num else 0
-                    url_doc = camara_url(href)
-                    prlps.append((num, url_doc))
-            if prlps:
-                # Pega o que tem o número correto, ou o maior
-                alvo = [p for p in prlps if str(p[0]) == numero_prlp]
-                escolhido = alvo[0] if alvo else sorted(prlps, key=lambda x: x[0], reverse=True)[0]
-                url_pdf = escolhido[1] + ('&' if '?' in escolhido[1] else '?') + 'tipo=PDF'
-                return jsonify({'url_pdf': url_pdf})
-    except Exception as e:
-        logger.warning(f"Erro buscar_url_prlp estrategia2: {e}")
-
-    return jsonify({'url_pdf': None})
-
-@app.route('/verificar_doc/<int:id_prop>')
-@login_required
-def verificar_doc(id_prop):
-    """Retorna tipo, número, data e URL do último PRLP/Substitutivo de plenário."""
-    try:
-        doc = buscar_texto_prlp_ou_sbt(id_prop)
-        if doc:
-            return jsonify({
-                'tipo':      doc.get('tipo'),
-                'numero':    doc.get('numero'),
-                'data':      doc.get('data'),
-                'tem_texto': bool(doc.get('texto')),
-                'url_pdf':   doc.get('url_pdf', '')
-            })
-        return jsonify({'tipo': None, 'data': None, 'numero': None, 'url_pdf': ''})
-    except Exception as e:
-        logger.error(f"Erro verificar_doc {id_prop}: {e}", exc_info=True)
-        return jsonify({'tipo': None, 'data': None, 'numero': None, 'url_pdf': '', 'erro': str(e)})
-
-@app.route('/debug_docs/<path:codigo>')
-@login_required
-def debug_docs(codigo):
-    """Debug dos documentos. Aceita id numérico ou 'PL-1054-2019'."""
-    headers = {'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}
-    resultado = {'codigo': codigo}
-
-    # Resolve id
-    id_prop = None
-    if '-' in str(codigo):
-        partes = str(codigo).split('-')
-        if len(partes) == 3:
-            sigla, numero, ano = partes
-            # Parâmetro correto é siglaTipo
-            url_busca = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla}&numero={numero}&ano={ano}&itens=1"
-            try:
-                r = requests.get(url_busca, headers=headers, timeout=10)
-                resultado['busca_status'] = r.status_code
-                resultado['busca_url'] = url_busca
-                if r.ok:
-                    dados = r.json().get('dados', [])
-                    resultado['busca_dados'] = dados
-                    if dados:
-                        id_prop = dados[0].get('id')
-            except Exception as e:
-                resultado['busca_erro'] = str(e)
-    else:
-        id_prop = int(codigo)
-
-    resultado['id_prop'] = id_prop
-    if not id_prop:
-        return jsonify(resultado)
-
-    # Testa vários endpoints
-    urls = [
-        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}/documentos?itens=10&ordem=DESC",
-        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}/textos",
-        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_prop}",
-    ]
-    resultado['endpoints'] = []
-    for url in urls:
-        try:
-            r = requests.get(url, headers=headers, timeout=10)
-            body = r.json() if r.ok else r.text[:200]
-            resultado['endpoints'].append({
-                'url': url.split('camara.leg.br')[1],
-                'status': r.status_code,
-                'body': body if isinstance(body, dict) else body
-            })
-        except Exception as e:
-            resultado['endpoints'].append({'url': url.split('camara.leg.br')[1], 'erro': str(e)})
-
-    resultado['parecer'] = buscar_ultimo_parecer(id_prop)
-
-    # Debug da página de tramitação
-    headers = {'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}
-    url_tram = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_prop}"
-    try:
-        from bs4 import BeautifulSoup
-        r_tram = requests.get(url_tram, headers=headers, timeout=12)
-        resultado['tram_status'] = r_tram.status_code
-        resultado['tram_url'] = url_tram
-        if r_tram.ok:
-            soup = BeautifulSoup(r_tram.text, 'html.parser')
-            # Todos os links com codteor
-            links_codteor = []
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                txt  = a.get_text(strip=True)
-                if 'codteor' in href.lower() or 'mostrarintegra' in href.lower():
-                    links_codteor.append({'texto': txt[:60], 'href': href[:120]})
-            resultado['links_codteor'] = links_codteor[:20]
-            # Texto bruto com PRLP ou SBT
-            texto_pag = soup.get_text()
-            prlp_mencoes = [l.strip() for l in texto_pag.split('\n') if 'PRLP' in l.upper() or 'SBT' in l.upper() or 'SUBSTITUT' in l.upper()]
-            resultado['mencoes_prlp_sbt'] = prlp_mencoes[:10]
-    except Exception as e:
-        resultado['tram_erro'] = str(e)
-
-    resultado['texto_prlp_sbt'] = buscar_texto_prlp_ou_sbt(id_prop)
-    return jsonify(resultado)
-
-@app.route('/debug_matching/<int:evento_id>')
-@login_required
-def debug_matching(evento_id):
-    """Mostra exatamente como os códigos da API batem com a ordem do PDF."""
-    itens, _ = fetch_pauta(evento_id)
-    ordem = buscar_ordem_oficial(evento_id)
-    
-    resultado = []
-    for item in itens:
-        proj_orig = item.get('projeto_original') or item.get('projeto', '')
-        proj_base = proj_orig.split(' ao ')[0].strip()
-        cod_norm  = _normalizar_codigo(proj_base)
-        pos_pdf   = ordem.get(cod_norm, 'NÃO ENCONTRADO')
-        resultado.append({
-            'ordem_app':      item.get('ordem'),
-            'projeto_orig':   proj_orig,
-            'projeto_base':   proj_base,
-            'cod_normalizado': cod_norm,
-            'posicao_pdf':    pos_pdf,
-        })
-    
-    return jsonify({
-        'ordem_pdf': ordem,
-        'itens_api': resultado
-    })
-
-@app.route('/debug_ordem/<int:evento_id>')
-@login_required
-def debug_ordem(evento_id):
-    """Debug da extração de ordem oficial do PDF por coordenadas."""
-    resultado = {'evento_id': evento_id, 'etapas': []}
-    try:
-        from bs4 import BeautifulSoup
-        import pdfplumber
-        from io import BytesIO
-
-        # 1. Página do evento
-        url = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
-        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}, timeout=12)
-        resultado['etapas'].append({'etapa': '1_evento', 'status': r.status_code})
-        if not r.ok:
-            return jsonify(resultado)
-
-        # 2. Acha PDF de Pauta
-        soup = BeautifulSoup(r.text, 'html.parser')
-        pdf_url = None
-        for a in soup.find_all('a', href=re.compile(r'codteor=\d+', re.I)):
-            if a.get_text(strip=True).lower() == 'pauta':
-                href = a['href']
-                pdf_url = (camara_url(href))
-                pdf_url += ('&' if '?' in pdf_url else '?') + 'tipo=PDF'
-                break
-        resultado['etapas'].append({'etapa': '2_pdf_url', 'url': pdf_url})
-        if not pdf_url:
-            return jsonify(resultado)
-
-        # 3. Baixa PDF
-        rp = requests.get(pdf_url, headers={'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0 Safari/537.36'}, timeout=20)
-        resultado['etapas'].append({'etapa': '3_download', 'status': rp.status_code, 'size': len(rp.content), 'ct': rp.headers.get('Content-Type','')})
-        if not rp.ok:
-            return jsonify(resultado)
-
-        # 4. Extrai palavras com coordenadas
-        numeros_centrais = []
-        page_width = 595.0
-        with pdfplumber.open(BytesIO(rp.content)) as pdf:
-            page_width = float(pdf.pages[0].width) if pdf.pages else 595.0
-            for pnum, page in enumerate(pdf.pages):
-                words = page.extract_words(x_tolerance=3, y_tolerance=3)
-                linhas = {}
-                for w in words:
-                    y = round(float(w['top']))
-                    linhas.setdefault(y, []).append(w)
-                ys = sorted(linhas.keys())
-                for i, y in enumerate(ys):
-                    ws = linhas[y]
-                    # Procura palavra 1-2 dígitos centralizada (ignora resto da linha)
-                    num_encontrado = None
-                    for w in ws:
-                        txt = w['text'].strip()
-                        if not re.match(r'^\d{1,2}$', txt):
-                            continue
-                        centro_w = (float(w['x0']) + float(w['x1'])) / 2
-                        if abs(centro_w - page_width / 2) <= page_width * 0.05:
-                            num_encontrado = (int(txt), float(w['x0']), float(w['x1']))
-                            break
-                    if not num_encontrado:
-                        continue
-                    num, x0, x1 = num_encontrado
-                    if num < 1 or num > 30:
-                        continue
-                    centro = (x0 + x1) / 2
-                    dist_centro = abs(centro - page_width / 2)
-                    margem = page_width * 0.20
-                    # Próximas linhas
-                    prox = ys[i+1:i+6]
-                    bloco = ' '.join(' '.join(w['text'] for w in linhas[ny]) for ny in prox if ny in linhas)
-                    # Mostra todas as palavras da linha (incluindo possíveis invisíveis)
-                    palavras_linha_raw = [{'text': w['text'], 'x0': round(float(w['x0']),1), 'x1': round(float(w['x1']),1)} for w in ws]
-                    numeros_centrais.append({
-                        'num': num, 'page': pnum+1,
-                        'centro_x': round(centro, 1),
-                        'dist_centro': round(dist_centro, 1),
-                        'margem_max': round(margem, 1),
-                        'centralizado': dist_centro <= margem,
-                        'palavras_na_linha': palavras_linha_raw,
-                        'bloco_seguinte': bloco[:120]
-                    })
-
-        resultado['page_width'] = page_width
-        resultado['numeros_encontrados'] = numeros_centrais
-
-        # 5. Resultado final
-        ordem = buscar_ordem_oficial(evento_id)
-        resultado['ordem_extraida'] = ordem
-        resultado['total'] = len(ordem)
-
-    except Exception as e:
-        import traceback
-        resultado['erro'] = str(e)
-        resultado['tb'] = traceback.format_exc()[-500:]
-    return jsonify(resultado)
-
-@app.route('/debug_pdf_texto/<int:evento_id>')
-@login_required
-def debug_pdf_texto(evento_id):
-    """Mostra o texto bruto extraído do PDF de pauta."""
-    try:
-        from bs4 import BeautifulSoup
-        import pdfplumber
-        url = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
-        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=12)
-        soup = BeautifulSoup(r.text, 'html.parser')
-        pdf_url = None
-        for a in soup.find_all('a', href=True):
-            txt = a.get_text(strip=True).lower()
-            href = a['href']
-            if 'codteor' in href and txt == 'pauta':
-                pdf_url = camara_url(href)
-                pdf_url += ('&' if '?' in pdf_url else '?') + 'tipo=PDF'
-                break
-        if not pdf_url:
-            return jsonify({'erro': 'PDF não encontrado'})
-        rp = requests.get(pdf_url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
-        with pdfplumber.open(BytesIO(rp.content)) as pdf:
-            texto = '\n'.join(p.extract_text() or '' for p in pdf.pages)
-        # Filtra só linhas relevantes (com número no início ou tipo de proposição)
-        linhas = texto.split('\n')
-        relevantes = []
-        for i, l in enumerate(linhas):
-            l2 = l.strip()
-            if re.match(r'^\d{1,2}\.', l2) or re.search(r'PROJETO|REQUERIMENTO|PROPOSTA|MEDIDA|PL |PEC |PLP |REQ ', l2, re.I):
-                relevantes.append({'i': i, 'txt': l2[:200]})
-        return jsonify({'total_linhas': len(linhas), 'relevantes': relevantes, 'primeiras_100': linhas[:100]})
-    except Exception as e:
-        import traceback
-        return jsonify({'erro': str(e), 'tb': traceback.format_exc()[-1000:]})
-
-@app.route('/debug_pauta_full/<int:evento_id>')
-@login_required
-def debug_pauta_full(evento_id):
-    """Debug completo: ordem PDF, itens API, matching e problemas."""
-    try:
-        from scraper_camara import obter_itens_pauta as _oip
-        import traceback
-
-        out = {'evento_id': evento_id, 'problemas': [], 'pdf': {}, 'api': {}, 'matching': []}
-
-        # 1. Extrai ordem do PDF
-        try:
-            ordem = buscar_ordem_oficial(evento_id)
-            out['pdf']['ordem'] = ordem
-            out['pdf']['total'] = len(ordem)
-        except Exception as e:
-            out['pdf']['erro'] = str(e)
-            ordem = {}
-
-        # 2. Itens da API
-        try:
-            itens_raw = _oip(evento_id)
-            out['api']['total'] = len(itens_raw)
-            out['api']['itens'] = [{'codigo': it['codigo'], 'norm': _normalizar_codigo(it['codigo']),
-                                    'id': it.get('id_principal',''), 'ementa': it.get('ementa','')[:60]} for it in itens_raw]
-        except Exception as e:
-            out['api']['erro'] = str(e)
-            itens_raw = []
-
-        # 3. Matching
-        api_por_codigo = {_normalizar_codigo(it['codigo']): it for it in itens_raw}
-
-        for cod_pdf, pos in sorted(ordem.items(), key=lambda x: x[1]):
-            item_api = api_por_codigo.get(cod_pdf)
-            # Fuzzy match por número
-            m_num = re.search(r'(\d{4,})', cod_pdf)
-            fuzzy = None
-            if not item_api and m_num:
-                for cod_api, it_api in api_por_codigo.items():
-                    if m_num.group(1) in cod_api:
-                        fuzzy = cod_api
-                        item_api = it_api
-                        break
-            out['matching'].append({
-                'pos': pos, 'cod_pdf': cod_pdf,
-                'match_exato': api_por_codigo.get(cod_pdf) is not None,
-                'match_fuzzy': fuzzy,
-                'cod_api': item_api['codigo'] if item_api else None,
-                'id': item_api.get('id_principal','') if item_api else None,
-                'status': 'OK' if item_api else '❌ SEM MATCH'
-            })
-            if not item_api:
-                out['problemas'].append(f"Pos {pos}: '{cod_pdf}' sem match na API → vai aparecer como 'dados não disponíveis'")
-
-        # 4. Itens da API não encontrados no PDF
-        for it in itens_raw:
-            cod = _normalizar_codigo(it['codigo'])
-            if cod not in ordem:
-                m_num = re.search(r'(\d{4,})', cod)
-                no_pdf = any(m_num and m_num.group(1) in k for k in ordem) if m_num else False
-                out['problemas'].append(
-                    f"'{it['codigo']}' (norm={cod}) não está no PDF → " +
-                    (f"fuzzy match possível" if no_pdf else "vai para o FIM da lista")
-                )
-
-        # 5. REQ s/n
-        req_sn_pdf = [(k,v) for k,v in ordem.items() if k.startswith('REQSN')]
-        req_sn_api = [it for it in itens_raw
-                      if re.match(r'(REQ|RQS|RQU|REC)', it['codigo'].upper())
-                      and not re.search(r'\d{2,}', it['codigo'].split('/')[0])]
-        out['req_sn'] = {
-            'no_pdf': req_sn_pdf,
-            'na_api': [{'codigo': it['codigo'], 'ementa': it.get('ementa','')[:80]} for it in req_sn_api],
-            'match': list(zip([k for k,v in req_sn_pdf], [it['codigo'] for it in req_sn_api]))
-        }
-
-        return jsonify(out), 200, {'Content-Type': 'application/json; charset=utf-8'}
-
-    except Exception as e:
-        return jsonify({'erro': str(e), 'tb': traceback.format_exc()}), 500
-
-@app.route('/admin/limpar_todo_cache', methods=['POST'])
-@login_required
-def limpar_todo_cache():
-    if current_user.role.lower() != 'admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('DELETE FROM pauta_cache_db')
-    n = c.rowcount
-    conn.commit()
-    conn.close()
-    pauta_cache.clear()
-    return jsonify({'message': f'{n} eventos removidos do cache.'})
-
-@app.route('/limpar_cache/<int:evento_id>', methods=['GET', 'POST'])
-@login_required
-def limpar_cache(evento_id):
-    """Remove cache de um evento específico para forçar reprocessamento."""
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        c.execute('DELETE FROM pauta_cache_db WHERE evento_id = ?', (evento_id,))
-        c.execute('DELETE FROM resumos_ia WHERE evento_id = ?', (evento_id,))
-        conn.commit()
-        pauta_cache.pop(str(evento_id), None)
-        pauta_cache.clear()
-        logger.info(f"✅ Cache e resumos IA limpos para evento {evento_id}")
-        if request.method == 'GET':
-            return redirect(url_for('view_pauta', evento_id=evento_id, force_reload='true'))
-        return jsonify({'message': f'Cache e resumos IA do evento {evento_id} limpos.'})
-    except Exception as e:
-        logger.error(f"Erro ao limpar cache: {e}")
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conn.close()
-
-@app.route('/limpar_resumos_ia/<int:evento_id>', methods=['POST'])
-@login_required
-def limpar_resumos_ia(evento_id):
-    """Remove resumos IA salvos para forçar regeração."""
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        c.execute('DELETE FROM resumos_ia WHERE evento_id=?', (evento_id,))
-        n = c.rowcount
-        conn.commit()
-        return jsonify({'message': f'{n} resumos removidos. Recarregue a pauta.'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conn.close()
-
-@app.route('/resumo_ementa', methods=['POST'])
-@login_required
-def resumo_ementa():
-    return resumo_ementa_impl(request.get_json())
-
-@app.route('/resumos_evento/<int:evento_id>')
-@login_required
-def resumos_evento(evento_id):
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        c.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
-        rows = c.fetchall()
-        return jsonify({str(r[0]): r[1] for r in rows})
-    except Exception:
-        return jsonify({})
-    finally:
-        conn.close()
-
-@app.route('/salvar_resumo_ia', methods=['POST'])
-@login_required
-def salvar_resumo_ia():
-    data      = request.get_json()
-    evento_id = data.get('evento_id')
-    id_prop   = data.get('id_principal')
-    resumo    = data.get('resumo', '')
-    if not evento_id or not id_prop or not resumo:
-        return jsonify({'ok': False})
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        c.execute('''CREATE TABLE IF NOT EXISTS resumos_ia (
-            evento_id INTEGER, id_proposicao TEXT, resumo TEXT,
-            PRIMARY KEY (evento_id, id_proposicao))''')
-        c.execute('INSERT OR REPLACE INTO resumos_ia (evento_id, id_proposicao, resumo) VALUES (?,?,?)',
-                  (evento_id, str(id_prop), resumo))
-        conn.commit()
-        return jsonify({'ok': True})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)})
-    finally:
-        conn.close()
-
-@app.route('/buscar_imagem_item', methods=['POST'])
-@login_required
-def buscar_imagem_item():
-    """Usa IA para extrair keywords e busca imagem via Wikimedia Commons (gratuito)."""
-    data      = request.get_json()
-    resumo    = data.get('resumo', '')
-    groq_key  = os.environ.get('GROQ_API_KEY', '')
-    gemini_key = os.environ.get('GEMINI_API_KEY', '')
-
-    # Extrai 2-3 palavras-chave do resumo para busca de imagem
-    keywords = ''
-    prompt_kw = f"""Extraia 2 ou 3 palavras-chave em inglês para buscar uma imagem que ilustre o tema desta proposição legislativa brasileira.
-Responda APENAS com as palavras separadas por espaço, sem explicação.
-Proposição: {resumo[:300]}"""
-
-    for key, url, body_fn in [
-        (gemini_key,
-         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
-         lambda: {"contents":[{"parts":[{"text":prompt_kw}]}],"generationConfig":{"maxOutputTokens":20,"temperature":0.1}}),
-        (groq_key,
-         "https://api.groq.com/openai/v1/chat/completions",
-         lambda: {"model":"llama-3.3-70b-versatile","messages":[{"role":"user","content":prompt_kw}],"max_tokens":20,"temperature":0.1}),
-    ]:
-        if not key: continue
-        try:
-            headers = {"Content-Type": "application/json"}
-            if 'groq' in url: headers["Authorization"] = f"Bearer {key}"
-            r = requests.post(url, headers=headers, json=body_fn(), timeout=8)
-            if r.ok:
-                if 'generativelanguage' in url:
-                    keywords = r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-                else:
-                    keywords = r.json()['choices'][0]['message']['content'].strip()
-                keywords = re.sub(r'[^\w\s]', '', keywords).strip()
-                break
-        except Exception as e:
-            logger.warning(f"Erro keywords imagem: {e}")
-
-    if not keywords:
-        keywords = 'brazil congress law'
-
-    # Busca no Wikimedia Commons (API gratuita, sem key)
-    try:
-        r = requests.get(
-            'https://en.wikipedia.org/api/rest_v1/page/summary/' + keywords.replace(' ', '_'),
-            headers={'User-Agent': 'PlenarioApp/1.0'},
-            timeout=6
-        )
-        if r.ok:
-            thumb = r.json().get('thumbnail', {}).get('source', '')
-            if thumb:
-                return jsonify({'imagem_url': thumb, 'keywords': keywords})
-    except Exception:
-        pass
-
-    # Fallback: Wikimedia Commons search
-    try:
-        r = requests.get(
-            f"https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch={requests.utils.quote(keywords)}&gsrlimit=1&prop=imageinfo&iiprop=url|mime&iiurlwidth=400&format=json",
-            headers={'User-Agent': 'PlenarioApp/1.0'},
-            timeout=8
-        )
-        if r.ok:
-            pages = r.json().get('query', {}).get('pages', {})
-            for page in pages.values():
-                imgs = page.get('imageinfo', [])
-                if imgs:
-                    url_img = imgs[0].get('thumburl') or imgs[0].get('url', '')
-                    if url_img:
-                        return jsonify({'imagem_url': url_img, 'keywords': keywords})
-    except Exception:
-        pass
-
-    return jsonify({'imagem_url': None, 'keywords': keywords})
-
-def resumo_ementa_impl(data):
-    """Gera resumo de até 3 linhas da ementa. Para REQ busca dados do PL na web."""
-    projeto      = data.get('projeto', '')
-    ementa       = data.get('ementa', '')
-    autor        = data.get('autor', '')
-    id_principal = data.get('id_principal', '')
-    groq_key     = os.environ.get('GROQ_API_KEY', '')
-    gemini_key   = os.environ.get('GEMINI_API_KEY', '')
-
-    if not groq_key and not gemini_key:
-        return jsonify({'resumo': ''})
-
-    proj_base = projeto.split(' ao ')[0].strip()
-    siglas_req = ('REQ', 'RQS', 'RQU', 'REC')
-    eh_req = any(proj_base.upper().startswith(s) for s in siglas_req)
-
-    # ── Para REQ: busca ementa completa e PL referenciado ────────────────────
-    contexto_pl = ''
-    if eh_req:
-        try:
-            # Passo 1: busca ementa completa do REQ (API retorna truncada)
-            ementa_completa = ementa or ''
-            if id_principal:
-                try:
-                    r_req = requests.get(
-                        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_principal}",
-                        headers={'Accept': 'application/json'}, timeout=6
-                    )
-                    if r_req.ok:
-                        ementa_api = r_req.json().get('dados', {}).get('ementa', '')
-                        if ementa_api and len(ementa_api) > len(ementa_completa):
-                            ementa_completa = ementa_api
-                            logger.info(f"Ementa completa REQ {id_principal}: {ementa_completa[:80]}")
-                except Exception as e:
-                    logger.warning(f"Erro buscar ementa completa: {e}")
-
-            # Passo 2: extrai sigla+número+ano do PL referenciado na ementa completa
-            # Suporta tanto sigla curta (PLP 221/2024) quanto texto por extenso
-            # ("Projeto de Lei Complementar nº 221, de 2024")
-            sigla_ref = num_ref = ano_ref = ''
-
-            def _extrair_pl_ref(texto):
-                """Extrai (sigla, numero, ano) do PL referenciado no texto."""
-                padroes = [
-                    # Sigla curta: PLP 221/2024 ou PL nº 221, de 2024
-                    (r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 3),
-                    (r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+([\d.]+)[/\-](\d{4})', 3),
-                    # Texto por extenso com sigla inferida
-                    (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PLP'),
-                    (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PEC'),
-                    (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'MPV'),
-                    (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PDL'),
-                    (r'Projeto\s+de\s+Lei\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PL'),
-                ]
-                for item in padroes:
-                    padrao, n_grupos = item[0], item[1]
-                    sigla_fixa = item[2] if len(item) > 2 else None
-                    m = re.search(padrao, texto, re.IGNORECASE)
-                    if m:
-                        if n_grupos == 3:
-                            return m.group(1).upper(), m.group(2).replace('.',''), m.group(3)
-                        else:
-                            return sigla_fixa, m.group(1).replace('.',''), m.group(2)
-                return '', '', ''
-
-            for txt in [ementa_completa, projeto]:
-                sigla_ref, num_ref, ano_ref = _extrair_pl_ref(txt)
-                if sigla_ref and num_ref and ano_ref:
-                    logger.info(f"REQ {id_principal}: PL extraído de '{txt[:60]}' → {sigla_ref} {num_ref}/{ano_ref}")
-                    break
-
-            # Passo 3: se não achou sigla+número+ano completos → retorna vazio
-            # Nunca faz busca sem ano para evitar pegar PL errado
-            if not (sigla_ref and num_ref and ano_ref):
-                logger.warning(f"REQ {id_principal}: não encontrou PL com sigla+num+ano — retornando vazio")
-                return jsonify({'resumo': ''})
-
-            logger.info(f"REQ referencia: {sigla_ref} {num_ref}/{ano_ref}")
-
-            # Passo 4: busca ementa do PL referenciado com sigla+número+ano exatos
-            r_pl = requests.get(
-                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
-                f"?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
-                headers={'Accept': 'application/json'}, timeout=8
-            )
-            if not r_pl.ok:
-                logger.warning(f"API PL {sigla_ref} {num_ref}/{ano_ref}: HTTP {r_pl.status_code}")
-                return jsonify({'resumo': ''})
-
-            dados_pl = r_pl.json().get('dados', [])
-            if not dados_pl:
-                logger.warning(f"PL {sigla_ref} {num_ref}/{ano_ref} não encontrado na API")
-                return jsonify({'resumo': ''})
-
-            ementa_pl  = dados_pl[0].get('ementa', '')
-            sigla_real = dados_pl[0].get('siglaTipo', sigla_ref)
-            num_real   = dados_pl[0].get('numero', num_ref)
-            ano_real   = dados_pl[0].get('ano', ano_ref)
-
-            if not ementa_pl:
-                logger.warning(f"PL {sigla_ref} {num_ref}/{ano_ref} sem ementa")
-                return jsonify({'resumo': ''})
-
-            contexto_pl = f"\nO {sigla_real} {num_real}/{ano_real} (referenciado) trata de: {ementa_pl}"
-            logger.info(f"PL referenciado encontrado: {sigla_real} {num_real}/{ano_real}")
-
-        except Exception as e:
-            logger.error(f"Erro ao buscar PL do REQ: {e}")
-            return jsonify({'resumo': ''})
-
-    # ── Para não-REQ: busca PL mencionado na ementa se houver ────────────────
-    elif not contexto_pl:
-        try:
-            m_pl = None
-            for txt in [ementa, projeto]:
-                for padrao in [
-                    r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})',
-                    r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+([\d.]+)[/\-](\d{4})',
-                ]:
-                    m_pl = re.search(padrao, txt, re.IGNORECASE)
-                    if m_pl: break
-                if m_pl: break
-            if m_pl:
-                sigla_ref = m_pl.group(1).upper()
-                num_ref   = m_pl.group(2).replace('.', '')
-                ano_ref   = m_pl.group(3)
-                r_api = requests.get(
-                    f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
-                    f"?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
-                    headers={'Accept': 'application/json'}, timeout=8
-                )
-                if r_api.ok:
-                    dados = r_api.json().get('dados', [])
-                    if dados and dados[0].get('ementa'):
-                        ementa_pl  = dados[0]['ementa']
-                        sigla_real = dados[0].get('siglaTipo', sigla_ref)
-                        num_real   = dados[0].get('numero', num_ref)
-                        ano_real   = dados[0].get('ano', ano_ref)
-                        contexto_pl = f"\nO {sigla_real} {num_real}/{ano_real} (referenciado) trata de: {ementa_pl}"
-        except Exception as e:
-            logger.warning(f"Erro ao buscar PL mencionado: {e}")
-
-    if contexto_pl and eh_req:
-        prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo PRÓPRIO (máximo 2-3 linhas, máximo 180 caracteres) do que este REQUERIMENTO pede.
-NÃO copie a ementa. Escreva com suas próprias palavras.
-- Se for urgência: comece com "Urgência para o PL que [explique o PL em poucas palavras]"
-- Se for adiamento/retirada: comece com "Adiamento/Retirada do PL que..."
-- Seja direto. Não repita número da proposição.
-
-Requerimento: {projeto}
-Ementa: {ementa}{contexto_pl}
-
-Responda APENAS com o resumo, sem introdução, sem aspas."""
-    else:
-        prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo PRÓPRIO (máximo 2-3 linhas, máximo 180 caracteres) do que esta proposição trata na prática.
-NÃO copie a ementa. Escreva com suas próprias palavras, de forma simples e direta.
-- Explique o efeito prático para o cidadão ou para o parlamento
-- Não repita o número da proposição
-
-Proposição: {projeto}
-Autor: {autor}
-Ementa: {ementa}
-
-Responda APENAS com o resumo, sem introdução, sem aspas."""
-
-    # Tenta Gemini primeiro, depois Groq
-    for key, url, body_fn in [
-        (gemini_key,
-         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
-         lambda: {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 100, "temperature": 0.4}}),
-        (groq_key,
-         "https://api.groq.com/openai/v1/chat/completions",
-         lambda: {"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}], "max_tokens": 100, "temperature": 0.4}),
-    ]:
-        if not key:
-            continue
-        try:
-            headers = {"Content-Type": "application/json"}
-            if 'groq' in url:
-                headers["Authorization"] = f"Bearer {key}"
-            r = requests.post(url, headers=headers, json=body_fn(), timeout=15)
-            if r.ok:
-                if 'generativelanguage' in url:
-                    texto = r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-                else:
-                    texto = r.json()['choices'][0]['message']['content'].strip()
-                # Rejeita se for igual ou muito similar à ementa
-                ementa_norm = re.sub(r'\s+', ' ', ementa.strip().lower())
-                texto_norm  = re.sub(r'\s+', ' ', texto.strip().lower())
-                if (texto_norm == ementa_norm or
-                    ementa_norm[:80] in texto_norm or
-                    texto_norm[:80] in ementa_norm):
-                    logger.warning(f"Resumo igual à ementa — descartando")
-                    return jsonify({'resumo': ''})
-                return jsonify({'resumo': texto})
-        except Exception as e:
-            logger.warning(f"Erro resumo_ementa: {e}")
-
-    return jsonify({'resumo': ''})
-
-@app.route('/enriquecer_ementa', methods=['POST'])
-@login_required
-def enriquecer_ementa():
-    """Retorna ementa original + complemento IA. Para REQ, busca ementa do PL referenciado."""
-    data     = request.get_json()
-    projeto  = data.get('projeto', '')
-    ementa   = data.get('ementa', '').strip()
-    autor    = data.get('autor', '')
-    groq_key = os.environ.get('GROQ_API_KEY')
-
-    # Para REQ/RQS/RQU/REC: busca ementa do PL referenciado
-    siglas_req = ('REQ', 'RQS', 'RQU', 'REC')
-    proj_base = projeto.split(' ao ')[0].strip()
-    if any(proj_base.upper().startswith(s) for s in siglas_req):
-        # Extrai referência ao PL na ementa
-        m_pl = re.search(
-            r'\b(PL|PEC|PLP|MPV|PDL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})',
-            ementa, re.IGNORECASE
-        )
-        if not m_pl:
-            m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL)\s+([\d.]+)[/\-](\d{4})', projeto, re.IGNORECASE)
-        if m_pl:
-            sigla_ref = m_pl.group(1).upper()
-            num_ref   = m_pl.group(2).replace('.', '')
-            ano_ref   = m_pl.group(3)
-            ementa_pl = ''
-            try:
-                r_api = requests.get(
-                    f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
-                    headers={'Accept': 'application/json'}, timeout=8
-                )
-                if r_api.ok:
-                    dados = r_api.json().get('dados', [])
-                    if dados:
-                        ementa_pl = dados[0].get('ementa', '')
-            except Exception:
-                pass
-
-            if ementa_pl and groq_key:
-                prompt = f"""Você é um especialista legislativo. Explique em UMA frase direta (máx 20 palavras) o objeto deste requerimento para os parlamentares.
-
-Requerimento: {projeto}
-Ementa do requerimento: {ementa}
-Ementa do {sigla_ref} {num_ref}/{ano_ref} referenciado: {ementa_pl}
-
-Responda APENAS com a frase, sem introdução, sem aspas, sem ponto final."""
-                try:
-                    r = requests.post(
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                        json={"model": "llama-3.3-70b-versatile",
-                              "messages": [{"role": "user", "content": prompt}],
-                              "max_tokens": 60, "temperature": 0.2},
-                        timeout=10
-                    )
-                    if r.ok:
-                        comp = r.json()['choices'][0]['message']['content'].strip().rstrip('.')
-                        return jsonify({'ementa_enriquecida': f"{ementa} ({comp})", 'complemento': comp})
-                except Exception as e:
-                    logger.warning(f"Erro enriquecer REQ: {e}")
-            elif ementa_pl:
-                comp = ementa_pl[:120].rstrip('.')
-                return jsonify({'ementa_enriquecida': f"{ementa} ({comp})", 'complemento': comp})
-
-        return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
-
-    # Lógica original para não-REQ
-    def ementa_e_vaga(txt):
-        txt_lower = txt.lower()
-        # Padrões de ementa vaga: só referencia lei sem explicar o que faz
-        padroes_vagos = [
-            r'^altera\s+.{0,80}lei\s+n[º°.]?\s*[\d\.]+.*?(e\s+dá\s+outras\s+providências\.?)?$',
-            r'^acrescenta\s+(artigo|inciso|parágrafo).{0,80}(e\s+dá\s+outras\s+providências\.?)?$',
-            r'^revoga\s+.{0,80}(e\s+dá\s+outras\s+providências\.?)?$',
-            r'^dá\s+nova\s+redação.{0,80}(e\s+dá\s+outras\s+providências\.?)?$',
-        ]
-        # Se ementa é muito curta ou só faz referência formal
-        if len(txt) < 60:
-            return True
-        for padrao in padroes_vagos:
-            if re.match(padrao, txt_lower, re.IGNORECASE | re.DOTALL):
-                return True
-        # Se contém palavras que explicam o conteúdo, não é vaga
-        palavras_explicativas = [
-            'para', 'visando', 'com o objetivo', 'com a finalidade',
-            'destinado', 'dispõe sobre', 'institui', 'cria', 'estabelece',
-            'regulamenta', 'define', 'determina', 'proíbe', 'autoriza a',
-            'concede', 'assegura', 'garante', 'prevê'
-        ]
-        if any(p in txt_lower for p in palavras_explicativas) and len(txt) > 80:
-            return False
-        return len(txt) < 120
-
-    if not ementa_e_vaga(ementa):
-        return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
-
-    groq_key = os.environ.get('GROQ_API_KEY')
-    if not groq_key:
-        return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
-
-    prompt = f"""Você é um especialista legislativo. Em UMA frase direta (máximo 20 palavras), \
-explique de forma simples o que esta proposição trata na prática para os cidadãos.
-Não repita o número da lei. Use linguagem clara e objetiva.
-
-Proposição: {projeto}
-Autor: {autor}
-Ementa: {ementa}
-
-Responda APENAS com a frase explicativa, sem introdução, sem aspas, sem ponto final."""
-
-    try:
-        r = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-            json={"model": "llama-3.3-70b-versatile",
-                  "messages": [{"role": "user", "content": prompt}],
-                  "max_tokens": 60, "temperature": 0.2},
-            timeout=10
-        )
-        if r.ok:
-            comp = r.json()['choices'][0]['message']['content'].strip().rstrip('.')
-            ementa_enriquecida = f"{ementa} ({comp})"
-            return jsonify({'ementa_enriquecida': ementa_enriquecida, 'complemento': comp})
-    except Exception as e:
-        logger.warning(f"Erro enriquecer ementa: {e}")
-
-    return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
-
-@app.route('/complementar_ementa', methods=['POST'])
-@login_required
-def complementar_ementa():
-    """Usa Groq para complementar ementa vaga com resumo do que se trata."""
-    data    = request.get_json()
-    projeto = data.get('projeto', '')
-    ementa  = data.get('ementa', '')
-    autor   = data.get('autor', '')
-
-    groq_key = os.environ.get('GROQ_API_KEY')
-    if not groq_key:
-        return jsonify({'complemento': ementa})
-
-    prompt = f"""Você é um especialista legislativo. Sobre a proposição abaixo, escreva em UMA frase direta (máximo 30 palavras) o que ela trata, de forma clara para leigos.
-Se a ementa já for clara, retorne ela resumida.
-
-Proposição: {projeto}
-Autor: {autor}
-Ementa: {ementa}
-
-Responda APENAS com a frase descritiva, sem introdução, sem aspas."""
-
-    try:
-        r = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-            json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}],
-                  "max_tokens": 80, "temperature": 0.2},
-            timeout=10
-        )
-        if r.ok:
-            complemento = r.json()['choices'][0]['message']['content'].strip()
-            return jsonify({'complemento': complemento})
-    except Exception as e:
-        logger.warning(f"Erro ao complementar ementa: {e}")
-
-    return jsonify({'complemento': ementa})
-
-@app.route('/salvar_orientacoes', methods=['POST'])
-@login_required
-def salvar_orientacoes():
-    """Salva orientações por grupo (PL, NOVO, oposicao, minoria) para cada item."""
-    data      = request.get_json()
-    evento_id = data.get('evento_id')
-    orientacoes = data.get('orientacoes', [])  # [{id_principal, grupo, orientacao, comentario}]
-
-    conn = get_conn()
-    c    = conn.cursor()
-
-    # Cria tabela se não existir
-    c.execute('''CREATE TABLE IF NOT EXISTS orientacoes_grupo (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        evento_id INTEGER,
-        id_principal TEXT,
-        grupo TEXT,
-        orientacao TEXT,
-        comentario TEXT,
-        saved_by TEXT,
-        saved_at TEXT,
-        UNIQUE(evento_id, id_principal, grupo))''')
-
-    now_str  = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
-    saved_by = current_user.display_name()
-
-    for ori in orientacoes:
-        c.execute('''INSERT OR REPLACE INTO orientacoes_grupo
-                     (evento_id, id_principal, grupo, orientacao, comentario, saved_by, saved_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                  (evento_id, ori.get('id_principal'), ori.get('grupo'),
-                   ori.get('orientacao'), ori.get('comentario', ''), saved_by, now_str))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Orientações salvas!'})
-
-@app.route('/get_orientacoes/<int:evento_id>')
-@login_required
-def get_orientacoes(evento_id):
-    """Retorna orientações salvas para um evento."""
-    conn = get_conn()
-    c    = conn.cursor()
-    try:
-        c.execute('''SELECT id_principal, grupo, orientacao, comentario, saved_by, saved_at
-                     FROM orientacoes_grupo WHERE evento_id=?''', (evento_id,))
-        rows = c.fetchall()
-        result = [{'id_principal': str(r[0]), 'grupo': r[1], 'orientacao': r[2],
-                   'comentario': r[3], 'saved_by': r[4], 'saved_at': r[5]} for r in rows]
-    except Exception as e:
-        logger.warning(f"Erro get_orientacoes: {e}")
-        result = []
-    finally:
-        conn.close()
-    return jsonify(result)
-
-@app.route('/admin/reset_todas_senhas', methods=['POST'])
-@login_required
-def reset_todas_senhas():
-    if current_user.role.lower() != 'admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    nova_hash = bcrypt.generate_password_hash('123').decode('utf-8')
-    conn = get_conn()
-    c    = conn.cursor()
-    c.execute('UPDATE users SET password=?', (nova_hash,))
-    affected = c.rowcount
-    conn.commit()
-    conn.close()
-    return jsonify({'message': f'Senha 123 definida para {affected} usuários.'})
-
-@app.route('/admin/usuarios/reset_senha', methods=['POST'])
-@login_required
-def reset_senha():
-    if current_user.role.lower() != 'admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    data       = request.get_json()
-    user_id    = data.get('user_id')
-    nova_senha = data.get('nova_senha', '').strip()
-    if not nova_senha or len(nova_senha) < 3:
-        return jsonify({'error': 'Senha deve ter ao menos 3 caracteres.'}), 400
-    nova_hash = bcrypt.generate_password_hash(nova_senha).decode('utf-8')
-    conn = get_conn()
-    c    = conn.cursor()
-    c.execute('UPDATE users SET password=? WHERE id=?', (nova_hash, user_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Senha redefinida!'})
-
-@app.route('/admin/usuarios/update_categoria', methods=['POST'])
-@login_required
-def update_categoria():
-    if current_user.role.lower() != 'admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    data      = request.get_json()
-    user_id   = data.get('user_id')
-    categoria = data.get('categoria', 'geral')
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute('UPDATE users SET categoria=? WHERE id=?', (categoria, user_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'message': 'Categoria atualizada!'})
-
-@app.route('/admin/usuarios/delete/<int:user_id>', methods=['POST'])
-@login_required
-def delete_usuario(user_id):
-    if current_user.role.lower() != 'admin':
-        return jsonify({'error': 'Acesso negado'}), 403
-    if user_id == current_user.id:
-        return jsonify({'error': 'Não pode excluir sua própria conta'}), 400
-    try:
-        conn = get_conn()
-        c = conn.cursor()
-        # Busca username antes de deletar
-        c.execute('SELECT username FROM users WHERE id=?', (user_id,))
-        row = c.fetchone()
-        if not row:
-            return jsonify({'error': 'Usuário não encontrado'}), 404
-        username = row[0]
-        c.execute('DELETE FROM users WHERE id = ?', (user_id,))
-        # Registra na tabela de deletados para não recriar no próximo startup
-        if USE_POSTGRES:
-            c.execute('INSERT INTO usuarios_deletados (username) VALUES (%s) ON CONFLICT DO NOTHING', (username,))
-        else:
-            c.execute('INSERT OR IGNORE INTO usuarios_deletados (username) VALUES (?)', (username,))
-        conn.commit()
-        conn.close()
-        return jsonify({'message': f'Usuário {username} removido.'})
-    except Exception as e:
-        logger.error(f"Erro delete_usuario: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.errorhandler(500)
-def handle_500(e):
-    logger.error(f"500 error: {e}")
-    if request.is_json or request.path.startswith('/admin') or request.path.startswith('/atribuir'):
-        return jsonify({'error': str(e)}), 500
-    return str(e), 500
-
-@app.errorhandler(Exception)
-def handle_exception(e):
-    logger.error(f"Unhandled exception: {e}", exc_info=True)
-    if request.is_json:
-        return jsonify({'error': str(e)}), 500
-    return str(e), 500
-
-@app.route('/diagnostico')
-@login_required
-def diagnostico():
-    """Diagnóstico do banco de dados."""
-    conn = get_conn()
-    c = conn.cursor()
-    resultado = {
-        'use_postgres': USE_POSTGRES,
-        'database_url_set': bool(os.environ.get('DATABASE_URL')),
-        'pg_params_host': PG_PARAMS.get('host', 'N/A') if USE_POSTGRES else 'SQLite'
-    }
-    try:
-        # Colunas da tabela orientacoes_grupo
-        if USE_POSTGRES:
-            c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='orientacoes_grupo' ORDER BY ordinal_position")
-        else:
-            c.execute("PRAGMA table_info(orientacoes_grupo)")
-        cols = c.fetchall()
-        resultado['orientacoes_colunas'] = [r[0] for r in cols]
-
-        # Últimas orientações salvas
-        c.execute("SELECT * FROM orientacoes_grupo ORDER BY id DESC LIMIT 5")
-        rows = c.fetchall()
-        resultado['orientacoes_ultimas'] = [list(r) for r in rows]
-
-        # Contagem
-        c.execute("SELECT COUNT(*) FROM orientacoes_grupo")
-        resultado['orientacoes_total'] = c.fetchone()[0]
-    except Exception as e:
-        resultado['erro_diagnostico'] = str(e)
-    finally:
-        conn.close()
-    return jsonify(resultado)
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pauta Iconográfica</title>'
+      +'<style>'
+      +'@page{size:A4 portrait;margin:0}'
+      +'@media print{html,body{margin:0;padding:0}-webkit-print-color-adjust:exact;print-color-adjust:exact .no-print{display:none!important}}'
+      +'body{margin:0;padding:0;background:'+C.cream+';}'
+      +'[contenteditable]:hover{outline:1.5px dashed #aaa!important}'
+      +'[contenteditable]:focus{outline:2px solid #1A6B3A!important;background:rgba(26,107,58,.04)!important}'
+      +'</style></head>'
+      +'<body>'
+      // Barra de ferramentas (não imprime)
+      +'<div class="no-print" style="position:fixed;top:0;left:0;right:0;background:#1A6B3A;color:#fff;padding:8px 16px;display:flex;align-items:center;gap:10px;z-index:9999;font-family:Arial,sans-serif;font-size:13px;">'
+        +'<span id="_hint">✏️ Clique em qualquer campo para editar ou ajustar fonte</span>'
+        +'<span id="_fctrls" style="display:none;align-items:center;gap:6px;">'
+          +'<button onmousedown="event.preventDefault();_chgFs(-1)" style="background:rgba(255,255,255,.25);color:#fff;border:none;padding:3px 10px;border-radius:3px;font-size:15px;font-weight:700;cursor:pointer;">A−</button>'
+          +'<span id="_fval" style="min-width:38px;text-align:center;font-weight:700;"></span>'
+          +'<button onmousedown="event.preventDefault();_chgFs(1)" style="background:rgba(255,255,255,.25);color:#fff;border:none;padding:3px 10px;border-radius:3px;font-size:15px;font-weight:700;cursor:pointer;">A+</button>'
+        +'</span>'
+        +'<button onclick="window.print()" style="margin-left:auto;background:#fff;color:#1A6B3A;border:none;padding:6px 18px;border-radius:4px;font-weight:700;font-size:13px;cursor:pointer;">🖨️ Imprimir / Salvar PDF</button>'
+        +'<button onclick="window.close()" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.5);padding:6px 12px;border-radius:4px;font-size:13px;cursor:pointer;">✕ Fechar</button>'
+      +'</div>'
+      +'<script>'
+        +'var _s=null;'
+        // Força todos os campos editáveis a receberem cliques
+        +'window.addEventListener("load",function(){'
+          +'document.querySelectorAll("[contenteditable]").forEach(function(el){'
+            +'el.style.pointerEvents="all";'
+            +'el.style.position="relative";'
+            +'el.style.zIndex="10";'
+            // Remove overflow:hidden dos ancestrais que bloqueiam
+            +'var p=el.parentElement;'
+            +'while(p&&!p.classList.contains("page")){'
+              +'var st=window.getComputedStyle(p);'
+              +'if(st.overflow==="hidden"||st.overflowY==="hidden"){'
+                +'p.style.overflow="visible";'
+              +'}'
+              +'p=p.parentElement;'
+            +'}'
+          +'});'
+        +'});'
+        +'document.addEventListener("focusin",function(e){'
+          +'if(e.target.isContentEditable){'
+            +'_s=e.target;'
+            +'var fs=Math.round(parseFloat(getComputedStyle(_s).fontSize)||12);'
+            +'document.getElementById("_fval").textContent=fs+"px";'
+            +'document.getElementById("_fctrls").style.display="flex";'
+            +'document.getElementById("_hint").style.display="none";'
+          +'}'
+        +'});'
+        +'document.addEventListener("focusout",function(){'
+          +'setTimeout(function(){'
+            +'if(!document.activeElement||!document.activeElement.isContentEditable){'
+              +'document.getElementById("_fctrls").style.display="none";'
+              +'document.getElementById("_hint").style.display="";'
+              +'_s=null;'
+            +'}'
+          +'},200);'
+        +'});'
+        +'function _chgFs(d){'
+          +'if(!_s)return;'
+          +'var fs=Math.max(6,Math.round(parseFloat(getComputedStyle(_s).fontSize)||12)+d);'
+          +'_s.style.fontSize=fs+"px";'
+          +'document.getElementById("_fval").textContent=fs+"px";'
+          +'_s.focus();'
+        +'}'
+        // Ao clicar em qualquer parte do card, torna todos os campos editáveis clicáveis
+        +'document.addEventListener("click",function(e){'
+          +'var card=e.target.closest("[data-card]");'
+          +'if(card){'
+            // Remove overflow:hidden do conteúdo para permitir edição
+            +'card.querySelectorAll("div").forEach(function(d){'
+              +'if(d.isContentEditable) d.style.overflow="auto";'
+            +'});'
+          +'}'
+        +'});'
+      +'<\/script>'
+      +'<div style="height:48px;"></div>'
+      +pages.map(function(pg,i){ return buildPage(pg,i===0); }).join('')
+      +'</body></html>';
+  }
+
+  async function gerarIconografica() {
+    const btn = document.getElementById('btn-gerar-iconografica');
+    if (btn) { btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Preparando…'; }
+
+    const [logo_min, logo_opo] = await Promise.all([b64url('/static/logo_minoria.png'), b64url('/static/logo_oposicao.png')]);
+    const dataEvento = (document.querySelector('[data-evento-data]')||{}).dataset?.eventoData||'';
+
+    const itens = (window.ITENS_DATA||[]).map(item => {
+      const id = String(item.id_principal);
+      const resumoEl = document.getElementById('resumo-ia-'+id);
+      const resumo = (resumoEl&&resumoEl.textContent.trim())||item.resumo_ia||'';
+      const oriAtual = _orientacoes[id] !== undefined ? _orientacoes[id] : (item.orientacao||'');
+      const marcador = _marcadores[id] || null;
+      return {
+        num: String(item.ordem||''), codigo: item.projeto||'',
+        autor: (item.autor||'N/D').substring(0,60),
+        relator: (item.relator||'N/D').substring(0,60),
+        descricao: (resumo||(item.ementa||'')).substring(0,180),
+        orientacao: oriAtual.toUpperCase(),
+        prioridade: !!marcador,
+        marcador: marcador,
+        imagem: _imagens[id]||null,
+        scale: _cardScale[id]||1.0,
+        responsavel_nome:      item.responsavel_nome      || '',
+        responsavel_categoria: item.responsavel_categoria || '',
+      };
+    });
+
+    itens.sort((a,b)=>(b.prioridade?1:0)-(a.prioridade?1:0));
+
+    bootstrap.Modal.getInstance(document.getElementById('modalIconografica'))?.hide();
+
+    const html = buildPrintHTML({data:dataEvento, items:itens, logo_min, logo_opo});
+    const blob = new Blob([html], {type: 'text/html;charset=utf-8'});
+    const url  = URL.createObjectURL(blob);
+    const w    = window.open(url, '_blank');
+    if (!w) { alert('Permita pop-ups para imprimir.'); URL.revokeObjectURL(url); return; }
+    // Revoga o URL após carregar para liberar memória
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+
+    if (btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-print me-1"></i>Imprimir / Salvar PDF'; }
+  }
+
+  window._abrirModalIconografica = abrirModalIconografica;
+  window._gerarIconografica = gerarIconografica;
+  window.renderCardById = function(id){
+    const item = (window.ITENS_DATA||[]).find(i=>String(i.id_principal)===String(id));
+    if(!item) return;
+    const wrapper = document.querySelector(`[data-card-id="${id}"]`);
+    if(wrapper) renderCard(item, wrapper);
+  };
+  window._iconograficaCarregada = true;
+})();</script>
+</body>
+</html>
