@@ -3176,10 +3176,9 @@ async function exportarOrientacoesPDF() {
   function ajustarSec(nome, delta){
     var min = 5, max = 60;
     _sec[nome] = Math.max(min, Math.min(max, _sec[nome] + delta));
-    // Normaliza para que a soma não ultrapasse 100%
+    // Normaliza para que a soma não ultrapasse 96%
     var soma = _sec.ico + _sec.nome + _sec.meta + _sec.desc + _sec.rod;
     if(soma > 96){
-      // Reduz desc proporcionalmente
       _sec.desc = Math.max(5, _sec.desc - (soma - 96));
     }
     // Atualiza labels
@@ -3189,6 +3188,8 @@ async function exportarOrientacoesPDF() {
     document.getElementById('val-desc').textContent = _sec.desc+'%';
     document.getElementById('val-rod').textContent  = _sec.rod+'%';
   }
+  // Expõe globalmente para os botões onclick do HTML
+  window.ajustarSec = ajustarSec;
 
   function buildPrintHTML(data){
     var PAGE_W=794, PAGE_H=1123, HDR_H=82, GPAD=8, GAP=5, COLS=2, MAX_PP=16;
@@ -3258,7 +3259,7 @@ async function exportarOrientacoesPDF() {
           +'</div>'
 
           // GAP
-          +'<div style="height:'+G+'px;background:'+C.cream+';"></div>'
+          +'<div style="height:'+G+'px;"></div>'
 
           // Autor+Relator: altura H_meta
           +'<div style="height:'+H_meta+'px;overflow:hidden;font-size:'+fMeta+';'
@@ -3268,14 +3269,14 @@ async function exportarOrientacoesPDF() {
           +'</div>'
 
           // GAP
-          +'<div style="height:'+G+'px;background:'+C.cream+';"></div>'
+          +'<div style="height:'+G+'px;"></div>'
 
           // Descrição: altura H_desc
           +'<div style="height:'+H_desc+'px;overflow:hidden;font-size:'+fDesc+';'
             +'color:#2c3e50;line-height:1.2;padding:0 6px;">'+e(it.descricao)+'</div>'
 
           // GAP
-          +'<div style="height:'+G+'px;background:'+C.cream+';"></div>'
+          +'<div style="height:'+G+'px;"></div>'
 
           // Rodapé: altura H_rod
           +'<div style="height:'+H_rod+'px;overflow:hidden;font-size:'+fRod+';'
