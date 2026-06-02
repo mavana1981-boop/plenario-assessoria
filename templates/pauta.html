@@ -3236,8 +3236,11 @@ async function exportarOrientacoesPDF() {
 
     function buildPage(items, isFirst){
       var rows  = Math.ceil(items.length / COLS);
-      var hdrH  = isFirst ? HDR_H : 0;
+      var hdrH  = isFirst ? HDR_H + 2 : 0; // +2px da border-bottom do header
       var cardH = Math.floor((PAGE_H - hdrH - GPAD*2 - GAP*(rows-1)) / rows);
+      // Garante que tudo cabe: recalcula GPAD se necessário
+      var totalH = hdrH + GPAD*2 + rows*cardH + GAP*(rows-1);
+      if(totalH > PAGE_H) cardH = Math.floor((PAGE_H - hdrH - GPAD*2 - GAP*(rows-1) - 2) / rows);
       var cardW = Math.floor((PAGE_W - GPAD*2 - GAP) / COLS);
 
       // Estrutura interna do card — igual ao preview:
@@ -3389,15 +3392,32 @@ async function exportarOrientacoesPDF() {
       +'<div class="no-print" style="position:fixed;top:0;left:0;right:0;background:#1A6B3A;color:#fff;padding:8px 16px;display:flex;align-items:center;gap:10px;z-index:9999;font-family:Arial,sans-serif;font-size:13px;">'
         +'<span id="_hint">✏️ Clique em qualquer campo para editar ou ajustar fonte</span>'
         +'<span id="_fctrls" style="display:none;align-items:center;gap:6px;">'
-          +'<button onclick="_chgFs(-1)" style="background:rgba(255,255,255,.25);color:#fff;border:none;padding:3px 10px;border-radius:3px;font-size:15px;font-weight:700;cursor:pointer;">A−</button>'
+          +'<button onmousedown="event.preventDefault();_chgFs(-1)" style="background:rgba(255,255,255,.25);color:#fff;border:none;padding:3px 10px;border-radius:3px;font-size:15px;font-weight:700;cursor:pointer;">A−</button>'
           +'<span id="_fval" style="min-width:38px;text-align:center;font-weight:700;"></span>'
-          +'<button onclick="_chgFs(1)" style="background:rgba(255,255,255,.25);color:#fff;border:none;padding:3px 10px;border-radius:3px;font-size:15px;font-weight:700;cursor:pointer;">A+</button>'
+          +'<button onmousedown="event.preventDefault();_chgFs(1)" style="background:rgba(255,255,255,.25);color:#fff;border:none;padding:3px 10px;border-radius:3px;font-size:15px;font-weight:700;cursor:pointer;">A+</button>'
         +'</span>'
         +'<button onclick="window.print()" style="margin-left:auto;background:#fff;color:#1A6B3A;border:none;padding:6px 18px;border-radius:4px;font-weight:700;font-size:13px;cursor:pointer;">🖨️ Imprimir / Salvar PDF</button>'
         +'<button onclick="window.close()" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.5);padding:6px 12px;border-radius:4px;font-size:13px;cursor:pointer;">✕ Fechar</button>'
       +'</div>'
       +'<script>'
         +'var _s=null;'
+        // Força todos os campos editáveis a receberem cliques
+        +'window.addEventListener("load",function(){'
+          +'document.querySelectorAll("[contenteditable]").forEach(function(el){'
+            +'el.style.pointerEvents="all";'
+            +'el.style.position="relative";'
+            +'el.style.zIndex="10";'
+            // Remove overflow:hidden dos ancestrais que bloqueiam
+            +'var p=el.parentElement;'
+            +'while(p&&!p.classList.contains("page")){'
+              +'var st=window.getComputedStyle(p);'
+              +'if(st.overflow==="hidden"||st.overflowY==="hidden"){'
+                +'p.style.overflow="visible";'
+              +'}'
+              +'p=p.parentElement;'
+            +'}'
+          +'});'
+        +'});'
         +'document.addEventListener("focusin",function(e){'
           +'if(e.target.isContentEditable){'
             +'_s=e.target;'
