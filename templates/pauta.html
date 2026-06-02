@@ -3021,7 +3021,7 @@ async function exportarOrientacoesPDF() {
             <div style="display:flex;align-items:center;gap:1px;background:#f5f5f5;border:1px solid #ddd;border-radius:3px;padding:1px 3px;">
               <span style="font-size:7px;color:#555;min-width:44px;">${lbl}</span>
               <button onclick="window.ajustarSecCard('${id}','${k}',-2);window.renderCardById && window.renderCardById('${id}')" style="border:none;background:#e0e0e0;border-radius:2px;width:14px;height:14px;font-size:9px;cursor:pointer;line-height:1;padding:0;">−</button>
-              <span id="slbl-${id}-${k}" style="font-size:7px;min-width:22px;text-align:center;">${(window._secPorCard&&window._secPorCard[id]?window._secPorCard[id][k]:({ico:28,nome:26,meta:22,desc:35,rod:9})[k])}%</span>
+              <span id="slbl-${id}-${k}" style="font-size:7px;min-width:22px;text-align:center;">${_getSecCard(id)[k]}%</span>
               <button onclick="window.ajustarSecCard('${id}','${k}',2);window.renderCardById && window.renderCardById('${id}')" style="border:none;background:#e0e0e0;border-radius:2px;width:14px;height:14px;font-size:9px;cursor:pointer;line-height:1;padding:0;">+</button>
             </div>`).join('')}
         </div>
@@ -3351,7 +3351,7 @@ async function exportarOrientacoesPDF() {
   window.renderCardById = function(id){
     const item = (window.ITENS_DATA||[]).find(i=>String(i.id_principal)===String(id));
     if(!item) return;
-    const wrapper = document.querySelector(`[data-icon-wrapper="${id}"]`);
+    const wrapper = document.querySelector(`[data-card-id="${id}"]`);
     if(wrapper) renderCard(item, wrapper);
   };
   // Diagnóstico visual — remove após resolver
