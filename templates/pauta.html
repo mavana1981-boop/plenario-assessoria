@@ -3181,7 +3181,7 @@ async function exportarOrientacoesPDF() {
       // Estimativa de linhas: header(1) + meta(2) + descricao(~3) + rodape(1) = ~7 linhas
       // Fonte máxima que cabe: cardH / (7 linhas * lineHeight)
       var LINE_H   = 1.3; // line-height
-      var N_LINES  = 8;   // estimativa conservadora de linhas totais
+      var N_LINES  = 6;   // menos linhas = fonte maior
       var fMax     = Math.floor(cardH / (N_LINES * LINE_H));
       // Fontes relativas ao fMax, com mínimo legível
       var fCodigo  = Math.max(8,  Math.round(fMax * 1.3)) + 'px';
