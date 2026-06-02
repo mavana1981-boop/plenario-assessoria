@@ -3238,7 +3238,7 @@ async function exportarOrientacoesPDF() {
       var rows  = Math.ceil(items.length / COLS);
       var hdrH  = isFirst ? HDR_H + 2 : 0;
       // Margem de segurança de 6px para garantir que nada corta
-      var cardH = Math.floor((PAGE_H - hdrH - GPAD*2 - GAP*(rows-1) - 6) / rows);
+      var cardH = Math.floor((PAGE_H - hdrH - GPAD*2 - GAP*(rows-1) - 16) / rows);
       var cardW = Math.floor((PAGE_W - GPAD*2 - GAP) / COLS);
 
       // Estrutura interna do card — igual ao preview:
