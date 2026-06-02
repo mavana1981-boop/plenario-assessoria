@@ -100,20 +100,9 @@
       height: 80px;
       width: auto;
       object-fit: contain;
-      filter: brightness(0) invert(1);
-      opacity: .92;
       transition: opacity .2s;
     }
-    .logos-row img:hover { opacity: 1; }
-
-    /* Divisor dourado entre logos */
-    .logo-sep {
-      width: 1px;
-      height: 56px;
-      background: rgba(201,168,76,.5);
-      margin: 0 12px;
-      flex-shrink: 0;
-    }
+    .logos-row img:hover { opacity: .85; }
 
     .card-header-login h1 {
       font-family: 'Playfair Display', serif;
@@ -266,7 +255,6 @@
       <!-- Logos grandes centralizados -->
       <div class="logos-row">
         <img src="/static/logo_minoria.png"  alt="Liderança da Minoria"  onerror="this.style.display='none'">
-        <div class="logo-sep"></div>
         <img src="/static/logo_oposicao.png" alt="Liderança da Oposição" onerror="this.style.display='none'">
       </div>
       <h1>Assessoria de Plenário</h1>
