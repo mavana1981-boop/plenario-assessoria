@@ -3180,9 +3180,17 @@ async function exportarOrientacoesPDF() {
       // Fontes em px — calculadas para caber. O card tem overflow:hidden absoluto.
       // Estimativa de linhas: header(1) + meta(2) + descricao(~3) + rodape(1) = ~7 linhas
       // Fonte máxima que cabe: cardH / (7 linhas * lineHeight)
-      var LINE_H   = 1.3; // line-height
-      var N_LINES  = 6;   // menos linhas = fonte maior
-      var fMax     = Math.floor(cardH / (N_LINES * LINE_H));
+      var LINE_H   = 1.35;
+      // Reserva espaços fixos em px e calcula fonte máxima para o restante
+      var PAD      = Math.max(4, Math.round(f*4));   // padding top
+      var HDR_ROW  = Math.max(18, Math.round(f*22)); // linha código+ícone
+      var META_ROW = Math.max(16, Math.round(f*18)); // autor+relator (2 linhas)
+      var RDP_ROW  = Math.max(12, Math.round(f*14)); // rodapé assessor
+      var GAP_INT  = Math.max(2,  Math.round(f*3));  // gaps internos (×3)
+      var fixo     = PAD + HDR_ROW + META_ROW + RDP_ROW + GAP_INT*3;
+      var descH    = Math.max(10, cardH - fixo);
+      // Fonte da descrição: maior que caiba em descH (pelo menos 2 linhas)
+      var fMax     = Math.floor(descH / (2.5 * LINE_H));
       // Fontes relativas ao fMax, com mínimo legível
       var fCodigo  = Math.max(8,  Math.round(fMax * 1.3)) + 'px';
       var fMeta    = Math.max(6,  Math.round(fMax * 0.85)) + 'px';
@@ -3200,7 +3208,7 @@ async function exportarOrientacoesPDF() {
           : '';
         var imgH = Math.round(50 * f * (it.scale||1.0));
         var imgBlock = it.imagem
-          ? '<div style="width:100%;overflow:hidden;background:#f5f5f5;height:'+imgH+'px;flex-shrink:0;margin-bottom:'+gap2+'px;"><img src="'+it.imagem+'" style="width:100%;height:'+imgH+'px;object-fit:cover;display:block;"></div>'
+          ? '<div style="width:100%;overflow:hidden;background:#f5f5f5;height:'+imgH+'px;flex-shrink:0;margin-bottom:'+GAP_INT+'px;"><img src="'+it.imagem+'" style="width:100%;height:'+imgH+'px;object-fit:cover;display:block;"></div>'
           : '';
         var ico = svgIco(cfg.icon,cfg.bg).replace(/width="40" height="40"/,'width="'+icoW+'" height="'+icoW+'"');
         var oriLabel = it.orientacao
@@ -3213,26 +3221,26 @@ async function exportarOrientacoesPDF() {
             + '</div>'
           : '';
 
-        return '<div style="background:#fff;border-radius:5px;padding:'+gap2+'px 7px 0;position:relative;'
+        return '<div style="background:#fff;border-radius:5px;padding:'+PAD+'px 7px 0;position:relative;'
           + 'box-shadow:0 1px 4px rgba(0,0,0,.10);'
           // CRÍTICO: overflow:hidden + height fixa garantem que nada sai do quadro
           + 'height:'+cardH+'px;max-height:'+cardH+'px;width:'+cardW+'px;'
           + 'box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;">'
           + prio
           // Linha 1: número + código + ícone + orientação
-          + '<div style="display:flex;align-items:center;gap:3px;flex-shrink:0;overflow:hidden;">'
+          + '<div style="display:flex;align-items:center;gap:3px;flex-shrink:0;overflow:hidden;height:'+HDR_ROW+'px;">'
             + '<div style="width:'+numW+'px;height:'+numW+'px;min-width:'+numW+'px;border-radius:50%;background:'+C.inkSoft+';color:#fff;font-size:'+fMeta+';font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
             + '<div style="font-size:'+fCodigo+';font-weight:800;color:'+C.ink+';line-height:1.1;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">'+e(it.codigo)+'</div>'
             + '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">'+ico+oriLabel+'</div>'
           + '</div>'
           + imgBlock
           // Linha 2-3: autor + relator
-          + '<div style="font-size:'+fMeta+';color:'+C.inkSoft+';line-height:1.25;flex-shrink:0;overflow:hidden;margin-top:'+gap2+'px;">'
+          + '<div style="font-size:'+fMeta+';color:'+C.inkSoft+';line-height:1.25;flex-shrink:0;overflow:hidden;height:'+META_ROW+'px;margin-top:'+GAP_INT+'px;">'
             + '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Autor:</b> '+e(it.autor)+'</div>'
             + '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Relator:</b> '+e(it.relator)+'</div>'
           + '</div>'
           // Descrição: flex:1 pega o espaço restante, overflow:hidden corta
-          + '<div style="font-size:'+fDesc+';color:#2c3e50;line-height:1.3;margin-top:'+gap2+'px;flex:1;overflow:hidden;">'+e(it.descricao)+'</div>'
+          + '<div style="font-size:'+fDesc+';color:#2c3e50;line-height:'+LINE_H+';margin-top:'+GAP_INT+'px;overflow:hidden;height:'+descH+'px;flex-shrink:0;">'+e(it.descricao)+'</div>'
           + rodape
           + '</div>';
       }
