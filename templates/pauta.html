@@ -3169,8 +3169,8 @@ async function exportarOrientacoesPDF() {
       var cardW = Math.floor((PAGE_W - GPAD*2 - GAP) / COLS);
 
       // Divide cardH em seções fixas — sem padding no card pai (zero padding)
-      var H1 = Math.max(20, Math.round(cardH * 0.18)); // header num+codigo+ico
-      var H2 = Math.max(16, Math.round(cardH * 0.15)); // autor+relator
+      var H1 = Math.max(24, Math.round(cardH * 0.22)); // header num+codigo+ico
+      var H2 = Math.max(20, Math.round(cardH * 0.19)); // autor+relator
       var H3 = Math.max(11, Math.round(cardH * 0.09)); // rodapé assessor
       var G  = Math.max(2,  Math.round(cardH * 0.02)); // gap interno (×2)
       var DH = cardH - H1 - H2 - H3 - G*2;            // descrição = resto
@@ -3181,10 +3181,10 @@ async function exportarOrientacoesPDF() {
       var fCod  = fp(H1, 1);
       var fMeta = fp(H2, 2);
       var fDesc = fp(DH, 3);
-      var fOri  = fp(H1*0.38, 1);
+      var fOri  = fp(H1*0.45, 1);
       var fRod  = fp(H3, 1);
-      var numW  = Math.max(14, H1-6);
-      var icoW  = Math.max(18, H1-2);
+      var numW  = Math.max(16, H1-6);
+      var icoW  = Math.max(22, H1);
 
       function card(it){
         var cfg = oriCfg(it.orientacao);
