@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
@@ -3167,6 +3167,8 @@ async function exportarOrientacoesPDF() {
       var hdrH  = isFirst ? HDR_H : 0;
       var cardH = Math.floor((PAGE_H - hdrH - GPAD*2 - GAP*(rows-1)) / rows);
       var cardW = Math.floor((PAGE_W - GPAD*2 - GAP) / COLS);
+      // Garante que os 2 cards + gap cabem exatamente na página
+      var gridW = cardW * COLS + GAP;
 
       // Divide cardH em seções fixas — sem padding no card pai (zero padding)
       var H1 = Math.max(28, Math.round(cardH * 0.26)); // header num+codigo+ico
@@ -3209,7 +3211,8 @@ async function exportarOrientacoesPDF() {
             +'background:'+C.inkSoft+';color:#fff;font-size:'+fMeta+';font-weight:900;'
             +'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
             +'<div style="font-size:'+fCod+';font-weight:800;color:'+C.ink+';line-height:1.1;'
-            +'flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:0 2px;">'+e(it.codigo)+'</div>'
+            +'flex:1;overflow:hidden;padding:0 2px;'
+            +'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">'+e(it.codigo)+'</div>'
             +'<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">'+ico+oriLbl+'</div>'
           +'</div>'
 
@@ -3263,7 +3266,8 @@ async function exportarOrientacoesPDF() {
         +'background:'+C.cream+';page-break-after:always;box-sizing:border-box;">'
         +hdrHtml
         +'<div style="padding:'+GPAD+'px;box-sizing:border-box;'
-        +'display:grid;grid-template-columns:1fr 1fr;gap:'+GAP+'px;overflow:hidden;">'
+        +'width:'+PAGE_W+'px;'
+        +'display:grid;grid-template-columns:'+cardW+'px '+cardW+'px;gap:'+GAP+'px;overflow:hidden;">'
           +items.map(card).join('')
         +'</div></div>';
     }
