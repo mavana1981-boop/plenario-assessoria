@@ -3162,113 +3162,114 @@ async function exportarOrientacoesPDF() {
     for(var pi=0; pi<data.items.length; pi+=MAX_PP)
       pages.push(data.items.slice(pi,pi+MAX_PP));
 
-    // Fontes fixas em pt (impressão). Diminui se não couber.
-    var F_NOME = 16; // proposição
-    var F_META = 14; // autor+relator — maior que descrição
-    var F_DESC = 12; // descrição
-    var F_RRod = 9;  // rodapé
+    // Fontes fixas em pt — mesmas do preview, escalam se não couberem
+    var F_NOME=16, F_META=14, F_DESC=12, F_ROD=8;
 
-    // Estima largura de texto em pt (fator ~0.55 por char)
-    function fitsWidth(text, fPt, maxPx){
-      return (text||'').length * fPt * 0.55 <= maxPx;
-    }
-    // Diminui fonte até caber em 1 linha
-    function shrinkFont(text, fPt, maxPx, minPt){
-      while(fPt > (minPt||6) && !fitsWidth(text, fPt, maxPx)) fPt -= 0.5;
-      return fPt;
-    }
-    // Estima se N linhas de texto cabem em H pixels com fonte fPt
-    function fitsHeight(text, fPt, maxW, maxH, lines){
-      var charsPerLine = Math.floor(maxW / (fPt * 0.55));
-      var linesNeeded  = Math.ceil((text||'').length / Math.max(1,charsPerLine));
-      return linesNeeded <= lines && fPt * lines * 1.3 <= maxH;
-    }
-    // Diminui fonte até caber em N linhas dentro de H pixels
-    function shrinkFontH(text, fPt, maxW, maxH, lines, minPt){
-      while(fPt > (minPt||6) && !fitsHeight(text, fPt, maxW, maxH, lines)) fPt -= 0.5;
-      return fPt;
+    // Reduz fonte px por px até texto caber em (maxW px largura, maxH px altura, nLines linhas)
+    function fitFont(fPt, text, maxW, maxH, nLines){
+      var f = fPt;
+      while(f > 6){
+        var charsPerLine = Math.max(1, Math.floor(maxW / (f * 0.55)));
+        var linesNeeded  = Math.ceil((text||' ').length / charsPerLine);
+        var heightNeeded = linesNeeded * f * 1.3;
+        if(linesNeeded <= nLines && heightNeeded <= maxH) break;
+        f -= 0.5;
+      }
+      return Math.max(6, f);
     }
 
-    function buildPage(items,isFirst){
-      var rows  = Math.ceil(items.length/COLS);
-      var hdrH  = isFirst?HDR_H:0;
-      var cardH = Math.floor((PAGE_H-hdrH-GPAD*2-GAP*(rows-1))/rows);
-      var cardW = Math.floor((PAGE_W-GPAD*2-GAP)/COLS);
-      var txtW  = cardW - 14; // largura disponível para texto (padding 7px cada lado)
+    function buildPage(items, isFirst){
+      var rows  = Math.ceil(items.length / COLS);
+      var hdrH  = isFirst ? HDR_H : 0;
+      var cardH = Math.floor((PAGE_H - hdrH - GPAD*2 - GAP*(rows-1)) / rows);
+      var cardW = Math.floor((PAGE_W - GPAD*2 - GAP) / COLS);
 
-      // Alturas das seções: proporcionais, fixas
-      var H_ico  = Math.max(16, Math.round(cardH*0.20));
-      var H_nome = Math.max(14, Math.round(cardH*0.18));
-      var H_meta = Math.max(16, Math.round(cardH*0.20));
-      var H_rod  = Math.max(10, Math.round(cardH*0.08));
-      var G      = Math.max(2,  Math.round(cardH*0.015));
-      var H_desc = Math.max(10, cardH - H_ico - H_nome - H_meta - H_rod - G*3);
+      // Estrutura interna do card — igual ao preview:
+      // [barra esquerda 4px] [padding 10px lados] [conteúdo]
+      // Linha 1: número + nome proposição (posição absoluta do ícone: canto superior direito)
+      // Linha 2: imagem (se houver)
+      // Linha 3: autor + relator
+      // Linha 4: descrição + ícone canto inferior direito
+      // Linha 5: barra colorida rodapé + assessor
+
+      var PAD   = 10;   // padding lateral
+      var BAR   = 4;    // barra esquerda colorida
+      var txtW  = cardW - BAR - PAD*2; // largura útil do texto
+
+      // Alturas fixas de cada bloco (sem flex, sem surpresa)
+      var icoW   = Math.max(28, Math.round(cardH * 0.18)); // ícone
+      var H_nome = Math.max(16, Math.round(cardH * 0.16)); // nome
+      var H_meta = Math.max(20, Math.round(cardH * 0.20)); // autor+relator
+      var H_rod  = Math.max(14, Math.round(cardH * 0.09)); // rodapé
+      // Descrição = resto
+      var H_desc = Math.max(16, cardH - H_nome - H_meta - H_rod - 4);
 
       function buildCard(it){
-        var cfg  = oriCfg(it.orientacao);
-        var icoW = H_ico - 2;
-        var ico  = svgIco(cfg.icon,cfg.bg)
-          .replace(/width="40" height="40"/,'width="'+icoW+'" height="'+icoW+'"');
-        var fOri = Math.max(5, Math.round(icoW*0.28))+'pt';
-        var oriLbl = it.orientacao
-          ? '<div style="font-size:'+fOri+';font-weight:900;color:'+cfg.bg+';text-align:center;line-height:1;white-space:nowrap;">'+e(it.orientacao)+'</div>'
-          : '';
+        var cfg    = oriCfg(it.orientacao);
+        var numW   = Math.max(14, Math.round(H_nome * 0.85));
+        var txtWNome = txtW - numW - 6 - icoW - 4; // largura para o nome
 
-        // Fontes: fixas, diminuem se não couberem
-        var numW  = Math.max(12, Math.round(H_ico*0.65));
-        var txtWNome = txtW - numW - icoW - 10;
-        var fNome = shrinkFont(it.codigo,  F_NOME, txtWNome, 8) + 'pt';
-        var fMeta = shrinkFontH(it.autor+it.relator, F_META, txtW, H_meta, 2, 7) + 'pt';
-        var fDesc = shrinkFontH(it.descricao, F_DESC, txtW, H_desc, 4, 7) + 'pt';
-        var fRod  = shrinkFont(it.responsavel_nome||'', F_RRod, txtW, 6) + 'pt';
-        var fNum  = Math.max(6, Math.round(numW*0.5))+'pt';
+        // Fontes: fixas, reduzem se não couberem
+        var fNome = fitFont(F_NOME, it.codigo,  txtWNome, H_nome,    1) + 'pt';
+        var fAutor= fitFont(F_META, it.autor,   txtW,     H_meta/2,  1) + 'pt';
+        var fRel  = fitFont(F_META, it.relator, txtW,     H_meta/2,  1) + 'pt';
+        var fDesc = fitFont(F_DESC, it.descricao, txtW - icoW - 8, H_desc, 10) + 'pt';
+        var fRod  = fitFont(F_ROD,  it.responsavel_nome||'', txtW, H_rod, 1) + 'pt';
+        var fNum  = Math.max(6, Math.round(numW*0.55)) + 'pt';
+        var fOri  = Math.max(5, Math.round(icoW*0.30)) + 'pt';
 
+        var ico = svgIco(cfg.icon, cfg.bg)
+          .replace(/width="40" height="40"/, 'width="'+icoW+'" height="'+icoW+'"');
+        var oriLbl = '<div style="font-size:'+fOri+';font-weight:900;color:'+cfg.bg+';text-align:center;line-height:1;white-space:nowrap;margin-top:1px;">'+e(it.orientacao||'—')+'</div>';
         var rodTxt = it.responsavel_nome
-          ? e(it.responsavel_nome)+(it.responsavel_categoria?' · Lid. '+it.responsavel_categoria.charAt(0).toUpperCase()+it.responsavel_categoria.slice(1):'')
+          ? e(it.responsavel_nome)+(it.responsavel_categoria?' · Lid.'+it.responsavel_categoria.charAt(0).toUpperCase()+it.responsavel_categoria.slice(1):'')
           : '';
 
-        return '<div style="background:#fff;border-radius:5px;overflow:hidden;'
+        return ''
+          // Card externo: altura e largura fixas, overflow:hidden absoluto
+          +'<div style="background:#fff;border-radius:8px;position:relative;'
           +'height:'+cardH+'px;width:'+cardW+'px;box-sizing:border-box;'
-          +'box-shadow:0 1px 4px rgba(0,0,0,.10);font-family:Arial,sans-serif;">'
+          +'overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,.08);font-family:Arial,sans-serif;">'
 
-          // Ícone
-          +'<div style="height:'+H_ico+'px;display:flex;align-items:center;justify-content:center;overflow:hidden;">'
-            +'<div style="display:flex;flex-direction:column;align-items:center;">'+ico+oriLbl+'</div>'
+          // Barra esquerda colorida
+          +'<div style="position:absolute;left:0;top:0;bottom:0;width:'+BAR+'px;background:'+cfg.bg+';"></div>'
+
+          // Ícone + orientação: canto superior direito (absoluto)
+          +'<div style="position:absolute;top:6px;right:6px;display:flex;flex-direction:column;align-items:center;z-index:2;">'
+            +ico+oriLbl
           +'</div>'
 
-          // Nome proposição
-          +'<div style="height:'+H_nome+'px;display:flex;align-items:center;overflow:hidden;padding:0 7px;gap:4px;">'
-            +'<div style="width:'+numW+'px;height:'+numW+'px;min-width:'+numW+'px;border-radius:50%;'
-              +'background:'+C.inkSoft+';color:#fff;font-size:'+fNum+';font-weight:900;'
-              +'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
-            +'<div style="font-size:'+fNome+';font-weight:800;color:'+C.ink+';line-height:1.1;'
-              +'flex:1;overflow:hidden;white-space:nowrap;">'+e(it.codigo)+'</div>'
+          // Conteúdo principal com padding (ignora barra esquerda via margin)
+          +'<div style="margin-left:'+BAR+'px;padding:6px '+PAD+'px 0;height:'+(cardH)+'px;box-sizing:border-box;overflow:hidden;">'
+
+            // LINHA 1: número + nome — altura H_nome
+            +'<div style="height:'+H_nome+'px;display:flex;align-items:center;gap:5px;overflow:hidden;padding-right:'+(icoW+10)+'px;">'
+              +'<div style="width:'+numW+'px;height:'+numW+'px;min-width:'+numW+'px;border-radius:50%;'
+                +'background:'+C.inkSoft+';color:#fff;font-size:'+fNum+';font-weight:900;'
+                +'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
+              +'<div style="font-size:'+fNome+';font-weight:800;color:'+C.ink+';line-height:1.1;'
+                +'flex:1;overflow:hidden;white-space:nowrap;">'+e(it.codigo)+'</div>'
+            +'</div>'
+
+            // LINHA 2: autor + relator — altura H_meta
+            +'<div style="height:'+H_meta+'px;overflow:hidden;padding-right:'+(icoW+10)+'px;">'
+              +'<div style="font-size:'+fAutor+';color:'+C.inkSoft+';line-height:1.25;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;"><b>Autor:</b> '+e(it.autor)+'</div>'
+              +'<div style="font-size:'+fRel+';color:'+C.inkSoft+';line-height:1.25;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;"><b>Relator:</b> '+e(it.relator)+'</div>'
+            +'</div>'
+
+            // LINHA 3: descrição + ícone canto inferior direito — altura H_desc
+            +'<div style="height:'+H_desc+'px;overflow:hidden;display:flex;gap:6px;align-items:flex-start;">'
+              +'<div style="flex:1;font-size:'+fDesc+';color:#2c3e50;line-height:1.3;overflow:hidden;">'+e(it.descricao)+'</div>'
+            +'</div>'
+
+            // LINHA 4: rodapé assessor + barra colorida — altura H_rod
+            +'<div style="height:'+H_rod+'px;overflow:hidden;display:flex;align-items:center;'
+              +'border-top:2px solid '+cfg.bg+';margin:0 -'+PAD+'px;">'
+              +'<div style="font-size:'+fRod+';color:#0D2B5E;font-weight:700;text-align:center;'
+                +'width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:0 6px;">'+rodTxt+'</div>'
+            +'</div>'
+
           +'</div>'
-
-          +'<div style="height:'+G+'px;"></div>'
-
-          // Autor + relator
-          +'<div style="height:'+H_meta+'px;overflow:hidden;font-size:'+fMeta+';'
-            +'color:'+C.inkSoft+';line-height:1.25;padding:0 7px;">'
-            +'<div style="overflow:hidden;"><b>Autor:</b> '+e(it.autor)+'</div>'
-            +'<div style="overflow:hidden;"><b>Relator:</b> '+e(it.relator)+'</div>'
-          +'</div>'
-
-          +'<div style="height:'+G+'px;"></div>'
-
-          // Descrição
-          +'<div style="height:'+H_desc+'px;overflow:hidden;font-size:'+fDesc+';'
-            +'color:#2c3e50;line-height:1.3;padding:0 7px;">'+e(it.descricao)+'</div>'
-
-          +'<div style="height:'+G+'px;"></div>'
-
-          // Rodapé
-          +'<div style="height:'+H_rod+'px;overflow:hidden;font-size:'+fRod+';'
-            +'color:#0D2B5E;font-weight:700;text-align:center;'
-            +'border-top:1px solid rgba(13,43,94,.15);'
-            +'display:flex;align-items:center;justify-content:center;'
-            +'white-space:nowrap;box-sizing:border-box;padding:0 4px;">'+rodTxt+'</div>'
-
           +'</div>';
       }
 
