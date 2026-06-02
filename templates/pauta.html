@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -3156,104 +3155,125 @@ async function exportarOrientacoesPDF() {
   }
 
   function buildPrintHTML(data){
-    var PAGE_W = 794, PAGE_H = 1123, HDR_H = 82;
-    var GPAD = 8, GAP = 5, COLS = 2, MAX_PP = 16;
+    var PAGE_W=794, PAGE_H=1123, HDR_H=82, GPAD=8, GAP=5, COLS=2, MAX_PP=16;
 
-    var pages = [];
-    for (var pi = 0; pi < data.items.length; pi += MAX_PP)
-      pages.push(data.items.slice(pi, pi + MAX_PP));
+    var pages=[];
+    for(var pi=0; pi<data.items.length; pi+=MAX_PP)
+      pages.push(data.items.slice(pi,pi+MAX_PP));
 
-    function buildPage(items, isFirst){
-      var rows  = Math.ceil(items.length / COLS);
-      var hdrH  = isFirst ? HDR_H : 0;
-      var cardH = Math.floor((PAGE_H - hdrH - GPAD*2 - GAP*(rows-1)) / rows);
-      var cardW = Math.floor((PAGE_W - GPAD*2 - GAP) / COLS);
-      // Garante que os 2 cards + gap cabem exatamente na página
-      var gridW = cardW * COLS + GAP;
+    function buildPage(items,isFirst){
+      var rows  = Math.ceil(items.length/COLS);
+      var hdrH  = isFirst?HDR_H:0;
+      var cardH = Math.floor((PAGE_H-hdrH-GPAD*2-GAP*(rows-1))/rows);
+      var cardW = Math.floor((PAGE_W-GPAD*2-GAP)/COLS);
 
-      // Divide cardH em seções fixas — sem padding no card pai (zero padding)
-      var H1 = Math.max(28, Math.round(cardH * 0.26)); // header num+codigo+ico
-      var H2 = Math.max(28, Math.round(cardH * 0.28)); // autor+relator — maior
-      var H3 = Math.max(11, Math.round(cardH * 0.09)); // rodapé assessor
-      var G  = Math.max(2,  Math.round(cardH * 0.02)); // gap interno (×2)
-      var DH = cardH - H1 - H2 - H3 - G*2;
-      DH = Math.max(8, DH);
+      // Ícone: 28% do cardH, mínimo 22px
+      var icoW = Math.max(22, Math.round(cardH*0.28));
+      // Linha 1 (header): exatamente icoW de altura para o ícone não cortar
+      var H1 = icoW;
+      // Linha 2 (autor+relator): 22% do cardH, mínimo 24px
+      var H2 = Math.max(24, Math.round(cardH*0.22));
+      // Rodapé: 9%, mínimo 11px
+      var H3 = Math.max(11, Math.round(cardH*0.09));
+      // Gaps
+      var G  = Math.max(2, Math.round(cardH*0.02));
+      // Descrição: o resto
+      var DH = Math.max(10, cardH - H1 - H2 - H3 - G*2);
 
-      // Fontes calculadas para caber em cada seção
-      function fp(h, lines){ return Math.max(6, Math.floor(h/(lines*1.3)))+'px'; }
-      var fCod  = fp(H1, 2);
-      var fMeta = Math.max(9, Math.floor(H2/(2*1.2)))+'px';
-      var fDesc = fp(DH, 3);
-      var fOri  = fp(H1*0.38, 1);
-      var fRod  = fp(H3, 1);
-      var numW  = Math.max(16, Math.round(H1*0.65));
-      var icoW  = Math.max(22, Math.round(H1*0.88)); // ícone quase tão alto quanto H1
+      // Maior fonte que cabe em h pixels com n linhas (line-height 1.25)
+      function fp(h,n){ return Math.max(7,Math.floor(h/(n*1.25)))+'px'; }
+
+      var fMeta = fp(H2, 2);   // autor+relator: 2 linhas
+      var fDesc = fp(DH, 3);   // descrição: 3 linhas
+      var fRod  = fp(H3, 1);   // rodapé: 1 linha
 
       function card(it){
         var cfg = oriCfg(it.orientacao);
+
+        // Ícone com tamanho exato icoW — nunca cortado
         var ico = svgIco(cfg.icon,cfg.bg)
           .replace(/width="40" height="40"/,'width="'+icoW+'" height="'+icoW+'"');
+
+        // Orientação abaixo do ícone — fonte pequena
+        var fOri = Math.max(5,Math.round(icoW*0.32))+'px';
         var oriLbl = it.orientacao
-          ? '<div style="font-size:'+fOri+';font-weight:900;color:'+cfg.bg+';text-align:center;line-height:1;white-space:nowrap;overflow:hidden;">'+e(it.orientacao)+'</div>'
+          ? '<div style="font-size:'+fOri+';font-weight:900;color:'+cfg.bg+';text-align:center;line-height:1;white-space:nowrap;">'+e(it.orientacao)+'</div>'
           : '';
+
+        // Número: círculo icoW*0.7
+        var numW = Math.max(14, Math.round(icoW*0.7));
+        var fNum = Math.max(6, Math.round(numW*0.5))+'px';
+
+        // Nome da proposição: font-size que encolhe para caber em 1 linha
+        // Estima: cardW disponível para texto = cardW - 12(padding) - numW - icoW - 10(gaps)
+        var txtW = cardW - 12 - numW - icoW - 10;
+        // Caracteres estimados que cabem: txtW / (fPx * 0.6)
+        var nomeLen = (it.codigo||'').length;
+        // Fonte máxima para 1 linha: txtW / (nomeLen * 0.6)
+        var fNomeMax = Math.max(7, Math.min(
+          Math.floor(H1/1.3),               // cabe na altura H1
+          Math.floor(txtW/(nomeLen*0.58))    // cabe na largura
+        ));
+        var fNome = fNomeMax+'px';
+
+        // Rodapé
         var rodTxt = it.responsavel_nome
           ? e(it.responsavel_nome)+(it.responsavel_categoria?' · Lid. '+it.responsavel_categoria.charAt(0).toUpperCase()+it.responsavel_categoria.slice(1):'')
           : '';
 
-        // Cada div filho tem height exato = seção. Card pai: height+overflow:hidden, SEM padding
-        return '<div style="'
-          +'background:#fff;border-radius:5px;overflow:hidden;'
-          +'height:'+cardH+'px;width:'+cardW+'px;'
-          +'box-sizing:border-box;box-shadow:0 1px 4px rgba(0,0,0,.10);">'
+        return '<div style="background:#fff;border-radius:5px;overflow:hidden;'
+          +'height:'+cardH+'px;width:'+cardW+'px;box-sizing:border-box;'
+          +'box-shadow:0 1px 4px rgba(0,0,0,.10);">'
 
-          // S1: header num+codigo+icone+ori — height=H1, padding horizontal 6px
+          // S1: header — altura H1, ícone não corta
           +'<div style="height:'+H1+'px;display:flex;align-items:center;gap:3px;overflow:hidden;padding:0 6px;">'
             +'<div style="width:'+numW+'px;height:'+numW+'px;min-width:'+numW+'px;border-radius:50%;'
-            +'background:'+C.inkSoft+';color:#fff;font-size:'+fMeta+';font-weight:900;'
-            +'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
-            +'<div style="font-size:'+fCod+';font-weight:800;color:'+C.ink+';line-height:1.1;'
-            +'flex:1;overflow:hidden;padding:0 2px;'
-            +'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">'+e(it.codigo)+'</div>'
-            +'<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">'+ico+oriLbl+'</div>'
+              +'background:'+C.inkSoft+';color:#fff;font-size:'+fNum+';font-weight:900;'
+              +'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
+            // Nome: font-size calculado para caber em 1 linha sem cortar
+            +'<div style="font-size:'+fNome+';font-weight:800;color:'+C.ink+';line-height:1.1;'
+              +'flex:1;overflow:hidden;white-space:nowrap;padding:0 3px;">'+e(it.codigo)+'</div>'
+            // Ícone + orientação: flex-shrink:0 garante espaço total
+            +'<div style="flex-shrink:0;display:flex;flex-direction:column;align-items:center;">'+ico+oriLbl+'</div>'
           +'</div>'
 
-          // GAP1
+          // GAP
           +'<div style="height:'+G+'px;"></div>'
 
-          // S2: autor+relator — height=H2
+          // S2: autor+relator — altura H2, fonte máxima
           +'<div style="height:'+H2+'px;overflow:hidden;font-size:'+fMeta+';'
-          +'color:'+C.inkSoft+';line-height:1.3;padding:0 6px;">'
-            +'<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Autor:</b> '+e(it.autor)+'</div>'
-            +'<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Relator:</b> '+e(it.relator)+'</div>'
+            +'color:'+C.inkSoft+';line-height:1.25;padding:0 6px;">'
+            +'<div style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis;"><b>Autor:</b> '+e(it.autor)+'</div>'
+            +'<div style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis;"><b>Relator:</b> '+e(it.relator)+'</div>'
           +'</div>'
 
-          // GAP2
+          // GAP
           +'<div style="height:'+G+'px;"></div>'
 
-          // S3: descrição — height=DH
+          // S3: descrição — altura DH, fonte máxima
           +'<div style="height:'+DH+'px;overflow:hidden;font-size:'+fDesc+';'
-          +'color:#2c3e50;line-height:1.3;padding:0 6px;">'+e(it.descricao)+'</div>'
+            +'color:#2c3e50;line-height:1.25;padding:0 6px;">'+e(it.descricao)+'</div>'
 
-          // S4: rodapé assessor — height=H3, sempre presente
+          // S4: rodapé — altura H3
           +'<div style="height:'+H3+'px;overflow:hidden;font-size:'+fRod+';'
-          +'color:#0D2B5E;font-weight:700;text-align:center;'
-          +'white-space:nowrap;text-overflow:ellipsis;'
-          +'border-top:1px solid rgba(13,43,94,.12);'
-          +'display:flex;align-items:center;justify-content:center;'
-          +'box-sizing:border-box;">'+rodTxt+'</div>'
+            +'color:#0D2B5E;font-weight:700;text-align:center;'
+            +'white-space:nowrap;text-overflow:ellipsis;'
+            +'border-top:1px solid rgba(13,43,94,.15);'
+            +'display:flex;align-items:center;justify-content:center;'
+            +'box-sizing:border-box;padding:0 4px;">'+rodTxt+'</div>'
 
           +'</div>';
       }
 
-      var hdrHtml = '';
-      if (isFirst) {
-        var lMin = data.logo_min
-          ? '<img src="'+data.logo_min+'" style="height:26px;object-fit:contain;padding-right:8px;border-right:1.5px solid #ccc;">'
-          : '<span style="font-size:7px;font-weight:900;color:'+C.forest+';padding-right:8px;border-right:1px solid #ccc;">MINORIA</span>';
-        var lOpo = data.logo_opo
-          ? '<img src="'+data.logo_opo+'" style="height:26px;object-fit:contain;padding-left:8px;">'
-          : '<span style="font-size:7px;font-weight:900;color:'+C.ruby+';padding-left:8px;">OPOSIÇÃO</span>';
-        hdrHtml = '<div style="height:'+HDR_H+'px;overflow:hidden;box-sizing:border-box;'
+      var hdrHtml='';
+      if(isFirst){
+        var lMin=data.logo_min
+          ?'<img src="'+data.logo_min+'" style="height:26px;object-fit:contain;padding-right:8px;border-right:1.5px solid #ccc;">'
+          :'<span style="font-size:7px;font-weight:900;color:'+C.forest+';padding-right:8px;border-right:1px solid #ccc;">MINORIA</span>';
+        var lOpo=data.logo_opo
+          ?'<img src="'+data.logo_opo+'" style="height:26px;object-fit:contain;padding-left:8px;">'
+          :'<span style="font-size:7px;font-weight:900;color:'+C.ruby+';padding-left:8px;">OPOSIÇÃO</span>';
+        hdrHtml='<div style="height:'+HDR_H+'px;overflow:hidden;box-sizing:border-box;'
           +'padding:8px 18px 4px;border-bottom:2px solid rgba(30,53,80,.15);">'
           +'<div style="text-align:center;font-size:15px;font-weight:800;color:'+C.ink+';">'
             +'Pauta Iconográfica — Plenário da Câmara'
@@ -3266,9 +3286,9 @@ async function exportarOrientacoesPDF() {
       return '<div style="width:'+PAGE_W+'px;height:'+PAGE_H+'px;overflow:hidden;'
         +'background:'+C.cream+';page-break-after:always;box-sizing:border-box;">'
         +hdrHtml
-        +'<div style="padding:'+GPAD+'px;box-sizing:border-box;'
-        +'width:'+PAGE_W+'px;'
-        +'display:grid;grid-template-columns:'+cardW+'px '+cardW+'px;gap:'+GAP+'px;overflow:hidden;">'
+        +'<div style="padding:'+GPAD+'px;box-sizing:border-box;width:'+PAGE_W+'px;'
+          +'display:grid;grid-template-columns:'+cardW+'px '+cardW+'px;'
+          +'gap:'+GAP+'px;overflow:hidden;">'
           +items.map(card).join('')
         +'</div></div>';
     }
