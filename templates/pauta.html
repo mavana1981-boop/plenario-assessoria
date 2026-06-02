@@ -2611,28 +2611,12 @@ async function exportarOrientacoesPDF() {
           </div>
         </div>
       </div>
-      <div class="modal-footer flex-column align-items-stretch p-2">
-        <!-- Controles de seção -->
-        <div class="d-flex flex-wrap gap-2 justify-content-center mb-2" style="font-size:0.78rem;">
-          <span class="fw-bold text-muted align-self-center">Ajustar seções:</span>
-          {% for sec in [('ico','Ícone',28),('nome','Proposição',26),('meta','Autor/Relator',22),('desc','Descrição',35),('rod','Responsável',9)] %}
-          <div class="d-flex align-items-center gap-1 border rounded px-2 py-1 bg-white">
-            <span style="min-width:70px;font-size:0.72rem;font-weight:600;">{{ sec[0]|upper if sec[0]=='ico' else sec[1] }}</span>
-            <button class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:0.7rem;line-height:1;"
-              onclick="ajustarSec('{{ sec[0] }}',-2)">−</button>
-            <span id="val-{{ sec[0] }}" style="min-width:28px;text-align:center;font-size:0.72rem;">{{ sec[2] }}%</span>
-            <button class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:0.7rem;line-height:1;"
-              onclick="ajustarSec('{{ sec[0] }}',2)">+</button>
-          </div>
-          {% endfor %}
-        </div>
-        <div class="d-flex gap-2 justify-content-end">
-          <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
-          <button class="btn btn-primary" id="btn-gerar-iconografica"
-            onclick="window._gerarIconografica && window._gerarIconografica()">
-            <i class="fas fa-print me-1"></i>Imprimir / Salvar PDF
-          </button>
-        </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+        <button class="btn btn-primary" id="btn-gerar-iconografica"
+          onclick="window._gerarIconografica && window._gerarIconografica()">
+          <i class="fas fa-print me-1"></i>Imprimir / Salvar PDF
+        </button>
       </div>
     </div>
   </div>
@@ -3030,6 +3014,17 @@ async function exportarOrientacoesPDF() {
           </div>
         </div>
         <div style="height:4px;background:linear-gradient(90deg,${C.leaf} 0%,${C.forest} 100%);margin-left:-12px;margin-right:-12px;"></div>
+        <!-- Controles de seção para impressão -->
+        <div style="display:flex;flex-wrap:wrap;gap:3px;padding:5px 2px 6px;border-top:1px dashed #ddd;margin-top:2px;">
+          <span style="font-size:8px;color:#888;width:100%;margin-bottom:1px;">Ajustar para impressão:</span>
+          ${[['ico','Ícone'],['nome','Proposta'],['meta','Autor/Rel'],['desc','Descrição'],['rod','Responsável']].map(([k,lbl])=>`
+            <div style="display:flex;align-items:center;gap:1px;background:#f5f5f5;border:1px solid #ddd;border-radius:3px;padding:1px 3px;">
+              <span style="font-size:7px;color:#555;min-width:44px;">${lbl}</span>
+              <button onclick="window.ajustarSecCard('${id}','${k}',-2);window.renderCardById && window.renderCardById('${id}')" style="border:none;background:#e0e0e0;border-radius:2px;width:14px;height:14px;font-size:9px;cursor:pointer;line-height:1;padding:0;">−</button>
+              <span id="slbl-${id}-${k}" style="font-size:7px;min-width:22px;text-align:center;">${(window._secPorCard&&window._secPorCard[id]?window._secPorCard[id][k]:({ico:28,nome:26,meta:22,desc:35,rod:9})[k])}%</span>
+              <button onclick="window.ajustarSecCard('${id}','${k}',2);window.renderCardById && window.renderCardById('${id}')" style="border:none;background:#e0e0e0;border-radius:2px;width:14px;height:14px;font-size:9px;cursor:pointer;line-height:1;padding:0;">+</button>
+            </div>`).join('')}
+        </div>
       </div>`;
 
     // Listeners de zoom (botões +/-)
@@ -3155,6 +3150,7 @@ async function exportarOrientacoesPDF() {
     itens.forEach(item => {
       const wrapper = document.createElement('div');
       wrapper.dataset.cardId = String(item.id_principal);
+      wrapper.dataset.iconWrapper = String(item.id_principal);
       preview.appendChild(wrapper);
       renderCard(item, wrapper);
     });
@@ -3170,26 +3166,24 @@ async function exportarOrientacoesPDF() {
     }catch{return null;}
   }
 
-  // Valores padrão das seções (% do cardH)
-  var _sec = {ico:28, nome:26, meta:22, desc:35, rod:9};
+  // Valores de seção por card (id_principal → {ico,nome,meta,desc,rod})
+  window._secPorCard = {};
+  var _secDefault = {ico:28, nome:26, meta:22, desc:35, rod:9};
 
-  function ajustarSec(nome, delta){
-    var min = 5, max = 60;
-    _sec[nome] = Math.max(min, Math.min(max, _sec[nome] + delta));
-    // Normaliza para que a soma não ultrapasse 96%
-    var soma = _sec.ico + _sec.nome + _sec.meta + _sec.desc + _sec.rod;
-    if(soma > 96){
-      _sec.desc = Math.max(5, _sec.desc - (soma - 96));
+  function _getSecCard(id){
+    if(!window._secPorCard[id]){
+      window._secPorCard[id] = Object.assign({}, _secDefault);
     }
-    // Atualiza labels
-    document.getElementById('val-ico').textContent  = _sec.ico+'%';
-    document.getElementById('val-nome').textContent = _sec.nome+'%';
-    document.getElementById('val-meta').textContent = _sec.meta+'%';
-    document.getElementById('val-desc').textContent = _sec.desc+'%';
-    document.getElementById('val-rod').textContent  = _sec.rod+'%';
+    return window._secPorCard[id];
   }
-  // Expõe globalmente para os botões onclick do HTML
-  window.ajustarSec = ajustarSec;
+
+  window.ajustarSecCard = function(id, campo, delta){
+    var sec = _getSecCard(id);
+    sec[campo] = Math.max(5, Math.min(60, sec[campo] + delta));
+    // Atualiza label
+    var lbl = document.getElementById('slbl-'+id+'-'+campo);
+    if(lbl) lbl.textContent = sec[campo]+'%';
+  };
 
   function buildPrintHTML(data){
     var PAGE_W=794, PAGE_H=1123, HDR_H=82, GPAD=8, GAP=5, COLS=2, MAX_PP=16;
@@ -3204,88 +3198,70 @@ async function exportarOrientacoesPDF() {
       var cardH = Math.floor((PAGE_H-hdrH-GPAD*2-GAP*(rows-1))/rows);
       var cardW = Math.floor((PAGE_W-GPAD*2-GAP)/COLS);
 
-      // Alturas de cada seção baseadas nos controles do usuário
-      // Garante mínimos absolutos e que a soma = cardH
-      var pIco  = _sec.ico/100, pNome=_sec.nome/100, pMeta=_sec.meta/100;
-      var pDesc = _sec.desc/100, pRod=_sec.rod/100;
-      var G   = Math.max(2, Math.round(cardH*0.015));
-      var H_ico  = Math.max(16, Math.round(cardH*pIco));
-      var H_nome = Math.max(14, Math.round(cardH*pNome));
-      var H_meta = Math.max(16, Math.round(cardH*pMeta));
-      var H_rod  = Math.max(10, Math.round(cardH*pRod));
-      // Descrição = resto exato para somar cardH
-      var H_desc = Math.max(10, cardH - H_ico - H_nome - H_meta - H_rod - G*3);
+      function buildCard(it){
+        var id  = String(it.id_principal||it.num||'x');
+        var sec = _getSecCard(id);
+        var G   = Math.max(2, Math.round(cardH*0.015));
+        var H_ico  = Math.max(16, Math.round(cardH*sec.ico/100));
+        var H_nome = Math.max(14, Math.round(cardH*sec.nome/100));
+        var H_meta = Math.max(16, Math.round(cardH*sec.meta/100));
+        var H_rod  = Math.max(10, Math.round(cardH*sec.rod/100));
+        var H_desc = Math.max(10, cardH - H_ico - H_nome - H_meta - H_rod - G*3);
 
-      // Fontes: máximas para caber em cada seção (line-height 1.2)
-      function fp(h,n,minF){ return Math.max(minF||6, Math.floor(h/(n*1.2)))+'px'; }
-      var fNome = fp(H_nome, 1, 7);   // nome: 1 linha
-      var fMeta = fp(H_meta, 2, 6);   // autor+relator: 2 linhas
-      var fDesc = fp(H_desc, 3, 6);   // descrição: 3 linhas
-      var fRod  = fp(H_rod, 1, 6);    // rodapé: 1 linha
-      var icoW  = H_ico;              // ícone = exatamente H_ico
-      var numW  = Math.max(12, Math.round(H_ico*0.65));
-      var fNum  = Math.max(6, Math.round(numW*0.5))+'px';
-      var fOri  = Math.max(5, Math.round(H_ico*0.28))+'px';
+        function fp(h,n){ return Math.max(6, Math.floor(h/(n*1.2)))+'px'; }
+        var fNome = fp(H_nome,1);
+        var fMeta = fp(H_meta,2);
+        var fDesc = fp(H_desc,3);
+        var fRod  = fp(H_rod,1);
+        var icoW  = H_ico;
+        var numW  = Math.max(12, Math.round(H_ico*0.65));
+        var fNum  = Math.max(6, Math.round(numW*0.5))+'px';
+        var fOri  = Math.max(5, Math.round(H_ico*0.28))+'px';
 
-      function card(it){
         var cfg = oriCfg(it.orientacao);
         var ico = svgIco(cfg.icon,cfg.bg)
           .replace(/width="40" height="40"/,'width="'+icoW+'" height="'+icoW+'"');
         var oriLbl = it.orientacao
-          ? '<div style="font-size:'+fOri+';font-weight:900;color:'+cfg.bg+';text-align:center;line-height:1;white-space:nowrap;">'+e(it.orientacao)+'</div>'
-          : '';
+          ?'<div style="font-size:'+fOri+';font-weight:900;color:'+cfg.bg+';text-align:center;line-height:1;white-space:nowrap;">'+e(it.orientacao)+'</div>'
+          :'';
         var rodTxt = it.responsavel_nome
-          ? e(it.responsavel_nome)+(it.responsavel_categoria?' · Lid. '+it.responsavel_categoria.charAt(0).toUpperCase()+it.responsavel_categoria.slice(1):'')
-          : '';
+          ?e(it.responsavel_nome)+(it.responsavel_categoria?' · Lid. '+it.responsavel_categoria.charAt(0).toUpperCase()+it.responsavel_categoria.slice(1):'')
+          :'';
 
         return '<div style="background:#fff;border-radius:5px;overflow:hidden;'
           +'height:'+cardH+'px;width:'+cardW+'px;box-sizing:border-box;'
           +'box-shadow:0 1px 4px rgba(0,0,0,.10);">'
-
-          // Ícone: altura H_ico, não corta nunca
-          +'<div style="height:'+H_ico+'px;display:flex;align-items:center;justify-content:center;'
-            +'gap:0;overflow:hidden;background:'+C.cream+';">'
-            +'<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;">'+ico+oriLbl+'</div>'
+          // S1: ícone
+          +'<div style="height:'+H_ico+'px;display:flex;align-items:center;justify-content:center;overflow:hidden;">'
+            +'<div style="display:flex;flex-direction:column;align-items:center;">'+ico+oriLbl+'</div>'
           +'</div>'
-
-          // Nome: altura H_nome, font-size calculado para 1 linha
-          +'<div style="height:'+H_nome+'px;display:flex;align-items:center;overflow:hidden;'
-            +'padding:0 6px;gap:4px;background:#fff;">'
+          // S2: nome
+          +'<div style="height:'+H_nome+'px;display:flex;align-items:center;overflow:hidden;padding:0 6px;gap:4px;">'
             +'<div style="width:'+numW+'px;height:'+numW+'px;min-width:'+numW+'px;border-radius:50%;'
               +'background:'+C.inkSoft+';color:#fff;font-size:'+fNum+';font-weight:900;'
               +'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
             +'<div style="font-size:'+fNome+';font-weight:800;color:'+C.ink+';line-height:1.1;'
               +'flex:1;overflow:hidden;white-space:nowrap;">'+e(it.codigo)+'</div>'
           +'</div>'
-
-          // GAP
           +'<div style="height:'+G+'px;"></div>'
-
-          // Autor+Relator: altura H_meta
+          // S3: autor+relator
           +'<div style="height:'+H_meta+'px;overflow:hidden;font-size:'+fMeta+';'
             +'color:'+C.inkSoft+';line-height:1.2;padding:0 6px;">'
             +'<div style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis;"><b>Autor:</b> '+e(it.autor)+'</div>'
             +'<div style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis;"><b>Relator:</b> '+e(it.relator)+'</div>'
           +'</div>'
-
-          // GAP
           +'<div style="height:'+G+'px;"></div>'
-
-          // Descrição: altura H_desc
+          // S4: descrição
           +'<div style="height:'+H_desc+'px;overflow:hidden;font-size:'+fDesc+';'
             +'color:#2c3e50;line-height:1.2;padding:0 6px;">'+e(it.descricao)+'</div>'
-
-          // GAP
           +'<div style="height:'+G+'px;"></div>'
-
-          // Rodapé: altura H_rod
+          // S5: rodapé
           +'<div style="height:'+H_rod+'px;overflow:hidden;font-size:'+fRod+';'
             +'color:#0D2B5E;font-weight:700;text-align:center;'
             +'border-top:1px solid rgba(13,43,94,.15);'
             +'display:flex;align-items:center;justify-content:center;'
-            +'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
+            +'white-space:nowrap;text-overflow:ellipsis;'
             +'box-sizing:border-box;padding:0 4px;">'+rodTxt+'</div>'
-
           +'</div>';
       }
 
@@ -3293,7 +3269,7 @@ async function exportarOrientacoesPDF() {
       if(isFirst){
         var lMin=data.logo_min
           ?'<img src="'+data.logo_min+'" style="height:26px;object-fit:contain;padding-right:8px;border-right:1.5px solid #ccc;">'
-          :'<span style="font-size:7px;font-weight:900;color:'+C.forest+';padding-right:8px;border-right:1px solid #ccc;">MINORIA</span>';
+          :'<span style="font-size:7px;font-weight:900;color:'+C.forest+';padding-right:8px;">MINORIA</span>';
         var lOpo=data.logo_opo
           ?'<img src="'+data.logo_opo+'" style="height:26px;object-fit:contain;padding-left:8px;">'
           :'<span style="font-size:7px;font-weight:900;color:'+C.ruby+';padding-left:8px;">OPOSIÇÃO</span>';
@@ -3313,7 +3289,7 @@ async function exportarOrientacoesPDF() {
         +'<div style="padding:'+GPAD+'px;box-sizing:border-box;width:'+PAGE_W+'px;'
           +'display:grid;grid-template-columns:'+cardW+'px '+cardW+'px;'
           +'gap:'+GAP+'px;overflow:hidden;">'
-          +items.map(card).join('')
+          +items.map(buildCard).join('')
         +'</div></div>';
     }
 
@@ -3372,6 +3348,12 @@ async function exportarOrientacoesPDF() {
 
   window._abrirModalIconografica = abrirModalIconografica;
   window._gerarIconografica = gerarIconografica;
+  window.renderCardById = function(id){
+    const item = (window.ITENS_DATA||[]).find(i=>String(i.id_principal)===String(id));
+    if(!item) return;
+    const wrapper = document.querySelector(`[data-icon-wrapper="${id}"]`);
+    if(wrapper) renderCard(item, wrapper);
+  };
   // Diagnóstico visual — remove após resolver
   document.addEventListener('DOMContentLoaded', function() {
     var el = document.getElementById('btn-iconografica');
