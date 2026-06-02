@@ -3177,8 +3177,10 @@ async function exportarOrientacoesPDF() {
 
       // Fonte proporcional: cresce com a altura do card
       // Base: cardH=120 → f=1.0. Sem limite superior.
+      // Fonte em pt (impressão). Referência: card de 120px → fonte base em pt
+      // 1pt ≈ 1.33px. Valores base calibrados para impressão A4.
       var f = cardH / 120;
-      var sz = function(base){ return Math.round(base * f) + 'px'; };
+      var sz = function(base){ return Math.max(1, Math.round(base * f * 1.6)) + 'pt'; };
 
       function card(it){
         var cfg = oriCfg(it.orientacao);
