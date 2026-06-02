@@ -867,23 +867,50 @@
       }
     }
     setTimeout(enriquecerPartidos, 1500);
-    // Abrevia comissões em autor/relator para a iconográfica
-    function abreviarComissao(texto){
-      if(!texto) return texto;
+    // Abrevia comissões e nomes longos via regex primeiro
+    function abreviarTexto(texto){
+      if(!texto) return '';
       return texto
+        .replace(/Comissão\s+Especial\s+/gi, 'Com.Esp. ')
+        .replace(/Comissão\s+Mista\s+/gi, 'Com.Mista ')
         .replace(/Comissão\s+de\s+/gi, 'Com. ')
-        .replace(/Comissão\s+Especial\s+/gi, 'Com. Esp. ')
-        .replace(/Comissão\s+Mista\s+/gi, 'Com. Mista ')
-        .replace(/Comissão\s+Permanente\s+/gi, 'Com. Perm. ')
+        .replace(/Comissão\s+/gi, 'Com. ')
         .replace(/Deputad[oa]s?\s+/gi, 'Dep. ')
         .replace(/\s{2,}/g, ' ').trim();
     }
-    if(window.ITENS_DATA){
-      window.ITENS_DATA.forEach(function(item){
-        item.autor_breve   = abreviarComissao(item.autor);
-        item.relator_breve = abreviarComissao(item.relator);
-      });
+
+    // Para nomes ainda longos (>60 chars), chama IA para abreviar
+    async function abreviarViaIA(texto){
+      if(!texto || texto.length <= 60) return texto;
+      try {
+        const r = await fetch('/resumo_ementa', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            id_principal: 'abrev',
+            projeto: 'Abreviação',
+            ementa: 'Abrevia o seguinte nome de autoria parlamentar em no máximo 40 caracteres, mantendo siglas e nomes próprios reconhecíveis. Retorne APENAS o texto abreviado, sem explicações: ' + texto,
+            autor: ''
+          })
+        });
+        const j = await r.json();
+        return (j.resumo||texto).substring(0,60);
+      } catch(e){ return texto; }
     }
+
+    async function prepararAutoresRelatores(){
+      if(!window.ITENS_DATA) return;
+      for(const item of window.ITENS_DATA){
+        item.autor_breve   = abreviarTexto(item.autor);
+        item.relator_breve = abreviarTexto(item.relator);
+        // Se ainda longo, usa IA
+        if(item.autor_breve.length > 50)
+          item.autor_breve   = await abreviarViaIA(item.autor_breve);
+        if(item.relator_breve.length > 50)
+          item.relator_breve = await abreviarViaIA(item.relator_breve);
+      }
+    }
+
+    prepararAutoresRelatores();
     setTimeout(carregarTodosResumos, 1000);
       document.addEventListener('change', async (e) => {
         const sel = e.target.closest('.select-responsavel');
@@ -3221,6 +3248,17 @@ async function exportarOrientacoesPDF() {
       // Descrição = resto
       var H_desc = Math.max(16, cardH - H_nome - H_meta - H_rod - 4);
 
+      // Calcula fMeta global: menor fonte que cabe em TODOS os cards
+      // para que autor/relator fique no mesmo tamanho em todos
+      var fMetaGlobal = F_META;
+      items.forEach(function(it){
+        var metaTxt = 'Autor: '+(it.autor_breve||it.autor||'')+'  |  Relator: '+(it.relator_breve||it.relator||'');
+        var icoWLocal = Math.max(28, Math.round(cardH*0.18));
+        var f = fitFont(F_META, metaTxt, cardW - BAR - PAD*2 - icoWLocal - 10, H_meta, 1);
+        if(f < fMetaGlobal) fMetaGlobal = f;
+      });
+      var fMetaStr = fMetaGlobal + 'pt';
+
       function buildCard(it){
         var cfg    = oriCfg(it.orientacao);
         var numW   = Math.max(14, Math.round(H_nome * 0.85));
@@ -3228,10 +3266,10 @@ async function exportarOrientacoesPDF() {
 
         // Fontes: fixas, reduzem se não couberem
         var txtWMeta = txtW - icoW - 10;
-        // Autor + relator na mesma linha: "Autor: X  |  Relator: Y"
-        var metaTexto = 'Autor: '+(it.autor_breve||it.autor||'')+'  |  Relator: '+(it.relator_breve||it.relator||'');
-        var fMeta1 = fitFont(F_META, metaTexto, txtWMeta, H_meta, 1) + 'pt';
-        var fNome = fitFont(F_NOME, it.codigo,  txtWNome, H_nome, 1) + 'pt';
+        // Nome: cabe em 1 linha
+        var fNome = fitFont(F_NOME, it.codigo, txtWNome, H_nome, 1) + 'pt';
+        // Meta: usa fonte global (igual em todos os cards)
+        var fMeta1 = fMetaStr;
         var fDesc = fitFont(F_DESC, it.descricao, txtW-2, H_desc, 20) + 'pt';
         var fRod  = fitFont(F_ROD,  it.responsavel_nome||'x', txtW, H_rod, 1) + 'pt';
         var fNum  = Math.max(6, Math.round(numW*0.55)) + 'pt';
