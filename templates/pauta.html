@@ -3164,8 +3164,8 @@ async function exportarOrientacoesPDF() {
 
     // Fontes fixas em pt (impressão). Diminui se não couber.
     var F_NOME = 16; // proposição
-    var F_META = 12; // autor+relator
-    var F_DESC = 14; // descrição
+    var F_META = 14; // autor+relator — maior que descrição
+    var F_DESC = 12; // descrição
     var F_RRod = 9;  // rodapé
 
     // Estima largura de texto em pt (fator ~0.55 por char)
@@ -3250,8 +3250,8 @@ async function exportarOrientacoesPDF() {
           // Autor + relator
           +'<div style="height:'+H_meta+'px;overflow:hidden;font-size:'+fMeta+';'
             +'color:'+C.inkSoft+';line-height:1.25;padding:0 7px;">'
-            +'<div style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis;"><b>Autor:</b> '+e(it.autor)+'</div>'
-            +'<div style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis;"><b>Relator:</b> '+e(it.relator)+'</div>'
+            +'<div style="overflow:hidden;"><b>Autor:</b> '+e(it.autor)+'</div>'
+            +'<div style="overflow:hidden;"><b>Relator:</b> '+e(it.relator)+'</div>'
           +'</div>'
 
           +'<div style="height:'+G+'px;"></div>'
