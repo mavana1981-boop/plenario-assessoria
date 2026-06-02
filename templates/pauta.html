@@ -3241,10 +3241,10 @@ async function exportarOrientacoesPDF() {
       var txtW  = cardW - BAR - PAD*2; // largura útil do texto
 
       // Alturas fixas de cada bloco (sem flex, sem surpresa)
-      var icoW   = Math.max(28, Math.round(cardH * 0.18)); // ícone
+      var icoW   = Math.min(60, Math.max(28, Math.round(cardH * 0.18))); // ícone — máx 60px
       var H_nome = Math.max(16, Math.round(cardH * 0.16)); // nome
       var H_meta = Math.max(20, Math.round(cardH * 0.20)); // autor+relator
-      var H_rod  = Math.max(14, Math.round(cardH * 0.09)); // rodapé
+      var H_rod  = Math.max(18, Math.round(cardH * 0.12)); // rodapé — maior para responsável
       // Descrição = resto
       var H_desc = Math.max(16, cardH - H_nome - H_meta - H_rod - 4);
 
@@ -3268,8 +3268,8 @@ async function exportarOrientacoesPDF() {
         var txtWMeta = txtW - icoW - 10;
         // Nome: cabe em 1 linha
         var fNome = fitFont(F_NOME, it.codigo, txtWNome, H_nome, 1) + 'pt';
-        // Meta: usa fonte global (igual em todos os cards)
-        var fMeta1 = fMetaStr;
+        // Meta: usa fonte global (igual em todos os cards), mínimo 10pt
+        var fMeta1 = Math.max(10, fMetaGlobal) + 'pt';
         var fDesc = fitFont(F_DESC, it.descricao, txtW-2, H_desc, 20) + 'pt';
         var fRod  = fitFont(F_ROD,  it.responsavel_nome||'x', txtW, H_rod, 1) + 'pt';
         var fNum  = Math.max(6, Math.round(numW*0.55)) + 'pt';
@@ -3309,12 +3309,12 @@ async function exportarOrientacoesPDF() {
                 +'flex:1;overflow:hidden;white-space:nowrap;">'+e(it.codigo)+'</div>'
             +'</div>'
 
-            // LINHA 2: autor + relator em 1 linha
+            // LINHA 2: autor + relator em 1 linha — tudo negrito
             +'<div style="height:'+H_meta+'px;display:flex;align-items:center;overflow:hidden;padding-right:'+(icoW+10)+'px;">'
-              +'<div style="font-size:'+fMeta1+';color:'+C.inkSoft+';line-height:1.2;overflow:hidden;white-space:nowrap;">'
-                +'<b>Autor:</b> '+e(it.autor_breve||it.autor||'')
-                +'<span style="margin:0 6px;opacity:.4;">|</span>'
-                +'<b>Relator:</b> '+e(it.relator_breve||it.relator||'')
+              +'<div style="font-size:'+fMeta1+';font-weight:900;color:'+C.inkSoft+';line-height:1.2;overflow:hidden;white-space:nowrap;">'
+                +'Autor: '+e(it.autor_breve||it.autor||'')
+                +'<span style="margin:0 5px;opacity:.35;">|</span>'
+                +'Relator: '+e(it.relator_breve||it.relator||'')
               +'</div>'
             +'</div>'
 
@@ -3337,18 +3337,21 @@ async function exportarOrientacoesPDF() {
       var hdrHtml='';
       if(isFirst){
         var lMin=data.logo_min
-          ?'<img src="'+data.logo_min+'" style="height:26px;object-fit:contain;padding-right:8px;border-right:1.5px solid #ccc;">'
-          :'<span style="font-size:7pt;font-weight:900;color:'+C.forest+';padding-right:8px;">MINORIA</span>';
+          ?'<img src="'+data.logo_min+'" style="height:46px;object-fit:contain;">'
+          :'<span style="font-size:9pt;font-weight:900;color:'+C.forest+';">MIN</span>';
         var lOpo=data.logo_opo
-          ?'<img src="'+data.logo_opo+'" style="height:26px;object-fit:contain;padding-left:8px;">'
-          :'<span style="font-size:7pt;font-weight:900;color:'+C.ruby+';padding-left:8px;">OPOSIÇÃO</span>';
+          ?'<img src="'+data.logo_opo+'" style="height:46px;object-fit:contain;">'
+          :'<span style="font-size:9pt;font-weight:900;color:'+C.ruby+';">OPO</span>';
         hdrHtml='<div style="height:'+HDR_H+'px;overflow:hidden;box-sizing:border-box;'
-          +'padding:8px 18px 4px;border-bottom:2px solid rgba(30,53,80,.15);">'
-          +'<div style="text-align:center;font-size:15px;font-weight:800;color:'+C.ink+';">'
-            +'Pauta Iconográfica — Plenário da Câmara'
-            +'<span style="display:block;font-size:9px;font-weight:500;color:'+C.inkSoft+';">'+e(data.data)+'</span>'
+          +'padding:8px 18px 4px;border-bottom:2px solid rgba(30,53,80,.15);'
+          +'display:flex;align-items:center;gap:14px;">'
+          // Logos à esquerda — juntos, sem espaço entre eles
+          +'<div style="display:flex;align-items:center;gap:0;flex-shrink:0;">'+lMin+lOpo+'</div>'
+          // Título à direita dos logos
+          +'<div>'
+            +'<div style="font-size:16px;font-weight:800;color:'+C.ink+';">Pauta Iconográfica — Plenário da Câmara</div>'
+            +'<div style="font-size:9px;font-weight:500;color:'+C.inkSoft+';">'+e(data.data)+'</div>'
           +'</div>'
-          +'<div style="display:flex;align-items:center;justify-content:center;margin-top:3px;">'+lMin+lOpo+'</div>'
           +'</div>';
       }
 
