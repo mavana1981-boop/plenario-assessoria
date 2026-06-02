@@ -188,16 +188,7 @@
         <i class="fas fa-file-export me-2"></i>Exportar resumo
       </a>
       <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-iconografica"
-        onclick="
-          var info = 'Scripts: ' + document.querySelectorAll('script').length +
-                     ' | _abrirModal: ' + typeof window._abrirModalIconografica +
-                     ' | _carregada: ' + (window._iconograficaCarregada ? 'SIM' : 'NAO');
-          if(typeof window._abrirModalIconografica === 'function'){
-            window._abrirModalIconografica();
-          } else {
-            alert('Não carregada.\n' + info);
-          }
-        "
+        onclick="window._abrirModalIconografica && window._abrirModalIconografica();"
         style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
         <i class="fas fa-th-large me-2"></i>Pauta Iconográfica
       </button>
@@ -3501,11 +3492,6 @@ async function exportarOrientacoesPDF() {
     const wrapper = document.querySelector(`[data-card-id="${id}"]`);
     if(wrapper) renderCard(item, wrapper);
   };
-  // Diagnóstico visual — remove após resolver
-  document.addEventListener('DOMContentLoaded', function() {
-    var el = document.getElementById('btn-iconografica');
-    if (el) el.title = 'CARREGADO OK';
-  });
   window._iconograficaCarregada = true;
 })();</script>
 </body>
