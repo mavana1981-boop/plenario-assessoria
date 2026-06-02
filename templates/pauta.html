@@ -3180,13 +3180,15 @@ async function exportarOrientacoesPDF() {
 
       // Fontes calculadas para caber em cada seção
       function fp(h, lines){ return Math.max(6, Math.floor(h/(lines*1.3)))+'px'; }
-      var fCod  = fp(H1, 1);
-      var fMeta = fp(H2, 2);
+      // Código: cabe em até 2 linhas dentro de H1
+      var fCod  = fp(H1, 2);
+      // Meta: 2 linhas dentro de H2 — mínimo maior para legibilidade
+      var fMeta = Math.max(8, Math.floor(H2/(2*1.25)))+'px';
       var fDesc = fp(DH, 3);
       var fOri  = fp(H1*0.35, 1);
       var fRod  = fp(H3, 1);
-      var numW  = Math.max(16, H1-8);
-      var icoW  = H1 - 6; // menor que H1 para não cortar
+      var numW  = Math.max(16, H1/2-2);
+      var icoW  = Math.max(20, Math.round(H1*0.75));
 
       function card(it){
         var cfg = oriCfg(it.orientacao);
