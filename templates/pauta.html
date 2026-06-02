@@ -3155,128 +3155,127 @@ async function exportarOrientacoesPDF() {
   }
 
   function buildPrintHTML(data){
-    var PAGE_W   = 794;
-    var PAGE_H   = 1123;
-    var HDR_H    = 82;
-    var GRID_PAD = 8;
-    var GAP      = 5;
-    var COLS     = 2;
-    var MAX_PER_PAGE = 16;
+    var PAGE_W = 794, PAGE_H = 1123, HDR_H = 82;
+    var GPAD = 8, GAP = 5, COLS = 2, MAX_PP = 16;
 
     var pages = [];
-    for (var pi = 0; pi < data.items.length; pi += MAX_PER_PAGE)
-      pages.push(data.items.slice(pi, pi + MAX_PER_PAGE));
+    for (var pi = 0; pi < data.items.length; pi += MAX_PP)
+      pages.push(data.items.slice(pi, pi + MAX_PP));
 
     function buildPage(items, isFirst){
-      var rows   = Math.ceil(items.length / COLS);
-      var hdrH   = isFirst ? HDR_H : 0;
-      var availH = PAGE_H - hdrH - GRID_PAD*2 - GAP*(rows-1);
-      var cardH  = Math.floor(availH / rows);
-      var cardW  = Math.floor((PAGE_W - GRID_PAD*2 - GAP) / COLS);
+      var rows  = Math.ceil(items.length / COLS);
+      var hdrH  = isFirst ? HDR_H : 0;
+      var cardH = Math.floor((PAGE_H - hdrH - GPAD*2 - GAP*(rows-1)) / rows);
+      var cardW = Math.floor((PAGE_W - GPAD*2 - GAP) / COLS);
 
-      // Fator de escala: cardH=130 → f=1. Proporcional ao espaço disponível.
-      var f = cardH / 130;
+      // Divide cardH em seções fixas — sem padding no card pai (zero padding)
+      var H1 = Math.max(20, Math.round(cardH * 0.18)); // header num+codigo+ico
+      var H2 = Math.max(16, Math.round(cardH * 0.15)); // autor+relator
+      var H3 = Math.max(11, Math.round(cardH * 0.09)); // rodapé assessor
+      var G  = Math.max(2,  Math.round(cardH * 0.02)); // gap interno (×2)
+      var DH = cardH - H1 - H2 - H3 - G*2;            // descrição = resto
+      DH = Math.max(8, DH);
 
-      // Fontes em px — calculadas para caber. O card tem overflow:hidden absoluto.
-      // Estimativa de linhas: header(1) + meta(2) + descricao(~3) + rodape(1) = ~7 linhas
-      // Fonte máxima que cabe: cardH / (7 linhas * lineHeight)
-      var LINE_H   = 1.35;
-      // Reserva espaços fixos em px e calcula fonte máxima para o restante
-      var PAD      = Math.max(4, Math.round(f*4));   // padding top
-      var HDR_ROW  = Math.max(18, Math.round(f*22)); // linha código+ícone
-      var META_ROW = Math.max(16, Math.round(f*18)); // autor+relator (2 linhas)
-      var RDP_ROW  = Math.max(12, Math.round(f*14)); // rodapé assessor
-      var GAP_INT  = Math.max(2,  Math.round(f*3));  // gaps internos (×3)
-      var fixo     = PAD + HDR_ROW + META_ROW + RDP_ROW + GAP_INT*3;
-      var descH    = Math.max(10, cardH - fixo);
-      // Fonte da descrição: maior que caiba em descH (pelo menos 2 linhas)
-      var fMax     = Math.floor(descH / (2.5 * LINE_H));
-      // Fontes relativas ao fMax, com mínimo legível
-      var fCodigo  = Math.max(8,  Math.round(fMax * 1.3)) + 'px';
-      var fMeta    = Math.max(6,  Math.round(fMax * 0.85)) + 'px';
-      var fDesc    = Math.max(7,  Math.round(fMax * 1.0)) + 'px';
-      var fOri     = Math.max(6,  Math.round(fMax * 0.9)) + 'px';
-      var fRodape  = Math.max(6,  Math.round(fMax * 0.8)) + 'px';
-      var numW     = Math.max(16, Math.round(fMax * 1.8));
-      var icoW     = Math.max(22, Math.round(fMax * 2.2));
-      var gap2     = Math.max(2,  Math.round(f * 3));
+      // Fontes calculadas para caber em cada seção
+      function fp(h, lines){ return Math.max(6, Math.floor(h/(lines*1.3)))+'px'; }
+      var fCod  = fp(H1, 1);
+      var fMeta = fp(H2, 2);
+      var fDesc = fp(DH, 3);
+      var fOri  = fp(H1*0.38, 1);
+      var fRod  = fp(H3, 1);
+      var numW  = Math.max(14, H1-6);
+      var icoW  = Math.max(18, H1-2);
 
       function card(it){
         var cfg = oriCfg(it.orientacao);
-        var prio = it.marcador
-          ? '<div style="position:absolute;top:2px;right:2px;background:'+C.amber+';color:#fff;font-size:'+fRodape+';font-weight:900;padding:1px 3px;border-radius:2px;z-index:2;">'+e(it.marcador)+'</div>'
-          : '';
-        var imgH = Math.round(50 * f * (it.scale||1.0));
-        var imgBlock = it.imagem
-          ? '<div style="width:100%;overflow:hidden;background:#f5f5f5;height:'+imgH+'px;flex-shrink:0;margin-bottom:'+GAP_INT+'px;"><img src="'+it.imagem+'" style="width:100%;height:'+imgH+'px;object-fit:cover;display:block;"></div>'
-          : '';
-        var ico = svgIco(cfg.icon,cfg.bg).replace(/width="40" height="40"/,'width="'+icoW+'" height="'+icoW+'"');
-        var oriLabel = it.orientacao
+        var ico = svgIco(cfg.icon,cfg.bg)
+          .replace(/width="40" height="40"/,'width="'+icoW+'" height="'+icoW+'"');
+        var oriLbl = it.orientacao
           ? '<div style="font-size:'+fOri+';font-weight:900;color:'+cfg.bg+';text-align:center;line-height:1;white-space:nowrap;overflow:hidden;">'+e(it.orientacao)+'</div>'
           : '';
-        var rodape = it.responsavel_nome
-          ? '<div style="font-size:'+fRodape+';color:#0D2B5E;font-weight:700;text-align:center;border-top:1px solid rgba(13,43,94,.15);flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:1px 2px;">'
-            + e(it.responsavel_nome)
-            + (it.responsavel_categoria ? ' · Lid. '+it.responsavel_categoria.charAt(0).toUpperCase()+it.responsavel_categoria.slice(1) : '')
-            + '</div>'
+        var rodTxt = it.responsavel_nome
+          ? e(it.responsavel_nome)+(it.responsavel_categoria?' · Lid. '+it.responsavel_categoria.charAt(0).toUpperCase()+it.responsavel_categoria.slice(1):'')
           : '';
 
-        return '<div style="background:#fff;border-radius:5px;padding:'+PAD+'px 7px 0;position:relative;'
-          + 'box-shadow:0 1px 4px rgba(0,0,0,.10);'
-          // CRÍTICO: overflow:hidden + height fixa garantem que nada sai do quadro
-          + 'height:'+cardH+'px;max-height:'+cardH+'px;width:'+cardW+'px;'
-          + 'box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;">'
-          + prio
-          // Linha 1: número + código + ícone + orientação
-          + '<div style="display:flex;align-items:center;gap:3px;flex-shrink:0;overflow:hidden;height:'+HDR_ROW+'px;">'
-            + '<div style="width:'+numW+'px;height:'+numW+'px;min-width:'+numW+'px;border-radius:50%;background:'+C.inkSoft+';color:#fff;font-size:'+fMeta+';font-weight:900;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
-            + '<div style="font-size:'+fCodigo+';font-weight:800;color:'+C.ink+';line-height:1.1;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;">'+e(it.codigo)+'</div>'
-            + '<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">'+ico+oriLabel+'</div>'
-          + '</div>'
-          + imgBlock
-          // Linha 2-3: autor + relator
-          + '<div style="font-size:'+fMeta+';color:'+C.inkSoft+';line-height:1.25;flex-shrink:0;overflow:hidden;height:'+META_ROW+'px;margin-top:'+GAP_INT+'px;">'
-            + '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Autor:</b> '+e(it.autor)+'</div>'
-            + '<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Relator:</b> '+e(it.relator)+'</div>'
-          + '</div>'
-          // Descrição: flex:1 pega o espaço restante, overflow:hidden corta
-          + '<div style="font-size:'+fDesc+';color:#2c3e50;line-height:'+LINE_H+';margin-top:'+GAP_INT+'px;overflow:hidden;height:'+descH+'px;flex-shrink:0;">'+e(it.descricao)+'</div>'
-          + rodape
-          + '</div>';
+        // Cada div filho tem height exato = seção. Card pai: height+overflow:hidden, SEM padding
+        return '<div style="'
+          +'background:#fff;border-radius:5px;overflow:hidden;'
+          +'height:'+cardH+'px;width:'+cardW+'px;'
+          +'box-sizing:border-box;box-shadow:0 1px 4px rgba(0,0,0,.10);">'
+
+          // S1: header num+codigo+icone+ori — height=H1, padding horizontal 6px
+          +'<div style="height:'+H1+'px;display:flex;align-items:center;gap:3px;overflow:hidden;padding:0 6px;">'
+            +'<div style="width:'+numW+'px;height:'+numW+'px;min-width:'+numW+'px;border-radius:50%;'
+            +'background:'+C.inkSoft+';color:#fff;font-size:'+fMeta+';font-weight:900;'
+            +'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
+            +'<div style="font-size:'+fCod+';font-weight:800;color:'+C.ink+';line-height:1.1;'
+            +'flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:0 2px;">'+e(it.codigo)+'</div>'
+            +'<div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">'+ico+oriLbl+'</div>'
+          +'</div>'
+
+          // GAP1
+          +'<div style="height:'+G+'px;"></div>'
+
+          // S2: autor+relator — height=H2
+          +'<div style="height:'+H2+'px;overflow:hidden;font-size:'+fMeta+';'
+          +'color:'+C.inkSoft+';line-height:1.3;padding:0 6px;">'
+            +'<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Autor:</b> '+e(it.autor)+'</div>'
+            +'<div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>Relator:</b> '+e(it.relator)+'</div>'
+          +'</div>'
+
+          // GAP2
+          +'<div style="height:'+G+'px;"></div>'
+
+          // S3: descrição — height=DH
+          +'<div style="height:'+DH+'px;overflow:hidden;font-size:'+fDesc+';'
+          +'color:#2c3e50;line-height:1.3;padding:0 6px;">'+e(it.descricao)+'</div>'
+
+          // S4: rodapé assessor — height=H3, sempre presente
+          +'<div style="height:'+H3+'px;overflow:hidden;font-size:'+fRod+';'
+          +'color:#0D2B5E;font-weight:700;text-align:center;'
+          +'white-space:nowrap;text-overflow:ellipsis;'
+          +'border-top:1px solid rgba(13,43,94,.12);'
+          +'display:flex;align-items:center;justify-content:center;'
+          +'box-sizing:border-box;">'+rodTxt+'</div>'
+
+          +'</div>';
       }
 
       var hdrHtml = '';
       if (isFirst) {
-        var logosMin = data.logo_min
-          ? '<img src="'+data.logo_min+'" style="height:28px;object-fit:contain;padding-right:8px;border-right:1.5px solid #ccc;">'
-          : '<span style="font-size:7pt;font-weight:900;color:'+C.forest+';padding-right:8px;border-right:1px solid #ccc;">MINORIA</span>';
-        var logosOpo = data.logo_opo
-          ? '<img src="'+data.logo_opo+'" style="height:28px;object-fit:contain;padding-left:8px;">'
-          : '<span style="font-size:7pt;font-weight:900;color:'+C.ruby+';padding-left:8px;">OPOSIÇÃO</span>';
-        hdrHtml = '<div style="padding:10px 18px 4px;border-bottom:2px solid rgba(30,53,80,.15);height:'+(HDR_H-2)+'px;box-sizing:border-box;overflow:hidden;">'
-          + '<div style="text-align:center;font-size:16px;font-weight:800;color:'+C.ink+';">'
-            + 'Pauta Iconográfica — Plenário da Câmara'
-            + '<span style="display:block;font-size:10px;font-weight:500;color:'+C.inkSoft+';">'+e(data.data)+'</span>'
-          + '</div>'
-          + '<div style="display:flex;align-items:center;justify-content:center;margin-top:4px;">'+logosMin+logosOpo+'</div>'
-          + '</div>';
+        var lMin = data.logo_min
+          ? '<img src="'+data.logo_min+'" style="height:26px;object-fit:contain;padding-right:8px;border-right:1.5px solid #ccc;">'
+          : '<span style="font-size:7px;font-weight:900;color:'+C.forest+';padding-right:8px;border-right:1px solid #ccc;">MINORIA</span>';
+        var lOpo = data.logo_opo
+          ? '<img src="'+data.logo_opo+'" style="height:26px;object-fit:contain;padding-left:8px;">'
+          : '<span style="font-size:7px;font-weight:900;color:'+C.ruby+';padding-left:8px;">OPOSIÇÃO</span>';
+        hdrHtml = '<div style="height:'+HDR_H+'px;overflow:hidden;box-sizing:border-box;'
+          +'padding:8px 18px 4px;border-bottom:2px solid rgba(30,53,80,.15);">'
+          +'<div style="text-align:center;font-size:15px;font-weight:800;color:'+C.ink+';">'
+            +'Pauta Iconográfica — Plenário da Câmara'
+            +'<span style="display:block;font-size:9px;font-weight:500;color:'+C.inkSoft+';">'+e(data.data)+'</span>'
+          +'</div>'
+          +'<div style="display:flex;align-items:center;justify-content:center;margin-top:3px;">'+lMin+lOpo+'</div>'
+          +'</div>';
       }
 
-      return '<div style="width:'+PAGE_W+'px;height:'+PAGE_H+'px;overflow:hidden;background:'+C.cream+';page-break-after:always;box-sizing:border-box;">'
-        + hdrHtml
-        + '<div style="padding:'+GRID_PAD+'px;display:grid;grid-template-columns:1fr 1fr;gap:'+GAP+'px;overflow:hidden;">'
-          + items.map(card).join('')
-        + '</div></div>';
+      return '<div style="width:'+PAGE_W+'px;height:'+PAGE_H+'px;overflow:hidden;'
+        +'background:'+C.cream+';page-break-after:always;box-sizing:border-box;">'
+        +hdrHtml
+        +'<div style="padding:'+GPAD+'px;box-sizing:border-box;'
+        +'display:grid;grid-template-columns:1fr 1fr;gap:'+GAP+'px;overflow:hidden;">'
+          +items.map(card).join('')
+        +'</div></div>';
     }
 
     return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pauta Iconográfica</title>'
-      + '<style>'
-      + '@page{size:A4 portrait;margin:0}'
-      + '@media print{html,body{margin:0;padding:0}-webkit-print-color-adjust:exact;print-color-adjust:exact}'
-      + 'body{margin:0;padding:0;background:'+C.cream+';}'
-      + '</style></head><body>'
-      + pages.map(function(pg,i){ return buildPage(pg,i===0); }).join('')
-      + '</body></html>';
+      +'<style>'
+      +'@page{size:A4 portrait;margin:0}'
+      +'@media print{html,body{margin:0;padding:0}-webkit-print-color-adjust:exact;print-color-adjust:exact}'
+      +'body{margin:0;padding:0;background:'+C.cream+';}'
+      +'</style></head><body>'
+      +pages.map(function(pg,i){ return buildPage(pg,i===0); }).join('')
+      +'</body></html>';
   }
 
   async function gerarIconografica() {
