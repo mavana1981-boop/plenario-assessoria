@@ -1516,7 +1516,7 @@
       modalEl.className = 'modal fade';
       modalEl.setAttribute('tabindex', '-1');
 
-      const mDialog  = document.createElement('div'); mDialog.className = 'modal-dialog';
+      const mDialog  = document.createElement('div'); mDialog.className = 'modal-dialog modal-lg';
       const mContent = document.createElement('div'); mContent.className = 'modal-content';
       const mHeader  = document.createElement('div'); mHeader.className = 'modal-header bg-primary text-white';
       const mTitle   = document.createElement('h6');  mTitle.className = 'modal-title';
@@ -1527,25 +1527,33 @@
       mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
 
       const mBody = document.createElement('div'); mBody.className = 'modal-body';
-      const mInfo = document.createElement('p'); mInfo.className = 'small text-muted mb-2';
-      mInfo.textContent = docs.length + ' documento(s). Use 👁 Ver para visualizar o texto do PDF.';
+      const mInfo = document.createElement('p'); mInfo.className = 'small text-muted mb-1';
+      mInfo.textContent = docs.length + ' documento(s). Selecione até 2 para comparar. Use 👁 Ver para visualizar.';
       mBody.appendChild(mInfo);
       mBody.appendChild(document.createElement('hr'));
 
-      // Lista de documentos com radio + botão Ver (igual ao dos destaques)
+      // Lista com CHECKBOX (até 2 selecionados) + Ver + PDF
       docs.forEach((d, i) => {
         const wrap = document.createElement('div');
         wrap.className = 'form-check mb-1 d-flex align-items-start gap-2';
 
         const inp = document.createElement('input');
         inp.className = 'form-check-input mt-1';
-        inp.type = 'radio'; inp.name = 'doc_par'; inp.id = 'dpar_' + i;
+        inp.type = 'checkbox';
+        inp.name = 'doc_cmp';
+        inp.id = 'dcmp_' + i;
         inp.value = String(i);
-        if (i === 0) inp.checked = true;
+        inp.dataset.url   = d.url;
+        inp.dataset.label = d.label;
+        // Limita a 2 selecionados
+        inp.addEventListener('change', () => {
+          const checked = mBody.querySelectorAll('input[name="doc_cmp"]:checked');
+          if (checked.length > 2) { inp.checked = false; return; }
+        });
 
         const lbl = document.createElement('label');
         lbl.className = 'form-check-label small flex-grow-1';
-        lbl.setAttribute('for', 'dpar_' + i);
+        lbl.setAttribute('for', 'dcmp_' + i);
         lbl.textContent = d.label;
 
         const btnVer = document.createElement('button');
@@ -1559,19 +1567,71 @@
         btnPdf.className = 'btn btn-outline-danger btn-sm py-0 px-1';
         btnPdf.style.fontSize = '0.7rem';
         btnPdf.textContent = '📄 PDF';
-        btnPdf.href = d.url;
-        btnPdf.target = '_blank';
-        btnPdf.rel = 'noopener';
+        btnPdf.href = d.url; btnPdf.target = '_blank'; btnPdf.rel = 'noopener';
 
         wrap.appendChild(inp); wrap.appendChild(lbl); wrap.appendChild(btnVer); wrap.appendChild(btnPdf);
         mBody.appendChild(wrap);
       });
 
+      // Área de resultado da comparação
+      const resultDiv = document.createElement('div');
+      resultDiv.id = 'cmp-resultado';
+      resultDiv.style.display = 'none';
+      resultDiv.className = 'mt-3';
+      mBody.appendChild(resultDiv);
+
       const mFooter = document.createElement('div'); mFooter.className = 'modal-footer';
+
       const btnFechar = document.createElement('button');
       btnFechar.type = 'button'; btnFechar.className = 'btn btn-secondary btn-sm';
       btnFechar.setAttribute('data-bs-dismiss', 'modal'); btnFechar.textContent = 'Fechar';
+
+      const btnComparar = document.createElement('button');
+      btnComparar.type = 'button';
+      btnComparar.className = 'btn btn-primary btn-sm';
+      btnComparar.innerHTML = '<i class="fas fa-exchange-alt me-1"></i>Comparar Textos';
+      btnComparar.addEventListener('click', async () => {
+        const checked = Array.from(mBody.querySelectorAll('input[name="doc_cmp"]:checked'));
+        if (checked.length < 2) {
+          resultDiv.innerHTML = '<div class="alert alert-warning py-1 small">Selecione exatamente 2 documentos para comparar.</div>';
+          resultDiv.style.display = 'block';
+          return;
+        }
+        const [d1, d2] = [checked[0], checked[1]];
+        btnComparar.disabled = true;
+        btnComparar.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Comparando...';
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = '<div class="text-center text-muted small py-3"><i class="fas fa-spinner fa-spin me-2"></i>A IA está analisando as diferenças entre os documentos...</div>';
+
+        try {
+          const r2 = await fetch('/comparar_documentos', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              url_doc1: d1.dataset.url, label_doc1: d1.dataset.label,
+              url_doc2: d2.dataset.url, label_doc2: d2.dataset.label,
+            })
+          });
+          const j2 = await r2.json();
+          if (j2.comparacao) {
+            resultDiv.innerHTML =
+              '<div class="border rounded p-3 bg-light">' +
+                '<h6 class="text-primary mb-2"><i class="fas fa-exchange-alt me-1"></i>Comparação de Textos</h6>' +
+                '<div class="small" style="white-space:pre-wrap;line-height:1.6;">' + j2.comparacao + '</div>' +
+              '</div>';
+          } else {
+            resultDiv.innerHTML = '<div class="alert alert-danger py-1 small">Erro: ' + (j2.error||'Falha na comparação') + '</div>';
+          }
+        } catch(e) {
+          resultDiv.innerHTML = '<div class="alert alert-danger py-1 small">Erro: ' + e.message + '</div>';
+        } finally {
+          btnComparar.disabled = false;
+          btnComparar.innerHTML = '<i class="fas fa-exchange-alt me-1"></i>Comparar Textos';
+        }
+      });
+
       mFooter.appendChild(btnFechar);
+      mFooter.appendChild(btnComparar);
 
       mContent.appendChild(mHeader); mContent.appendChild(mBody); mContent.appendChild(mFooter);
       mDialog.appendChild(mContent); modalEl.appendChild(mDialog);
