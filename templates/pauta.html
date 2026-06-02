@@ -3269,7 +3269,7 @@ async function exportarOrientacoesPDF() {
         // Nome: cabe em 1 linha
         var fNome = fitFont(F_NOME, it.codigo, txtWNome, H_nome, 1) + 'pt';
         // Meta: usa fonte global (igual em todos os cards), mínimo 10pt
-        var fMeta1 = Math.max(10, fMetaGlobal) + 'pt';
+        var fMeta1 = Math.max(8, fMetaGlobal) + 'pt';
         var fDesc = fitFont(F_DESC, it.descricao, txtW-2, H_desc, 20) + 'pt';
         var fRod  = fitFont(F_ROD,  it.responsavel_nome||'x', txtW, H_rod, 1) + 'pt';
         var fNum  = Math.max(6, Math.round(numW*0.55)) + 'pt';
@@ -3344,13 +3344,13 @@ async function exportarOrientacoesPDF() {
           :'<span style="font-size:9pt;font-weight:900;color:'+C.ruby+';">OPO</span>';
         hdrHtml='<div style="height:'+HDR_H+'px;overflow:hidden;box-sizing:border-box;'
           +'padding:8px 18px 4px;border-bottom:2px solid rgba(30,53,80,.15);'
-          +'display:flex;align-items:center;gap:14px;">'
+          +'display:flex;align-items:center;gap:10px;">'
           // Logos à esquerda — juntos, sem espaço entre eles
           +'<div style="display:flex;align-items:center;gap:0;flex-shrink:0;">'+lMin+lOpo+'</div>'
-          // Título à direita dos logos
-          +'<div>'
-            +'<div style="font-size:16px;font-weight:800;color:'+C.ink+';">Pauta Iconográfica — Plenário da Câmara</div>'
-            +'<div style="font-size:9px;font-weight:500;color:'+C.inkSoft+';">'+e(data.data)+'</div>'
+          // Título: cresce para preencher toda a largura restante, mesma altura dos logos
+          +'<div style="flex:1;display:flex;flex-direction:column;justify-content:center;height:'+(HDR_H-16)+'px;">'
+            +'<div style="font-size:'+Math.round((HDR_H-20)/2.2)+'px;font-weight:900;color:'+C.ink+';line-height:1;white-space:nowrap;overflow:hidden;">Pauta Iconográfica — Plenário da Câmara</div>'
+            +'<div style="font-size:11px;font-weight:500;color:'+C.inkSoft+';margin-top:4px;">'+e(data.data)+'</div>'
           +'</div>'
           +'</div>';
       }
