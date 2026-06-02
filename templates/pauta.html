@@ -3211,11 +3211,12 @@ async function exportarOrientacoesPDF() {
 
         // Fontes: fixas, reduzem se não couberem
         var txtWMeta = txtW - icoW - 10; // autor/relator têm ícone à direita
-        var fNome = fitFont(F_NOME, it.codigo,  txtWNome,  H_nome,    1) + 'pt';
-        var fAutor= fitFont(F_META, 'Autor: '+(it.autor||''),   txtWMeta, H_meta/2,  1) + 'pt';
-        var fRel  = fitFont(F_META, 'Relator: '+(it.relator||''), txtWMeta, H_meta/2,  1) + 'pt';
-        var fDesc = fitFont(F_DESC, it.descricao, txtW - icoW - 8, H_desc, 10) + 'pt';
-        var fRod  = fitFont(F_ROD,  it.responsavel_nome||'', txtW, H_rod, 1) + 'pt';
+        var hLinha   = Math.floor(H_meta / 2); // altura de 1 linha (metade de H_meta)
+        var fNome = fitFont(F_NOME, it.codigo,  txtWNome,  H_nome,  1) + 'pt';
+        var fAutor= fitFont(F_META, 'Autor: '+(it.autor||''),    txtWMeta, hLinha, 1) + 'pt';
+        var fRel  = fitFont(F_META, 'Relator: '+(it.relator||''), txtWMeta, hLinha, 1) + 'pt';
+        var fDesc = fitFont(F_DESC, it.descricao, txtW-2, H_desc, 20) + 'pt';
+        var fRod  = fitFont(F_ROD,  it.responsavel_nome||'x', txtW, H_rod, 1) + 'pt';
         var fNum  = Math.max(6, Math.round(numW*0.55)) + 'pt';
         var fOri  = Math.max(5, Math.round(icoW*0.30)) + 'pt';
 
