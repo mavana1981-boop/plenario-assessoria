@@ -880,33 +880,45 @@
     }
 
     // Para nomes ainda longos (>60 chars), chama IA para abreviar
-    async function abreviarViaIA(texto){
-      if(!texto || texto.length <= 60) return texto;
+    async function abreviarViaIA(texto, maxChars){
+      maxChars = maxChars || 40;
+      if(!texto || texto.length <= maxChars) return texto;
       try {
         const r = await fetch('/resumo_ementa', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({
-            id_principal: 'abrev',
+            id_principal: 'abrev_'+texto.substring(0,10),
             projeto: 'Abreviação',
-            ementa: 'Abrevia o seguinte nome de autoria parlamentar em no máximo 40 caracteres, mantendo siglas e nomes próprios reconhecíveis. Retorne APENAS o texto abreviado, sem explicações: ' + texto,
+            ementa: 'Abrevia o seguinte nome de autoria parlamentar em no máximo '+maxChars+' caracteres, mantendo siglas e nomes próprios reconhecíveis. Retorne APENAS o texto abreviado, sem explicações: ' + texto,
             autor: ''
           })
         });
         const j = await r.json();
-        return (j.resumo||texto).substring(0,60);
-      } catch(e){ return texto; }
+        return (j.resumo||texto).substring(0, maxChars);
+      } catch(e){ return texto.substring(0, maxChars); }
     }
 
     async function prepararAutoresRelatores(){
       if(!window.ITENS_DATA) return;
+      // Estima largura disponível para o texto de autor/relator
+      // (usa valores típicos — 2 colunas, 15 itens)
+      var estimCardW = Math.floor((794-8*2-5)/2);
+      var estimIcoW  = Math.min(60, Math.max(28, Math.round(123*0.18)));
+      var estimTxtW  = estimCardW - 4 - 10*2 - estimIcoW - 10;
+      // Máx chars que cabem em 8pt (mínimo) numa linha
+      var maxChars = Math.floor(estimTxtW / (8 * 0.55));
+
       for(const item of window.ITENS_DATA){
         item.autor_breve   = abreviarTexto(item.autor);
         item.relator_breve = abreviarTexto(item.relator);
-        // Se ainda longo, usa IA
-        if(item.autor_breve.length > 50)
-          item.autor_breve   = await abreviarViaIA(item.autor_breve);
-        if(item.relator_breve.length > 50)
-          item.relator_breve = await abreviarViaIA(item.relator_breve);
+        // Se ainda não cabe, usa IA
+        var metaFull = 'Autor: '+item.autor_breve+'  |  Relator: '+item.relator_breve;
+        if(metaFull.length > maxChars){
+          if(item.autor_breve.length > 35)
+            item.autor_breve = await abreviarViaIA(item.autor_breve, 35);
+          if(item.relator_breve.length > 35)
+            item.relator_breve = await abreviarViaIA(item.relator_breve, 35);
+        }
       }
     }
 
@@ -3323,9 +3335,8 @@ async function exportarOrientacoesPDF() {
               +'<div style="flex:1;font-size:'+fDesc+';color:#2c3e50;line-height:1.3;overflow:hidden;">'+e(it.descricao)+'</div>'
             +'</div>'
 
-            // LINHA 4: rodapé assessor + barra colorida — altura H_rod
-            +'<div style="height:'+H_rod+'px;overflow:hidden;display:flex;align-items:center;'
-              +'border-top:2px solid '+cfg.bg+';margin:0 -'+PAD+'px;">'
+            // LINHA 4: rodapé assessor — sem borda colorida
+            +'<div style="height:'+H_rod+'px;overflow:hidden;display:flex;align-items:center;">'
               +'<div style="font-size:'+fRod+';color:#0D2B5E;font-weight:700;text-align:center;'
                 +'width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:0 6px;">'+rodTxt+'</div>'
             +'</div>'
@@ -3350,7 +3361,7 @@ async function exportarOrientacoesPDF() {
           // Título: cresce para preencher toda a largura restante, mesma altura dos logos
           +'<div style="flex:1;display:flex;flex-direction:column;justify-content:center;height:'+(HDR_H-16)+'px;">'
             +'<div style="font-size:'+Math.round((HDR_H-20)/2.2)+'px;font-weight:900;color:'+C.ink+';line-height:1;white-space:nowrap;overflow:hidden;">Pauta Iconográfica — Plenário da Câmara</div>'
-            +'<div style="font-size:11px;font-weight:500;color:'+C.inkSoft+';margin-top:4px;">'+e(data.data)+'</div>'
+            +'<div style="font-size:13px;font-weight:600;color:'+C.inkSoft+';margin-top:5px;">'+e(data.data)+'</div>'
           +'</div>'
           +'</div>';
       }
