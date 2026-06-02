@@ -264,6 +264,7 @@ def _get_evento(evento_id):
 def _get_itens(evento_id):
     try:
         from app import fetch_pauta, get_conn
+        import requests as _req
         itens, _ = fetch_pauta(evento_id, force_reload=False)
         # Carrega resumos IA
         resumos = {}
@@ -279,6 +280,29 @@ def _get_itens(evento_id):
             rid = str(item.get('id_principal',''))
             if rid in resumos:
                 item['resumo_ia'] = resumos[rid]
+
+            # Enriquece autor via API da Câmara (mesmo que o browser faz)
+            if rid and rid.isdigit():
+                try:
+                    r = _req.get(
+                        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{rid}/autores",
+                        headers={'Accept': 'application/json'}, timeout=8
+                    )
+                    if r.ok:
+                        dados = r.json().get('dados', [])
+                        autores = []
+                        for a in dados:
+                            nome = a.get('nome','')
+                            p    = a.get('siglaPartido','')
+                            uf   = a.get('siglaUf','')
+                            suf  = f'({p}-{uf})' if p and uf else (f'({p})' if p else '')
+                            if nome:
+                                autores.append(f"{nome} {suf}".strip() if suf else nome)
+                        if autores:
+                            item['autor'] = ', '.join(autores[:2]) + (' e outros' if len(autores) > 2 else '')
+                except Exception:
+                    pass
+
         return itens
     except Exception as e:
         current_app.logger.error(f"Erro ao obter itens: {e}")
