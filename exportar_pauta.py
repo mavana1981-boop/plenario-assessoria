@@ -382,8 +382,12 @@ def exportar_pauta(evento_id):
             ori = (it.get("orientacao","") or "").strip().upper()
             cor_ori, _ = CORES_ORI.get(ori, (C_CINZA, C_CINZA_LT))
 
-            # Coluna proposição: só o título, sem ementa
+            # Coluna proposição: título + autor (primeiro) + relator em itálico
             proj_titulo  = it.get("projeto","—")
+            autor_raw    = it.get("autor","") or ""
+            relator_raw  = it.get("relator","") or ""
+            # Pega só o primeiro autor
+            primeiro_autor = autor_raw.split(",")[0].strip() if autor_raw else ""
 
             try:
                 cor_hex = '#' + ''.join(f'{int(x*255):02X}' for x in cor_t.rgb())
@@ -391,8 +395,15 @@ def exportar_pauta(evento_id):
                 cor_hex = '#0D2B5E'
 
             import xml.sax.saxutils as _xml
-            proj_titulo_esc = _xml.escape(proj_titulo)
+            proj_titulo_esc   = _xml.escape(proj_titulo)
+            primeiro_autor_esc = _xml.escape(primeiro_autor) if primeiro_autor else ''
+            relator_esc        = _xml.escape(relator_raw) if relator_raw else ''
+
             proj_xml = f'<b><font color="{cor_hex}" size="9.5">{proj_titulo_esc}</font></b>'
+            if primeiro_autor_esc:
+                proj_xml += f'<br/><font size="7.5"><i>Autor: {primeiro_autor_esc}</i></font>'
+            if relator_esc and relator_esc != 'Não atribuído':
+                proj_xml += f'<br/><font size="7.5"><i>Relator: {relator_esc}</i></font>'
 
             proj_para = Paragraph(proj_xml,
                 ParagraphStyle("pm"+str(it.get("ordem",0)),
