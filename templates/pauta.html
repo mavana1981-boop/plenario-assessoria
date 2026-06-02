@@ -867,6 +867,23 @@
       }
     }
     setTimeout(enriquecerPartidos, 1500);
+    // Abrevia comissões em autor/relator para a iconográfica
+    function abreviarComissao(texto){
+      if(!texto) return texto;
+      return texto
+        .replace(/Comissão\s+de\s+/gi, 'Com. ')
+        .replace(/Comissão\s+Especial\s+/gi, 'Com. Esp. ')
+        .replace(/Comissão\s+Mista\s+/gi, 'Com. Mista ')
+        .replace(/Comissão\s+Permanente\s+/gi, 'Com. Perm. ')
+        .replace(/Deputad[oa]s?\s+/gi, 'Dep. ')
+        .replace(/\s{2,}/g, ' ').trim();
+    }
+    if(window.ITENS_DATA){
+      window.ITENS_DATA.forEach(function(item){
+        item.autor_breve   = abreviarComissao(item.autor);
+        item.relator_breve = abreviarComissao(item.relator);
+      });
+    }
     setTimeout(carregarTodosResumos, 1000);
       document.addEventListener('change', async (e) => {
         const sel = e.target.closest('.select-responsavel');
@@ -3210,11 +3227,11 @@ async function exportarOrientacoesPDF() {
         var txtWNome = txtW - numW - 6 - icoW - 4; // largura para o nome
 
         // Fontes: fixas, reduzem se não couberem
-        var txtWMeta = txtW - icoW - 10; // autor/relator têm ícone à direita
-        var hLinha   = Math.floor(H_meta / 2); // altura de 1 linha (metade de H_meta)
-        var fNome = fitFont(F_NOME, it.codigo,  txtWNome,  H_nome,  1) + 'pt';
-        var fAutor= fitFont(F_META, 'Autor: '+(it.autor||''),    txtWMeta, hLinha, 1) + 'pt';
-        var fRel  = fitFont(F_META, 'Relator: '+(it.relator||''), txtWMeta, hLinha, 1) + 'pt';
+        var txtWMeta = txtW - icoW - 10;
+        // Autor + relator na mesma linha: "Autor: X  |  Relator: Y"
+        var metaTexto = 'Autor: '+(it.autor_breve||it.autor||'')+'  |  Relator: '+(it.relator_breve||it.relator||'');
+        var fMeta1 = fitFont(F_META, metaTexto, txtWMeta, H_meta, 1) + 'pt';
+        var fNome = fitFont(F_NOME, it.codigo,  txtWNome, H_nome, 1) + 'pt';
         var fDesc = fitFont(F_DESC, it.descricao, txtW-2, H_desc, 20) + 'pt';
         var fRod  = fitFont(F_ROD,  it.responsavel_nome||'x', txtW, H_rod, 1) + 'pt';
         var fNum  = Math.max(6, Math.round(numW*0.55)) + 'pt';
@@ -3254,10 +3271,13 @@ async function exportarOrientacoesPDF() {
                 +'flex:1;overflow:hidden;white-space:nowrap;">'+e(it.codigo)+'</div>'
             +'</div>'
 
-            // LINHA 2: autor + relator — cada um em 1 linha, fonte encolhe para caber
-            +'<div style="height:'+H_meta+'px;overflow:hidden;padding-right:'+(icoW+10)+'px;">'
-              +'<div style="font-size:'+fAutor+';color:'+C.inkSoft+';line-height:1.25;overflow:hidden;white-space:nowrap;"><b>Autor:</b> '+e(it.autor)+'</div>'
-              +'<div style="font-size:'+fRel+';color:'+C.inkSoft+';line-height:1.25;overflow:hidden;white-space:nowrap;"><b>Relator:</b> '+e(it.relator)+'</div>'
+            // LINHA 2: autor + relator em 1 linha
+            +'<div style="height:'+H_meta+'px;display:flex;align-items:center;overflow:hidden;padding-right:'+(icoW+10)+'px;">'
+              +'<div style="font-size:'+fMeta1+';color:'+C.inkSoft+';line-height:1.2;overflow:hidden;white-space:nowrap;">'
+                +'<b>Autor:</b> '+e(it.autor_breve||it.autor||'')
+                +'<span style="margin:0 6px;opacity:.4;">|</span>'
+                +'<b>Relator:</b> '+e(it.relator_breve||it.relator||'')
+              +'</div>'
             +'</div>'
 
             // LINHA 3: descrição + ícone canto inferior direito — altura H_desc
