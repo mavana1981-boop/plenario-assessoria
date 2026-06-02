@@ -3210,9 +3210,10 @@ async function exportarOrientacoesPDF() {
         var txtWNome = txtW - numW - 6 - icoW - 4; // largura para o nome
 
         // Fontes: fixas, reduzem se não couberem
-        var fNome = fitFont(F_NOME, it.codigo,  txtWNome, H_nome,    1) + 'pt';
-        var fAutor= fitFont(F_META, it.autor,   txtW,     H_meta/2,  1) + 'pt';
-        var fRel  = fitFont(F_META, it.relator, txtW,     H_meta/2,  1) + 'pt';
+        var txtWMeta = txtW - icoW - 10; // autor/relator têm ícone à direita
+        var fNome = fitFont(F_NOME, it.codigo,  txtWNome,  H_nome,    1) + 'pt';
+        var fAutor= fitFont(F_META, 'Autor: '+(it.autor||''),   txtWMeta, H_meta/2,  1) + 'pt';
+        var fRel  = fitFont(F_META, 'Relator: '+(it.relator||''), txtWMeta, H_meta/2,  1) + 'pt';
         var fDesc = fitFont(F_DESC, it.descricao, txtW - icoW - 8, H_desc, 10) + 'pt';
         var fRod  = fitFont(F_ROD,  it.responsavel_nome||'', txtW, H_rod, 1) + 'pt';
         var fNum  = Math.max(6, Math.round(numW*0.55)) + 'pt';
@@ -3247,14 +3248,15 @@ async function exportarOrientacoesPDF() {
               +'<div style="width:'+numW+'px;height:'+numW+'px;min-width:'+numW+'px;border-radius:50%;'
                 +'background:'+C.inkSoft+';color:#fff;font-size:'+fNum+';font-weight:900;'
                 +'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
+              // Nome: white-space:nowrap + font calculada para caber em 1 linha — nunca corta
               +'<div style="font-size:'+fNome+';font-weight:800;color:'+C.ink+';line-height:1.1;'
                 +'flex:1;overflow:hidden;white-space:nowrap;">'+e(it.codigo)+'</div>'
             +'</div>'
 
-            // LINHA 2: autor + relator — altura H_meta
+            // LINHA 2: autor + relator — cada um em 1 linha, fonte encolhe para caber
             +'<div style="height:'+H_meta+'px;overflow:hidden;padding-right:'+(icoW+10)+'px;">'
-              +'<div style="font-size:'+fAutor+';color:'+C.inkSoft+';line-height:1.25;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;"><b>Autor:</b> '+e(it.autor)+'</div>'
-              +'<div style="font-size:'+fRel+';color:'+C.inkSoft+';line-height:1.25;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;"><b>Relator:</b> '+e(it.relator)+'</div>'
+              +'<div style="font-size:'+fAutor+';color:'+C.inkSoft+';line-height:1.25;overflow:hidden;white-space:nowrap;"><b>Autor:</b> '+e(it.autor)+'</div>'
+              +'<div style="font-size:'+fRel+';color:'+C.inkSoft+';line-height:1.25;overflow:hidden;white-space:nowrap;"><b>Relator:</b> '+e(it.relator)+'</div>'
             +'</div>'
 
             // LINHA 3: descrição + ícone canto inferior direito — altura H_desc
