@@ -126,6 +126,8 @@ def _html_para_paragrafos(html, estilo):
     s = re.sub(r"<[^>]+>", "", s)
     s = _html_mod.unescape(s)
 
+    import xml.sax.saxutils as _saxutils
+
     linhas = [l.strip() for l in s.split("\n")]
     paragrafos = []
 
@@ -155,12 +157,13 @@ def _html_para_paragrafos(html, estilo):
             st = ParagraphStyle(f"sNT_{emoji_enc}", parent=estilo,
                 fontName="Helvetica-Bold", fontSize=fTitulo, leading=fTitulo+4,
                 textColor=cor, spaceBefore=8, spaceAfter=2)
-            paragrafos.append(Paragraph(linha, st))
+            # Escapa XML para não quebrar o parser do ReportLab
+            paragrafos.append(Paragraph(_saxutils.escape(linha), st))
         else:
-            # Texto normal: sempre preto, tamanho fixo — sem herdar cor de span anterior
+            # Texto normal: sempre preto, tamanho fixo, XML escapado
             st = ParagraphStyle("sNT_body", parent=estilo,
                 fontSize=fTexto, textColor=colors.black, leading=fTexto+3)
-            paragrafos.append(Paragraph(linha, st))
+            paragrafos.append(Paragraph(_saxutils.escape(linha), st))
 
     return paragrafos if paragrafos else [Paragraph("", estilo)]
 
@@ -594,6 +597,8 @@ def exportar_pauta(evento_id):
                 bloco.append(nota_hdr)
 
                 # Converte HTML preservando ícones e quebras de linha
+                # IMPORTANTE: usa o raw_html mas remove todas as tags de cor/estilo
+                # para evitar que o ReportLab interprete spans coloridos do Quill
                 raw_html = it.get("resumo_materia", "") or ""
                 paras_nota = _html_para_paragrafos(raw_html, sNota)
 
