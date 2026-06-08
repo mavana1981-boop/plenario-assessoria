@@ -142,6 +142,7 @@ def _html_para_paragrafos(html, estilo):
 
     linhas = [l.strip() for l in s.split("\n")]
     paragrafos = []
+    idx = 0
 
     for linha in linhas:
         if not linha:
@@ -149,33 +150,28 @@ def _html_para_paragrafos(html, estilo):
                 paragrafos.append(Spacer(1, 3))
             continue
 
-        # Detecta título pelo emoji
+        idx += 1
+
+        # Detecta título pelo emoji — ÚNICO critério aceito
         emoji_enc = None
         for emoji in TITULOS:
             if linha.startswith(emoji):
                 emoji_enc = emoji
                 break
 
-        # Fallback por palavra-chave — só linhas curtas (título, não texto normal)
-        if not emoji_enc and len(linha) < 50:
-            lu = linha.upper()
-            for kw, emoji in KW_TITULOS.items():
-                if kw in lu:
-                    emoji_enc = emoji
-                    break
-
         linha_escaped = _sax.escape(linha)
 
         if emoji_enc:
             cor = TITULOS[emoji_enc]
-            st = ParagraphStyle(f"sNT_{emoji_enc}", parent=estilo,
+            # Nome único para evitar cache do ReportLab
+            st = ParagraphStyle(f"sNT_t_{idx}", parent=estilo,
                 fontName="Helvetica-Bold", fontSize=fTitulo, leading=fTitulo+4,
                 textColor=cor, spaceBefore=8, spaceAfter=2)
         else:
-            # TEXTO NORMAL — sempre preto, sem exceção
-            st = ParagraphStyle("sNT_body", parent=estilo,
+            # PRETO SEMPRE — nome único para evitar cache
+            st = ParagraphStyle(f"sNT_b_{idx}", parent=estilo,
                 fontSize=fTexto, textColor=colors.black,
-                leading=fTexto+3)
+                leading=fTexto+3, fontName="Helvetica")
 
         try:
             paragrafos.append(Paragraph(linha_escaped, st))
