@@ -618,7 +618,7 @@
           const conteudo = textarea ? textarea.value : '';
 
           // Template padrão quando não há conteúdo
-          const TEMPLATE_PADRAO = `<p><strong><span style="font-size:16px;color:#0D2B5E;">📘 Resumo Técnico</span></strong></p><p><br></p><p><br></p><p><strong><span style="font-size:16px;color:#1A6B3A;">🟢 Pontos Positivos</span></strong></p><p><br></p><p><br></p><p><strong><span style="font-size:16px;color:#8B0000;">🔴 Pontos Negativos</span></strong></p><p><br></p><p><br></p><p><strong><span style="font-size:16px;color:#7B5C00;">⚖️ Riscos Políticos e de Imagem</span></strong></p><p><br></p><p><br></p><p><strong><span style="font-size:16px;color:#0D2B5E;">↔️ Orientação Sugerida</span></strong></p><p><br></p>`;
+          const TEMPLATE_PADRAO = `<p><strong>📘 Resumo Técnico</strong></p><p><br></p><p><br></p><p><strong>🟢 Pontos Positivos</strong></p><p><br></p><p><br></p><p><strong>🔴 Pontos Negativos</strong></p><p><br></p><p><br></p><p><strong>⚖️ Riscos Políticos e de Imagem</strong></p><p><br></p><p><br></p><p><strong>↔️ Orientação Sugerida</strong></p><p><br></p>`;
 
           const quill = new Quill(`#quill-editor-${ordem}`, {
             theme: 'snow',
@@ -640,7 +640,7 @@
             } else {
               // Conteúdo antigo sem estrutura — insere template com conteúdo no Resumo
               const conteudoLimpo = conteudo.replace(/<[^>]+>/g, '').trim();
-              const templateComConteudo = `<p><strong><span style="font-size:16px;color:#0D2B5E;">📘 Resumo Técnico</span></strong></p><p>${conteudoLimpo}</p><p><br></p><p><strong><span style="font-size:16px;color:#1A6B3A;">🟢 Pontos Positivos</span></strong></p><p><br></p><p><br></p><p><strong><span style="font-size:16px;color:#8B0000;">🔴 Pontos Negativos</span></strong></p><p><br></p><p><br></p><p><strong><span style="font-size:16px;color:#7B5C00;">⚖️ Riscos Políticos e de Imagem</span></strong></p><p><br></p><p><br></p><p><strong><span style="font-size:16px;color:#0D2B5E;">↔️ Orientação Sugerida</span></strong></p><p><br></p>`;
+              const templateComConteudo = `<p><strong>📘 Resumo Técnico</strong></p><p>${conteudoLimpo}</p><p><br></p><p><strong>🟢 Pontos Positivos</strong></p><p><br></p><p><br></p><p><strong>🔴 Pontos Negativos</strong></p><p><br></p><p><br></p><p><strong>⚖️ Riscos Políticos e de Imagem</strong></p><p><br></p><p><br></p><p><strong>↔️ Orientação Sugerida</strong></p><p><br></p>`;
               quill.clipboard.dangerouslyPasteHTML(templateComConteudo);
             }
           } else {
