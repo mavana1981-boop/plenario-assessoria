@@ -88,49 +88,42 @@ def _strip_html(s):
 def _html_para_paragrafos(html, estilo):
     """
     Converte HTML do editor Quill em lista de Paragraphs ReportLab.
-    Títulos de seção: negrito, 2pt maior que o texto, cor própria.
-    Texto: tamanho padrão do estilo (fonte normalizada para exportação).
+    Títulos de seção: negrito, 2pt maior, cor própria.
+    Texto normal: cor preta, tamanho padrão — ignora cores inline do Quill.
     """
     from reportlab.platypus import Paragraph, Spacer
     from reportlab.lib.styles import ParagraphStyle
     import html as _html_mod
 
-    # Mapa de emojis → (cor, texto padrão do título)
     TITULOS = {
-        '📘': (colors.HexColor("#0D2B5E"), '📘 Resumo Técnico'),
-        '🟢': (colors.HexColor("#1A6B3A"), '🟢 Pontos Positivos'),
-        '🔴': (colors.HexColor("#8B0000"), '🔴 Pontos Negativos'),
-        '⚖️': (colors.HexColor("#7B5C00"), '⚖️ Riscos Políticos e de Imagem'),
-        '↔️': (colors.HexColor("#0D2B5E"), '↔️ Orientação Sugerida'),
-        '⚠️': (colors.HexColor("#8B0000"), '⚠️ Críticas e Pontos de Combate'),
+        '📘': (colors.HexColor("#0D2B5E"), ),
+        '🟢': (colors.HexColor("#1A6B3A"), ),
+        '🔴': (colors.HexColor("#8B0000"), ),
+        '⚖️': (colors.HexColor("#7B5C00"), ),
+        '↔️': (colors.HexColor("#0D2B5E"), ),
+        '⚠️': (colors.HexColor("#8B0000"), ),
     }
-    # Palavras-chave fallback (para compatibilidade com notas antigas)
+    # Palavras-chave fallback — só para linhas muito curtas (títulos antigos sem emoji)
     KW_TITULOS = {
-        'PONTOS POSITIVOS': '🟢',
-        'PONTO POSITIVO':   '🟢',
-        'POSITIV':          '🟢',
-        'PONTOS NEGATIVOS': '🔴',
-        'PONTO NEGATIVO':   '🔴',
-        'NEGATIV':          '🔴',
-        'CRÍTICAS E PONTOS':'⚠️',
-        'CRITICAS E PONTOS':'⚠️',
-        'RESUMO TÉCNICO':   '📘',
-        'RESUMO TECNICO':   '📘',
-        'RISCOS POLÍTICOS': '⚖️',
-        'RISCOS POLITICOS': '⚖️',
-        'ORIENTAÇÃO SUGERIDA':'↔️',
-        'ORIENTACAO SUGERIDA':'↔️',
+        'PONTOS POSITIVOS': '🟢', 'PONTO POSITIVO': '🟢',
+        'PONTOS NEGATIVOS': '🔴', 'PONTO NEGATIVO': '🔴',
+        'RESUMO TÉCNICO': '📘',   'RESUMO TECNICO': '📘',
+        'RISCOS POLÍTICOS': '⚖️', 'RISCOS POLITICOS': '⚖️',
+        'ORIENTAÇÃO SUGERIDA': '↔️', 'ORIENTACAO SUGERIDA': '↔️',
+        'CRÍTICAS E PONTOS': '⚠️', 'CRITICAS E PONTOS': '⚠️',
     }
 
-    fTitulo  = estilo.fontSize + 2  # 2pt maior que o texto
-    fTexto   = estilo.fontSize      # tamanho padrão normalizado
+    fTitulo = estilo.fontSize + 2
+    fTexto  = estilo.fontSize
 
     s = str(html or "")
+    # Quebras de linha
     s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
     s = re.sub(r"</p>",      "\n", s, flags=re.IGNORECASE)
     s = re.sub(r"</li>",     "\n", s, flags=re.IGNORECASE)
     s = re.sub(r"<li[^>]*>", "• ", s, flags=re.IGNORECASE)
-    s = re.sub(r"<[^>]+>",   "",   s)
+    # Remove TODAS as tags — inclusive spans com color que contaminam o texto normal
+    s = re.sub(r"<[^>]+>", "", s)
     s = _html_mod.unescape(s)
 
     linhas = [l.strip() for l in s.split("\n")]
@@ -142,33 +135,34 @@ def _html_para_paragrafos(html, estilo):
                 paragrafos.append(Spacer(1, 3))
             continue
 
-        # Detecta título pelo emoji — método principal
-        emoji_encontrado = None
+        # Detecta título pelo emoji (método principal)
+        emoji_enc = None
         for emoji in TITULOS:
             if linha.startswith(emoji):
-                emoji_encontrado = emoji
+                emoji_enc = emoji
                 break
 
-        # Fallback: detecta por palavra-chave APENAS se linha muito curta (< 50 chars)
-        # Evita falsos positivos em texto normal que menciona "positivo" ou "negativo"
-        if not emoji_encontrado and len(linha) < 50:
+        # Fallback por palavra-chave — só linhas curtas (< 50 chars = é um título)
+        if not emoji_enc and len(linha) < 50:
             lu = linha.upper()
             for kw, emoji in KW_TITULOS.items():
                 if kw in lu:
-                    emoji_encontrado = emoji
+                    emoji_enc = emoji
                     break
 
-        if emoji_encontrado:
-            cor, texto_padrao = TITULOS[emoji_encontrado]
-            st = ParagraphStyle(f"sNT_{emoji_encontrado}", parent=estilo,
+        if emoji_enc:
+            cor = TITULOS[emoji_enc][0]
+            st = ParagraphStyle(f"sNT_{emoji_enc}", parent=estilo,
                 fontName="Helvetica-Bold", fontSize=fTitulo, leading=fTitulo+4,
                 textColor=cor, spaceBefore=8, spaceAfter=2)
-            # Usa o texto original da linha — sem .upper(), sem substituição
             paragrafos.append(Paragraph(linha, st))
         else:
-            # Texto normal — força tamanho padrão (ignora font-size inline do HTML)
-            st = ParagraphStyle(f"sNT_txt", parent=estilo, fontSize=fTexto)
+            # Texto normal: sempre preto, tamanho fixo — sem herdar cor de span anterior
+            st = ParagraphStyle("sNT_body", parent=estilo,
+                fontSize=fTexto, textColor=colors.black, leading=fTexto+3)
             paragrafos.append(Paragraph(linha, st))
+
+    return paragrafos if paragrafos else [Paragraph("", estilo)]
 
     return paragrafos if paragrafos else [Paragraph("", estilo)]
 
