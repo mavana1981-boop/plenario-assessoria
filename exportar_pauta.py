@@ -85,29 +85,45 @@ def _strip_html(s):
     txt = re.sub(r"\s+", " ", txt)
     return txt.strip()
 
+def _limpar_html_quill(html):
+    """Remove atributos style/color do HTML do Quill, preservando estrutura e emojis."""
+    s = str(html or "")
+    # Remove atributos style e class das tags (fontes, cores inline)
+    s = re.sub(r'\s+style="[^"]*"', '', s)
+    s = re.sub(r"\s+style='[^']*'", '', s)
+    s = re.sub(r'\s+class="[^"]*"', '', s)
+    # Remove tags span (só transportam estilos, emojis ficam no texto)
+    s = re.sub(r'<span[^>]*>', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'</span>', '',      s, flags=re.IGNORECASE)
+    # Remove font-size explícito
+    s = re.sub(r'<font[^>]*>', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'</font>', '',      s, flags=re.IGNORECASE)
+    return s
+
+
 def _html_para_paragrafos(html, estilo):
     """
     Converte HTML do editor Quill em lista de Paragraphs ReportLab.
-    Títulos de seção: negrito, 2pt maior, cor própria.
-    Texto normal: cor preta, tamanho padrão — ignora cores inline do Quill.
+    Títulos de seção (emoji): negrito, 2pt maior, cor própria.
+    Todo o restante: preto, tamanho fixo — sem exceção.
     """
     from reportlab.platypus import Paragraph, Spacer
     from reportlab.lib.styles import ParagraphStyle
     import html as _html_mod
+    import xml.sax.saxutils as _sax
 
     TITULOS = {
-        '📘': (colors.HexColor("#0D2B5E"), ),
-        '🟢': (colors.HexColor("#1A6B3A"), ),
-        '🔴': (colors.HexColor("#8B0000"), ),
-        '⚖️': (colors.HexColor("#7B5C00"), ),
-        '↔️': (colors.HexColor("#0D2B5E"), ),
-        '⚠️': (colors.HexColor("#8B0000"), ),
+        '📘': colors.HexColor("#0D2B5E"),
+        '🟢': colors.HexColor("#1A6B3A"),
+        '🔴': colors.HexColor("#8B0000"),
+        '⚖️': colors.HexColor("#7B5C00"),
+        '↔️': colors.HexColor("#0D2B5E"),
+        '⚠️': colors.HexColor("#8B0000"),
     }
-    # Palavras-chave fallback — só para linhas muito curtas (títulos antigos sem emoji)
     KW_TITULOS = {
         'PONTOS POSITIVOS': '🟢', 'PONTO POSITIVO': '🟢',
         'PONTOS NEGATIVOS': '🔴', 'PONTO NEGATIVO': '🔴',
-        'RESUMO TÉCNICO': '📘',   'RESUMO TECNICO': '📘',
+        'RESUMO TÉCNICO':   '📘', 'RESUMO TECNICO': '📘',
         'RISCOS POLÍTICOS': '⚖️', 'RISCOS POLITICOS': '⚖️',
         'ORIENTAÇÃO SUGERIDA': '↔️', 'ORIENTACAO SUGERIDA': '↔️',
         'CRÍTICAS E PONTOS': '⚠️', 'CRITICAS E PONTOS': '⚠️',
@@ -116,17 +132,16 @@ def _html_para_paragrafos(html, estilo):
     fTitulo = estilo.fontSize + 2
     fTexto  = estilo.fontSize
 
-    s = str(html or "")
-    # Quebras de linha
+    # 1. Remove estilos inline do Quill (cor, font-size, spans)
+    s = _limpar_html_quill(html)
+
+    # 2. Converte tags remanescentes em texto/quebras
     s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
     s = re.sub(r"</p>",      "\n", s, flags=re.IGNORECASE)
     s = re.sub(r"</li>",     "\n", s, flags=re.IGNORECASE)
     s = re.sub(r"<li[^>]*>", "• ", s, flags=re.IGNORECASE)
-    # Remove TODAS as tags — inclusive spans com color que contaminam o texto normal
-    s = re.sub(r"<[^>]+>", "", s)
+    s = re.sub(r"<[^>]+>",   "",   s)   # remove todas as tags restantes
     s = _html_mod.unescape(s)
-
-    import xml.sax.saxutils as _saxutils
 
     linhas = [l.strip() for l in s.split("\n")]
     paragrafos = []
@@ -137,14 +152,14 @@ def _html_para_paragrafos(html, estilo):
                 paragrafos.append(Spacer(1, 3))
             continue
 
-        # Detecta título pelo emoji (método principal)
+        # Detecta título pelo emoji
         emoji_enc = None
         for emoji in TITULOS:
             if linha.startswith(emoji):
                 emoji_enc = emoji
                 break
 
-        # Fallback por palavra-chave — só linhas curtas (< 50 chars = é um título)
+        # Fallback por palavra-chave — só linhas curtas (título, não texto normal)
         if not emoji_enc and len(linha) < 50:
             lu = linha.upper()
             for kw, emoji in KW_TITULOS.items():
@@ -152,18 +167,23 @@ def _html_para_paragrafos(html, estilo):
                     emoji_enc = emoji
                     break
 
+        linha_escaped = _sax.escape(linha)
+
         if emoji_enc:
-            cor = TITULOS[emoji_enc][0]
+            cor = TITULOS[emoji_enc]
             st = ParagraphStyle(f"sNT_{emoji_enc}", parent=estilo,
                 fontName="Helvetica-Bold", fontSize=fTitulo, leading=fTitulo+4,
                 textColor=cor, spaceBefore=8, spaceAfter=2)
-            # Escapa XML para não quebrar o parser do ReportLab
-            paragrafos.append(Paragraph(_saxutils.escape(linha), st))
         else:
-            # Texto normal: sempre preto, tamanho fixo, XML escapado
+            # TEXTO NORMAL — sempre preto, sem exceção
             st = ParagraphStyle("sNT_body", parent=estilo,
-                fontSize=fTexto, textColor=colors.black, leading=fTexto+3)
-            paragrafos.append(Paragraph(_saxutils.escape(linha), st))
+                fontSize=fTexto, textColor=colors.black,
+                leading=fTexto+3)
+
+        try:
+            paragrafos.append(Paragraph(linha_escaped, st))
+        except Exception:
+            paragrafos.append(Paragraph(_sax.escape(re.sub(r'[^\x20-\x7E\u00C0-\u024F\u0400-\u04FF\U0001F300-\U0001FAFF]', '?', linha)), st))
 
     return paragrafos if paragrafos else [Paragraph("", estilo)]
 
@@ -272,22 +292,43 @@ def _get_itens(evento_id):
         from app import fetch_pauta, get_conn
         import requests as _req
         itens, _ = fetch_pauta(evento_id, force_reload=False)
-        # Carrega resumos IA
-        resumos = {}
+
+        # Carrega resumos_ia E resumo_materia do banco
+        resumos_ia      = {}
+        resumos_materia = {}
         try:
             conn = get_conn()
             c = conn.cursor()
+            # resumos_ia (resumo automático da ementa)
             c.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
-            resumos = {str(r[0]): r[1] for r in c.fetchall()}
+            resumos_ia = {str(r[0]): r[1] for r in c.fetchall()}
+            # resumo_materia (nota técnica salva pelo usuário no Quill)
+            try:
+                c.execute('SELECT item_key, resumo_materia FROM notas WHERE evento_id=?', (evento_id,))
+                for row in c.fetchall():
+                    item_key, rm = row
+                    if rm:
+                        resumos_materia[str(item_key)] = rm
+            except Exception:
+                pass
             conn.close()
         except Exception:
             pass
+
         for item in itens:
             rid = str(item.get('id_principal',''))
-            if rid in resumos:
-                item['resumo_ia'] = resumos[rid]
+            if rid in resumos_ia:
+                item['resumo_ia'] = resumos_ia[rid]
 
-            # Enriquece autor via API da Câmara (mesmo que o browser faz)
+            # Busca resumo_materia pelo item_key (mesmo formato do app.py)
+            projeto  = item.get('projeto','')
+            item_key = f"{evento_id}_{projeto}"
+            if item_key in resumos_materia:
+                item['resumo_materia'] = resumos_materia[item_key]
+            elif rid in resumos_materia:
+                item['resumo_materia'] = resumos_materia[rid]
+
+            # Enriquece autor via API da Câmara
             if rid and rid.isdigit():
                 try:
                     r = _req.get(
