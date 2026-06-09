@@ -268,8 +268,7 @@ def _get_itens(evento_id):
 
         for item in itens:
             rid      = str(item.get('id_principal',''))
-            projeto  = item.get('projeto','')
-            item_key = f"{evento_id}_{projeto}"
+            item_key = f"PROP_{rid}"  # mesmo formato do save_item no app.py
 
             if rid in resumos_ia:
                 item['resumo_ia'] = resumos_ia[rid]
@@ -277,10 +276,7 @@ def _get_itens(evento_id):
             # Nota do banco tem PRIORIDADE ABSOLUTA sobre cache
             if item_key in resumos_materia:
                 item['resumo_materia'] = resumos_materia[item_key]
-            elif rid in resumos_materia:
-                item['resumo_materia'] = resumos_materia[rid]
             else:
-                # Se não há nota no banco, limpa para não usar dado desatualizado do cache
                 item['resumo_materia'] = ''
 
         return itens
