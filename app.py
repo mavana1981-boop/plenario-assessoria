@@ -2112,4 +2112,4 @@ def analisar_ia():
 **Ementa:** {ementa}
 {contexto_doc}
 
-Gere uma nota técnica em texto puro seguin
+Gere uma nota técnica em texto puro seguin 
