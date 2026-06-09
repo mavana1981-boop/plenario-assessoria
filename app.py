@@ -2093,21 +2093,10 @@ def analisar_ia():
 
     secao_criticas = ""
     if eh_esquerda:
-        secao_criticas = (
-            "\n\nCRITICAS E PONTOS DE COMBATE (autoria ou relatoria de partido de esquerda/governo):\n"
-            "- Criticas ao merito: principais criticas tecnicas, contradicoes, falhas, impactos negativos\n"
-            "- Contradicoes com o discurso da esquerda: onde o projeto contradiz posicoes historicas do PT/PSOL/PCdoB\n"
-            "- Discurso de combate para o Plenario: argumento direto e combativo para pronunciamento\n"
-            "- Questionamentos ao relator: perguntas incisivas para fazer ao relator no plenario\n"
-        )
+        secao_criticas = "\n\nCRITICAS E PONTOS DE COMBATE (autoria ou relatoria de partido de esquerda/governo):\n- Criticas ao merito: principais criticas tecnicas, contradicoes, falhas, impactos negativos\n- Contradicoes com o discurso da esquerda: onde o projeto contradiz posicoes historicas do PT/PSOL/PCdoB\n- Discurso de combate para o Plenario: argumento direto e combativo para pronunciamento\n- Questionamentos ao relator: perguntas incisivas para fazer ao relator no plenario\n"
 
-    prompt = (
-        "Voce e um assessor legislativo especializado em analise de proposicoes da Camara dos Deputados do Brasil,"
-        " trabalhando para a Oposicao e Minoria (bancada do PL e aliados).\n\n"
-        "Proposicao: " + str(projeto) + "\n"
-        "Autores: " + str(autor) + "\n"
-        "Relator: " + str(relator) + "\n"
-        "Ementa: " + str(ementa) + "\n"
-        + str(contexto_doc) + "\n\n"
-        "Gere uma nota tecnica em texto puro com EXATAMENTE esta estrutura.\n"
-        "REGRA: cada titulo de secao com emoji deve estar SOZINHO em sua linha, seguido de linha em branco.\n\n"
+    estrutura = "📘 Resumo tecnico\n\ntexto do resumo\n\n🟢 Pontos positivos\n\ntexto dos pontos positivos\n\n🔴 Pontos negativos\n\ntexto dos pontos negativos\n\n⚖️ Riscos politicos e de imagem\n\ntexto dos riscos\n\n↔️ Orientacao sugerida\n\ntexto da orientacao\n\n"
+
+    cabecalho = "Voce e um assessor legislativo da Camara dos Deputados, trabalhando para a Oposicao e Minoria.\n\n"
+    dados = "Proposicao: %s\nAutores: %s\nRelator: %s\nEmenta: %s\n%s\n\n" % (str(projeto), str(autor), str(relator), str(ementa), str(contexto_doc))
+    instrucao = "Gere uma nota tecnica em texto puro com esta estrutura. Cada titulo com emoji deve estar sozinho na linha, seguido de linha em branco.\n
