@@ -85,8 +85,9 @@ def _strip_html(s):
     txt = re.sub(r"\s+", " ", txt)
     return txt.strip()
 
-def _html_para_paragrafos(html, estilo):
-    import html as _h
+def _texto_para_paragrafos(texto, estilo):
+    """Converte texto puro em Paragraphs. Títulos com emoji ficam coloridos/negrito.
+    Todo o resto: Helvetica preto. Nenhum HTML passado ao ReportLab."""
     from reportlab.platypus import Paragraph, Spacer
     from reportlab.lib.styles import ParagraphStyle
 
@@ -99,25 +100,14 @@ def _html_para_paragrafos(html, estilo):
         '\u26a0\ufe0f': colors.HexColor("#8B0000"), # ⚠️
     }
 
-    # Extrai texto puro sem nenhum markup HTML
-    s = str(html or "")
-    s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"</p>",       "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"</li>",      "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"<li[^>]*>",  "- ",  s, flags=re.IGNORECASE)
-    s = re.sub(r"<[^>]+>",    "",    s)
-    s = _h.unescape(s)
-
     result = []
-    for i, linha in enumerate(s.split("\n")):
+    for i, linha in enumerate(str(texto or '').split('\n')):
         linha = linha.strip()
         if not linha:
             if result:
                 result.append(Spacer(1, 3))
             continue
-
         emoji = next((e for e in CORES if linha.startswith(e)), None)
-
         if emoji:
             st = ParagraphStyle(f"_T{i}",
                 fontName="Helvetica-Bold",
@@ -131,13 +121,10 @@ def _html_para_paragrafos(html, estilo):
                 fontSize=estilo.fontSize,
                 leading=estilo.leading,
                 textColor=colors.black)
-
-        # Texto puro — sem nenhum markup passado ao ReportLab
         try:
             result.append(Paragraph(linha, st))
         except Exception:
-            result.append(Paragraph(linha.encode('ascii', 'replace').decode(), st))
-
+            result.append(Paragraph(linha.encode('ascii','replace').decode(), st))
     return result or [Paragraph("", estilo)]
 
 
@@ -593,7 +580,7 @@ def exportar_pauta(evento_id):
                 # IMPORTANTE: usa o raw_html mas remove todas as tags de cor/estilo
                 # para evitar que o ReportLab interprete spans coloridos do Quill
                 raw_html = it.get("resumo_materia", "") or ""
-                paras_nota = _html_para_paragrafos(raw_html, sNota)
+                paras_nota = _texto_para_paragrafos(raw_html, sNota)
 
                 # Monta tabela com todos os parágrafos
                 rows = [[p] for p in paras_nota]
