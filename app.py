@@ -2093,20 +2093,21 @@ def analisar_ia():
 
     secao_criticas = ""
     if eh_esquerda:
-        secao_criticas = """
-<br>
-<p><strong style="color:#8B0000;">⚠️ CRÍTICAS E PONTOS DE COMBATE</strong><br>
-<em style="color:#8B0000;">[Autoria ou relatoria de partido de esquerda/governo]</em></p>
-<ul>
-<li><strong>Críticas ao mérito:</strong> [principais críticas técnicas — contradições, falhas, impactos negativos]</li>
-<li><strong>Contradições com o discurso da esquerda:</strong> [onde o projeto contradiz posições históricas do PT/PSOL/PCdoB — privatizações, redução de direitos, favorecimento de setores privados]</li>
-<li><strong>Discurso de combate para o Plenário:</strong> [argumento direto e combativo para pronunciamento — inclua exemplos de declarações contraditórias de parlamentares da esquerda]</li>
-<li><strong>Questionamentos ao relator:</strong> [perguntas incisivas para fazer ao relator no plenário]</li>
-</ul>"""
+        secao_criticas = (
+            "\n\nCRITICAS E PONTOS DE COMBATE (autoria ou relatoria de partido de esquerda/governo):\n"
+            "- Criticas ao merito: principais criticas tecnicas, contradicoes, falhas, impactos negativos\n"
+            "- Contradicoes com o discurso da esquerda: onde o projeto contradiz posicoes historicas do PT/PSOL/PCdoB\n"
+            "- Discurso de combate para o Plenario: argumento direto e combativo para pronunciamento\n"
+            "- Questionamentos ao relator: perguntas incisivas para fazer ao relator no plenario\n"
+        )
 
-    partes_prompt = [
-        "Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil,",
-        " trabalhando para a Oposição e Minoria (bancada do PL e aliados).\n\n",
-        "**Proposição:** ", str(projeto), "\n",
-        "**Autor(es):** ",  str(autor),   "\n",
-        "**Relator:** ",
+    prompt = (
+        "Voce e um assessor legislativo especializado em analise de proposicoes da Camara dos Deputados do Brasil,"
+        " trabalhando para a Oposicao e Minoria (bancada do PL e aliados).\n\n"
+        "Proposicao: " + str(projeto) + "\n"
+        "Autores: " + str(autor) + "\n"
+        "Relator: " + str(relator) + "\n"
+        "Ementa: " + str(ementa) + "\n"
+        + str(contexto_doc) + "\n\n"
+        "Gere uma nota tecnica em texto puro com EXATAMENTE esta estrutura.\n"
+        "REGRA: cada titulo de secao com emoji deve estar SOZINHO em sua linha, seguido de linha em branco.\n\n"
