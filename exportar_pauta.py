@@ -245,23 +245,19 @@ def _get_evento(evento_id):
 def _get_itens(evento_id):
     try:
         from app import fetch_pauta, get_conn
-        import requests as _req
         itens, _ = fetch_pauta(evento_id, force_reload=False)
 
-        # Carrega resumos_ia E resumo_materia do banco
+        # Busca SEMPRE do banco — nunca do cache — para ter dados atuais
         resumos_ia      = {}
         resumos_materia = {}
         try:
             conn = get_conn()
             c = conn.cursor()
-            # resumos_ia (resumo automático da ementa)
             c.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
             resumos_ia = {str(r[0]): r[1] for r in c.fetchall()}
-            # resumo_materia (nota técnica salva pelo usuário no Quill)
             try:
                 c.execute('SELECT item_key, resumo_materia FROM notas WHERE evento_id=?', (evento_id,))
-                for row in c.fetchall():
-                    item_key, rm = row
+                for item_key, rm in c.fetchall():
                     if rm:
                         resumos_materia[str(item_key)] = rm
             except Exception:
@@ -271,39 +267,21 @@ def _get_itens(evento_id):
             pass
 
         for item in itens:
-            rid = str(item.get('id_principal',''))
+            rid      = str(item.get('id_principal',''))
+            projeto  = item.get('projeto','')
+            item_key = f"{evento_id}_{projeto}"
+
             if rid in resumos_ia:
                 item['resumo_ia'] = resumos_ia[rid]
 
-            # Busca resumo_materia pelo item_key (mesmo formato do app.py)
-            projeto  = item.get('projeto','')
-            item_key = f"{evento_id}_{projeto}"
+            # Nota do banco tem PRIORIDADE ABSOLUTA sobre cache
             if item_key in resumos_materia:
                 item['resumo_materia'] = resumos_materia[item_key]
             elif rid in resumos_materia:
                 item['resumo_materia'] = resumos_materia[rid]
-
-            # Enriquece autor via API da Câmara
-            if rid and rid.isdigit():
-                try:
-                    r = _req.get(
-                        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{rid}/autores",
-                        headers={'Accept': 'application/json'}, timeout=8
-                    )
-                    if r.ok:
-                        dados = r.json().get('dados', [])
-                        autores = []
-                        for a in dados:
-                            nome = a.get('nome','')
-                            p    = a.get('siglaPartido','')
-                            uf   = a.get('siglaUf','')
-                            suf  = f'({p}-{uf})' if p and uf else (f'({p})' if p else '')
-                            if nome:
-                                autores.append(f"{nome} {suf}".strip() if suf else nome)
-                        if autores:
-                            item['autor'] = ', '.join(autores[:2]) + (' e outros' if len(autores) > 2 else '')
-                except Exception:
-                    pass
+            else:
+                # Se não há nota no banco, limpa para não usar dado desatualizado do cache
+                item['resumo_materia'] = ''
 
         return itens
     except Exception as e:
