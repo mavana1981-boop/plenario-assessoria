@@ -91,20 +91,18 @@ def _header_footer(canvas, doc, logos, titulo):
     canvas.setStrokeColorRGB(0.1, 0.42, 0.23)
     canvas.setLineWidth(1.2)
     canvas.line(1.5*cm, h-1.9*cm, w-1.5*cm, h-1.9*cm)
-    # logos lado a lado à esquerda
+    # logos lado a lado à esquerda — tenta desenhar mesmo sem verificar exists
     x_logo = 1.5*cm
     for path in logos:
-        if os.path.exists(path):
-            try:
-                canvas.drawImage(path, x_logo, h-2.55*cm, width=2.0*cm,
-                                 preserveAspectRatio=True, mask="auto")
-                x_logo += 2.2*cm
-            except Exception:
-                pass
+        try:
+            canvas.drawImage(path, x_logo, h-2.55*cm, width=2.0*cm,
+                             preserveAspectRatio=True, mask="auto")
+            x_logo += 2.3*cm
+        except Exception:
+            pass
     canvas.setFont("Helvetica-Bold", 9.5)
     tw = stringWidth(titulo, "Helvetica-Bold", 9.5)
     canvas.drawString((w - tw) / 2, h-1.7*cm, titulo)
-    # rodapé
     canvas.setStrokeColorRGB(0.1, 0.42, 0.23)
     canvas.setLineWidth(0.8)
     canvas.line(1.5*cm, 1.4*cm, w-1.5*cm, 1.4*cm)
@@ -236,16 +234,20 @@ def exportar_pauta(evento_id):
         # ── Estilos da tabela de resumo ──────────────────────────────────
         sTabNum  = ParagraphStyle("sTN", parent=SS["Normal"],
             fontSize=10, leading=13, alignment=1, fontName="Helvetica-Bold")
+
+        # Proposição: estilo base da célula (texto normal, não negrito)
         sTabProj = ParagraphStyle("sTP", parent=SS["Normal"],
-            fontSize=11, leading=14, alignment=1, fontName="Helvetica-Bold",
-            textColor=colors.black)
-        sTabMeta = ParagraphStyle("sTMt", parent=SS["Normal"],
-            fontSize=8, leading=11, alignment=1,
-            fontName="Helvetica-Oblique", textColor=colors.HexColor("#444444"))
+            fontSize=10, leading=13, alignment=1,
+            fontName="Helvetica", textColor=colors.black)
+
         sTabObj  = ParagraphStyle("sTO2", parent=SS["Normal"],
-            fontSize=9, leading=12, alignment=1, wordWrap="CJK")
+            fontSize=9, leading=13, alignment=1, wordWrap="CJK",
+            fontName="Helvetica")
+
+        # Orientação: cabe numa linha — coluna mais larga, fonte menor
         sTabOri  = ParagraphStyle("sTO", parent=SS["Normal"],
-            fontSize=12, leading=15, alignment=1, fontName="Helvetica-Bold")
+            fontSize=8, leading=11, alignment=1, fontName="Helvetica-Bold",
+            wordWrap="CJK")
 
         tdata = [[
             Paragraph("<b>Nº</b>",         sTabNum),
@@ -258,35 +260,48 @@ def exportar_pauta(evento_id):
             ori     = (it.get("orientacao") or "").strip()
             cor_ori = COR_ORI.get(ori, CINZA)
 
-            # ── Coluna Proposição: negrito preto SEM itálico, linha em branco, autor/relator ──
+            # ── Coluna Proposição ──
+            # Nome em negrito preto (sem itálico)
+            # Linha em branco
+            # Autor: e Relator: em fonte menor sem negrito
             proj_txt       = _sax.escape(str(it.get("projeto","—")))
             autor_full     = str(it.get("autor","") or "")
             relator_str    = str(it.get("relator","") or "")
             primeiro_autor = _sax.escape(autor_full.split(",")[0].strip()) if autor_full else ""
-            relator_esc    = _sax.escape(relator_str[:60]) if relator_str and relator_str != "Não atribuído" else ""
+            relator_esc    = _sax.escape(relator_str[:80]) if relator_str and relator_str != "Não atribuído" else ""
 
-            proj_xml = f'<b>{proj_txt}</b><br/><br/>'
+            # <b> apenas no nome, autor/relator em Helvetica 7.5 sem negrito
+            proj_xml = f'<b><font size="10">{proj_txt}</font></b>'
+            if primeiro_autor or relator_esc:
+                proj_xml += '<br/><br/>'  # linha em branco entre nome e autor
             if primeiro_autor:
-                proj_xml += f'<font size="8"><i>Autor: {primeiro_autor}</i></font>'
+                proj_xml += f'<font name="Helvetica" size="7.5">Autor: {primeiro_autor}</font>'
             if relator_esc:
-                proj_xml += f'<br/><font size="8"><i>Relator: {relator_esc}</i></font>'
+                proj_xml += f'<br/><font name="Helvetica" size="7.5">Relator: {relator_esc}</font>'
 
-            # ── Coluna Objeto: resumo IA em azul negrito, linha em branco, ementa itálico ──
-            resumo_ia  = _sax.escape((_html_para_texto(it.get("resumo_ia","") or ""))[:350])
-            ementa_txt = _sax.escape((_html_para_texto(it.get("ementa","") or ""))[:250])
+            # ── Coluna Objeto ──
+            # Resumo IA: azul negrito (destaque)
+            # Linha em branco
+            # Ementa completa: itálico cinza, sem limite de caracteres
+            resumo_ia  = _sax.escape(_html_para_texto(it.get("resumo_ia","") or ""))
+            ementa_txt = _sax.escape(_html_para_texto(it.get("ementa","") or ""))
+
             obj_xml = ""
             if resumo_ia:
-                obj_xml = f'<font color="#0D2B5E"><b>{resumo_ia}</b></font>'
+                obj_xml = f'<font color="#0D2B5E" name="Helvetica-Bold" size="9"><b>{resumo_ia}</b></font>'
             if ementa_txt:
-                obj_xml += ("<br/><br/>" if obj_xml else "") + \
-                           f'<font size="7" color="#555555"><i>{ementa_txt}</i></font>'
+                separador = "<br/><br/>" if obj_xml else ""
+                obj_xml += f'{separador}<font name="Helvetica-Oblique" size="7.5" color="#555555"><i>{ementa_txt}</i></font>'
             if not obj_xml:
                 obj_xml = "—"
 
-            # ── Coluna Orientação: sem quebra de linha, font menor se necessário ──
-            ori_fs = "9" if len(ori) > 9 else "11"
+            # ── Coluna Orientação ──
+            # Fonte pequena o suficiente para OBSTRUÇÃO caber numa linha
+            # Coluna de 3.2cm: OBSTRUÇÃO tem 9 chars → usa fonte 7.5
             if ori:
-                ori_xml = f'<font color="#{_hex(cor_ori)}" size="{ori_fs}"><b>{_sax.escape(ori)}</b></font>'
+                fs_ori = 7 if len(ori) >= 8 else 9
+                hex_ori = _hex(cor_ori)
+                ori_xml = f'<font color="#{hex_ori}" size="{fs_ori}"><b>{_sax.escape(ori)}</b></font>'
             else:
                 ori_xml = "—"
 
@@ -297,7 +312,8 @@ def exportar_pauta(evento_id):
                 Paragraph(ori_xml,  sTabOri),
             ])
 
-        tbl = Table(tdata, colWidths=[1.0*cm, 4.2*cm, 9.2*cm, 2.8*cm],
+        # Coluna orientação maior (3.2cm) para caber OBSTRUÇÃO numa linha
+        tbl = Table(tdata, colWidths=[0.9*cm, 4.0*cm, 9.1*cm, 3.2*cm],
                     repeatRows=1, splitByRow=True)
         tbl.setStyle(TableStyle([
             ("FONTNAME",      (0,0),(-1,0),  "Helvetica-Bold"),
@@ -308,8 +324,8 @@ def exportar_pauta(evento_id):
             ("ALIGN",         (0,0),(-1,-1), "CENTER"),
             ("TOPPADDING",    (0,0),(-1,-1), 6),
             ("BOTTOMPADDING", (0,0),(-1,-1), 6),
-            ("LEFTPADDING",   (0,0),(-1,-1), 5),
-            ("RIGHTPADDING",  (0,0),(-1,-1), 5),
+            ("LEFTPADDING",   (0,0),(-1,-1), 4),
+            ("RIGHTPADDING",  (0,0),(-1,-1), 4),
         ]))
         story.append(tbl)
         story.append(PageBreak())
