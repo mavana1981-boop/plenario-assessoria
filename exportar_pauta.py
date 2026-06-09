@@ -668,4 +668,3 @@ def exportar_pauta(evento_id):
         import traceback
         current_app.logger.error(f"Erro exportar_pauta {evento_id}: {e}")
         return f"Erro ao gerar PDF: {e}<br><pre>{traceback.format_exc()}</pre>", 200
- 
