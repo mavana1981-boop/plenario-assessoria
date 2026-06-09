@@ -89,6 +89,7 @@ def _texto_para_paragrafos(html_ou_texto, estilo):
     """Extrai texto puro do HTML do Quill e retorna Paragraphs simples.
     Sem cores, sem tamanhos diferentes — exatamente o texto digitado."""
     import html as _h
+    import xml.sax.saxutils as _x
     from reportlab.platypus import Paragraph, Spacer
 
     s = str(html_ou_texto or '')
@@ -99,7 +100,7 @@ def _texto_para_paragrafos(html_ou_texto, estilo):
     s = re.sub(r'<li[^>]*>', '- ', s, flags=re.IGNORECASE)
     # Remove todas as tags HTML
     s = re.sub(r'<[^>]+>', '', s)
-    # Decodifica entidades HTML
+    # Decodifica entidades HTML (&amp; → & etc.)
     s = _h.unescape(s)
 
     result = []
@@ -109,8 +110,11 @@ def _texto_para_paragrafos(html_ou_texto, estilo):
             if result:
                 result.append(Spacer(1, 2))
             continue
+        # Escapa caracteres especiais para o ReportLab não interpretar como XML
+        # (&, <, > viram &amp; &lt; &gt;)
+        linha_safe = _x.escape(linha)
         try:
-            result.append(Paragraph(linha, estilo))
+            result.append(Paragraph(linha_safe, estilo))
         except Exception:
             result.append(Paragraph(linha.encode('ascii', 'replace').decode(), estilo))
     return result or [Paragraph('', estilo)]
@@ -596,6 +600,9 @@ def exportar_pauta(evento_id):
         resp = make_response(pdf)
         resp.headers["Content-Type"] = "application/pdf"
         resp.headers["Content-Disposition"] = f'inline; filename="Pauta_{evento_id}.pdf"'
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
         return resp
 
     except Exception as e:
