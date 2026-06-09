@@ -91,12 +91,14 @@ def _header_footer(canvas, doc, logos, titulo):
     canvas.setStrokeColorRGB(0.1, 0.42, 0.23)
     canvas.setLineWidth(1.2)
     canvas.line(1.5*cm, h-1.9*cm, w-1.5*cm, h-1.9*cm)
-    # logos
-    for path, x in logos:
+    # logos lado a lado à esquerda
+    x_logo = 1.5*cm
+    for path in logos:
         if os.path.exists(path):
             try:
-                canvas.drawImage(path, x, h-2.55*cm, width=2.0*cm,
+                canvas.drawImage(path, x_logo, h-2.55*cm, width=2.0*cm,
                                  preserveAspectRatio=True, mask="auto")
+                x_logo += 2.2*cm
             except Exception:
                 pass
     canvas.setFont("Helvetica-Bold", 9.5)
@@ -134,8 +136,8 @@ def exportar_pauta(evento_id):
 
         static = os.path.join(current_app.root_path, "static")
         logos  = [
-            (os.path.join(static, "logo_minoria.png"),  1.5*cm),
-            (os.path.join(static, "logo_oposicao.png"), 3.9*cm),
+            os.path.join(static, "logo_minoria.png"),
+            os.path.join(static, "logo_oposicao.png"),
         ]
 
         SS   = getSampleStyleSheet()
@@ -256,41 +258,41 @@ def exportar_pauta(evento_id):
             ori     = (it.get("orientacao") or "").strip()
             cor_ori = COR_ORI.get(ori, CINZA)
 
-            # ── Coluna Proposição: nome grande negrito preto, depois autor e relator ──
-            proj_txt    = _sax.escape(str(it.get("projeto","—")))
-            autor_full  = str(it.get("autor","") or "")
-            relator_str = str(it.get("relator","") or "")
+            # ── Coluna Proposição: negrito preto SEM itálico, linha em branco, autor/relator ──
+            proj_txt       = _sax.escape(str(it.get("projeto","—")))
+            autor_full     = str(it.get("autor","") or "")
+            relator_str    = str(it.get("relator","") or "")
             primeiro_autor = _sax.escape(autor_full.split(",")[0].strip()) if autor_full else ""
             relator_esc    = _sax.escape(relator_str[:60]) if relator_str and relator_str != "Não atribuído" else ""
 
-            proj_xml = f'<font size="11"><b>{proj_txt}</b></font>'
+            proj_xml = f'<b>{proj_txt}</b><br/><br/>'
             if primeiro_autor:
-                proj_xml += f'<br/><font size="8"><i>Autor: {primeiro_autor}</i></font>'
+                proj_xml += f'<font size="8"><i>Autor: {primeiro_autor}</i></font>'
             if relator_esc:
                 proj_xml += f'<br/><font size="8"><i>Relator: {relator_esc}</i></font>'
 
-            # ── Coluna Objeto: resumo IA em negrito + ementa em itálico cinza ──
+            # ── Coluna Objeto: resumo IA em azul negrito, linha em branco, ementa itálico ──
             resumo_ia  = _sax.escape((_html_para_texto(it.get("resumo_ia","") or ""))[:350])
             ementa_txt = _sax.escape((_html_para_texto(it.get("ementa","") or ""))[:250])
+            obj_xml = ""
             if resumo_ia:
-                obj_xml = f'<b>{resumo_ia}</b>'
-            else:
-                obj_xml = ""
+                obj_xml = f'<font color="#0D2B5E"><b>{resumo_ia}</b></font>'
             if ementa_txt:
-                obj_xml += (f'<br/>' if obj_xml else "") + \
+                obj_xml += ("<br/><br/>" if obj_xml else "") + \
                            f'<font size="7" color="#555555"><i>{ementa_txt}</i></font>'
             if not obj_xml:
                 obj_xml = "—"
 
-            # ── Coluna Orientação: colorida e grande ──
+            # ── Coluna Orientação: sem quebra de linha, font menor se necessário ──
+            ori_fs = "9" if len(ori) > 9 else "11"
             if ori:
-                ori_xml = f'<font color="#{_hex(cor_ori)}" size="12"><b>{_sax.escape(ori)}</b></font>'
+                ori_xml = f'<font color="#{_hex(cor_ori)}" size="{ori_fs}"><b>{_sax.escape(ori)}</b></font>'
             else:
                 ori_xml = "—"
 
             tdata.append([
                 Paragraph(str(it.get("ordem","—")), sTabNum),
-                Paragraph(proj_xml, sTabMeta),
+                Paragraph(proj_xml, sTabProj),
                 Paragraph(obj_xml,  sTabObj),
                 Paragraph(ori_xml,  sTabOri),
             ])
@@ -337,11 +339,39 @@ def exportar_pauta(evento_id):
             else:
                 ori_str = ""
 
-            # Monta cabeçalho em tabela de 2 colunas (título | orientação)
+            # Monta cabeçalho em tabela de 2 colunas (título | orientação com quadro colorido)
+            if ori_raw:
+                # Cor de fundo bem clara da orientação
+                COR_BG_ORI = {
+                    "SIM":       "#E8F5EC",
+                    "NÃO":       "#FDECEA",
+                    "LIBERADO":  "#FFF8E7",
+                    "OBSTRUÇÃO": "#EEF2FA",
+                    "ABSTENÇÃO": "#F5F5F5",
+                    "NEGOCIAÇÃO":"#FFF8E7",
+                }
+                bg_ori = COR_BG_ORI.get(ori_raw, "#F5F5F5")
+                hex_borda = _hex(cor_ori)
+                ori_cell = Table([[
+                    Paragraph(f'<font color="#{hex_borda}" size="14"><b>{ori}</b></font>',
+                        ParagraphStyle("sOriD", parent=SS["Normal"],
+                            fontSize=14, leading=16, alignment=1, fontName="Helvetica-Bold"))
+                ]], colWidths=[doc.width * 0.28])
+                ori_cell.setStyle(TableStyle([
+                    ("BACKGROUND",    (0,0),(-1,-1), colors.HexColor(bg_ori)),
+                    ("BOX",           (0,0),(-1,-1), 1.5, colors.HexColor(f"#{hex_borda}")),
+                    ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
+                    ("TOPPADDING",    (0,0),(-1,-1), 6),
+                    ("BOTTOMPADDING", (0,0),(-1,-1), 6),
+                    ("LEFTPADDING",   (0,0),(-1,-1), 4),
+                    ("RIGHTPADDING",  (0,0),(-1,-1), 4),
+                ]))
+            else:
+                ori_cell = Paragraph("", sNormal)
+
             cab_tbl = Table([[
                 Paragraph(f'<font color="#0D2B5E"><b>Item {it.get("ordem","—")} — {projeto}</b></font>', sHeadItem),
-                Paragraph(ori_str, ParagraphStyle("sOriD", parent=SS["Normal"],
-                    fontSize=14, leading=16, alignment=2, fontName="Helvetica-Bold")),
+                ori_cell,
             ]], colWidths=[doc.width * 0.72, doc.width * 0.28])
             cab_tbl.setStyle(TableStyle([
                 ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
