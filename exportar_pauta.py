@@ -150,29 +150,37 @@ def exportar_pauta(evento_id):
             return "Nenhum item encontrado para esta pauta.", 200
 
         static = os.path.join(current_app.root_path, "static")
-        logo_min = os.path.join(static, "logo_minoria.png")
-        logo_opo = os.path.join(static, "logo_oposicao.png")
 
-        # Se não achar localmente, baixa da própria app
-        def _garantir_logo(path, url_suffix):
-            if os.path.exists(path):
-                return path
-            # Tenta baixar
+        def _logo_path(filename):
+            """Retorna path físico do logo. Loga o resultado para diagnóstico."""
+            path_local = os.path.join(static, filename)
+            current_app.logger.info(f"[logo] tentando: {path_local} existe={os.path.exists(path_local)}")
+            if os.path.exists(path_local):
+                return path_local
+            # Fallback: /tmp (cache de download anterior)
+            tmp = f"/tmp/{filename}"
+            if os.path.exists(tmp):
+                current_app.logger.info(f"[logo] usando /tmp: {tmp}")
+                return tmp
+            # Tenta baixar via HTTP interno
             try:
-                import requests as _req
-                base = current_app.config.get("SERVER_NAME") or "localhost:5000"
-                r = _req.get(f"http://localhost:5000/static/{url_suffix}", timeout=3)
-                if r.ok:
-                    tmp = f"/tmp/{url_suffix}"
-                    open(tmp,"wb").write(r.content)
-                    return tmp
-            except Exception:
-                pass
-            return path  # retorna mesmo não existindo; drawImage vai falhar silenciosamente
+                import urllib.request
+                # Railway expõe na porta $PORT, internamente costuma ser 8080 ou 5000
+                for porta in [os.environ.get("PORT","8080"), "8080", "5000"]:
+                    try:
+                        url = f"http://127.0.0.1:{porta}/static/{filename}"
+                        urllib.request.urlretrieve(url, tmp)
+                        if os.path.exists(tmp):
+                            current_app.logger.info(f"[logo] baixado de {url}")
+                            return tmp
+                    except Exception:
+                        continue
+            except Exception as e:
+                current_app.logger.warning(f"[logo] falha ao baixar {filename}: {e}")
+            current_app.logger.warning(f"[logo] {filename} não encontrado")
+            return path_local  # drawImage falhará silenciosamente
 
-        logo_min = _garantir_logo(logo_min, "logo_minoria.png")
-        logo_opo = _garantir_logo(logo_opo, "logo_oposicao.png")
-        logos = [logo_min, logo_opo]
+        logos = [_logo_path("logo_minoria.png"), _logo_path("logo_oposicao.png")]
 
         SS   = getSampleStyleSheet()
         VERDE = colors.HexColor("#1A6B3A")
