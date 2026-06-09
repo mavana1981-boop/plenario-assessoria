@@ -288,14 +288,6 @@ def _get_itens(evento_id):
             else:
                 item['resumo_materia'] = ''
 
-        try:
-            current_app.logger.info(
-                f"[export_resumo evt={evento_id}] notas_banco={list(resumos_materia.keys())} "
-                f"itens_keys={['PROP_'+str(i.get('id_principal','')) for i in itens]}"
-            )
-        except Exception:
-            pass
-
         return itens
     except Exception as e:
         current_app.logger.error(f"Erro ao obter itens: {e}")
@@ -426,8 +418,9 @@ def exportar_pauta(evento_id):
                 ParagraphStyle("pm"+str(it.get("ordem",0)),
                     parent=SS["Normal"], alignment=TA_CENTER, wordWrap="CJK"))
 
-            # Coluna objeto: resumo IA + "Ementa:" abaixo em fonte menor, itálico
-            resumo_ia_tab = _strip_html(it.get("resumo_ia","") or "")
+            # Coluna objeto: prioriza a NOTA TÉCNICA do usuário; senão usa resumo IA
+            nota_usuario  = _strip_html(it.get("resumo_materia","") or "")
+            resumo_ia_tab = nota_usuario if nota_usuario else _strip_html(it.get("resumo_ia","") or "")
             ementa_obj    = _strip_html(it.get("ementa","") or "")
             import xml.sax.saxutils as _xml2
             ementa_obj_esc = _xml2.escape(ementa_obj) if ementa_obj else ''
