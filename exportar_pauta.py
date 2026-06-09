@@ -157,7 +157,13 @@ def exportar_pauta(evento_id):
             textColor=AZUL, spaceBefore=14, spaceAfter=4,
             borderPad=4)
         sNota   = ParagraphStyle("sNt", parent=SS["Normal"],
-            fontSize=9.5, leading=13.5, wordWrap="CJK")
+            fontSize=9.5, leading=13.5, wordWrap="CJK",
+            textColor=colors.black)
+
+        sNotaBaseada = ParagraphStyle("sNtB", parent=SS["Normal"],
+            fontSize=9, leading=12, wordWrap="CJK",
+            textColor=colors.HexColor("#CC0000"),
+            fontName="Helvetica-Oblique")
 
         # Cores dos títulos de seção da nota
         SECOES = {
@@ -168,12 +174,23 @@ def exportar_pauta(evento_id):
             "↔️": colors.HexColor("#0D2B5E"),
             "⚠️": colors.HexColor("#8B0000"),
         }
-        sSecao = {emoji: ParagraphStyle(f"sSec_{i}",
-            parent=SS["Normal"],
-            fontName="Helvetica-Bold",
-            fontSize=10.5, leading=14,
-            textColor=cor, spaceBefore=8, spaceAfter=2)
-            for i, (emoji, cor) in enumerate(SECOES.items())}
+        # Estilos dos títulos — nome único por emoji para evitar cache do ReportLab
+        sSecao = {}
+        for emoji, cor in SECOES.items():
+            nome = "sSec_" + str(abs(hash(emoji)))
+            sSecao[emoji] = ParagraphStyle(nome,
+                parent=SS["Normal"],
+                fontName="Helvetica-Bold",
+                fontSize=10.5, leading=14,
+                textColor=cor, spaceBefore=8, spaceAfter=2)
+
+        # Estilo texto DENTRO da seção — sempre preto, nunca herda cor do título
+        def _sNota_unico(i):
+            return ParagraphStyle(f"sNtU_{i}",
+                parent=SS["Normal"],
+                fontSize=9.5, leading=13.5, wordWrap="CJK",
+                textColor=colors.black,
+                fontName="Helvetica")
 
         data_txt = _data_ptbr(evento.get("dataHoraInicio", ""))
         titulo_cabec = f"Sessão Deliberativa — Plenário — {data_txt}"
@@ -210,34 +227,79 @@ def exportar_pauta(evento_id):
             "ABSTENÇÃO": colors.HexColor("#555555"),
         }
 
-        tdata = [[ Paragraph("<b>Nº</b>", sNormal),
-                   Paragraph("<b>Proposição</b>", sNormal),
-                   Paragraph("<b>Ementa</b>", sNormal),
-                   Paragraph("<b>Orientação</b>", sNormal) ]]
+        sTabProj  = ParagraphStyle("sTP", parent=SS["Normal"],
+            fontSize=9.5, leading=13, wordWrap="CJK", alignment=1)
+        sTabMeta  = ParagraphStyle("sTM", parent=SS["Normal"],
+            fontSize=7.5, leading=10, wordWrap="CJK", alignment=1,
+            fontName="Helvetica-Oblique", textColor=colors.HexColor("#444444"))
+        sTabEmenta = ParagraphStyle("sTE", parent=SS["Normal"],
+            fontSize=9, leading=12, wordWrap="CJK", alignment=1)
+        sTabEmentaSub = ParagraphStyle("sTES", parent=SS["Normal"],
+            fontSize=7, leading=10, wordWrap="CJK", alignment=1,
+            fontName="Helvetica-Oblique", textColor=colors.HexColor("#666666"))
+        sTabOri   = ParagraphStyle("sTO", parent=SS["Normal"],
+            fontSize=9.5, leading=13, wordWrap="CJK", alignment=1)
+        sTabNum   = ParagraphStyle("sTN", parent=SS["Normal"],
+            fontSize=9.5, leading=13, wordWrap="CJK", alignment=1)
+
+        tdata = [[ Paragraph("<b>Nº</b>", sTabNum),
+                   Paragraph("<b>Proposição</b>", sTabProj),
+                   Paragraph("<b>Objeto</b>", sTabEmenta),
+                   Paragraph("<b>Orientação</b>", sTabOri) ]]
 
         for it in itens:
-            ori = (it.get("orientacao") or "").strip()
+            ori     = (it.get("orientacao") or "").strip()
             cor_ori = COR_ORI.get(ori, CINZA)
-            ementa_txt = _sax.escape(_html_para_texto(it.get("ementa", "") or "")[:300])
+
+            # Coluna Proposição: título + autor + relator
+            proj_txt   = _sax.escape(str(it.get("projeto","—")))
+            autor_txt  = _sax.escape(str(it.get("autor","") or ""))
+            relator_txt= _sax.escape(str(it.get("relator","") or ""))
+            # Primeiro autor apenas
+            primeiro_autor = autor_txt.split(",")[0].strip() if autor_txt else ""
+            proj_xml = f"<b>{proj_txt}</b>"
+            if primeiro_autor:
+                proj_xml += f"<br/><i>{primeiro_autor}</i>"
+            if relator_txt and relator_txt != "Não atribuído":
+                proj_xml += f"<br/><i>Rel: {relator_txt[:50]}</i>"
+
+            # Coluna Objeto: resumo da nota ou resumo_ia; abaixo ementa em cinza menor
+            nota_txt   = _html_para_texto(it.get("resumo_materia","") or "")
+            resumo_ia  = _html_para_texto(it.get("resumo_ia","") or "")
+            ementa_txt = _html_para_texto(it.get("ementa","") or "")
+            objeto_principal = nota_txt[:400] if nota_txt.strip() else resumo_ia[:400]
+            objeto_xml = _sax.escape(objeto_principal)
+            if ementa_txt:
+                objeto_xml += f'<br/><font size="7" color="#666666"><i>{_sax.escape(ementa_txt[:250])}</i></font>'
+
+            # Coluna orientação com cor
+            if ori:
+                hex_ori = "%02x%02x%02x" % (
+                    int(cor_ori.red*255), int(cor_ori.green*255), int(cor_ori.blue*255))
+                ori_xml = f'<b><font color="#{hex_ori}">{_sax.escape(ori)}</font></b>'
+            else:
+                ori_xml = "—"
+
             tdata.append([
-                Paragraph(str(it.get("ordem","—")), sNormal),
-                Paragraph(_sax.escape(str(it.get("projeto","—"))), sNormal),
-                Paragraph(ementa_txt or "—", sNormal),
-                Paragraph(f'<font color="#{cor_ori.hexval()[2:]}">{_sax.escape(ori or "—")}</font>', sNormal)
-                    if ori else Paragraph("—", sNormal),
+                Paragraph(str(it.get("ordem","—")), sTabNum),
+                Paragraph(proj_xml, sTabMeta),
+                Paragraph(objeto_xml or "—", sTabEmenta),
+                Paragraph(ori_xml, sTabOri),
             ])
 
-        tbl = Table(tdata, colWidths=[1.2*cm, 4.2*cm, 9.0*cm, 2.8*cm],
+        tbl = Table(tdata, colWidths=[1.0*cm, 4.0*cm, 9.4*cm, 2.8*cm],
                     repeatRows=1, splitByRow=True)
         tbl.setStyle(TableStyle([
-            ("FONTNAME",     (0,0),(-1,0), "Helvetica-Bold"),
-            ("BACKGROUND",   (0,0),(-1,0), colors.HexColor("#E8F3EC")),
-            ("GRID",         (0,0),(-1,-1), 0.3, colors.HexColor("#cccccc")),
-            ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white, colors.HexColor("#F8F8F8")]),
-            ("VALIGN",       (0,0),(-1,-1), "TOP"),
-            ("TOPPADDING",   (0,0),(-1,-1), 5),
-            ("BOTTOMPADDING",(0,0),(-1,-1), 5),
-            ("LEFTPADDING",  (0,0),(-1,-1), 5),
+            ("FONTNAME",      (0,0),(-1,0),  "Helvetica-Bold"),
+            ("BACKGROUND",    (0,0),(-1,0),  colors.HexColor("#E8F3EC")),
+            ("GRID",          (0,0),(-1,-1), 0.3, colors.HexColor("#cccccc")),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1), [colors.white, colors.HexColor("#F8F8F8")]),
+            ("VALIGN",        (0,0),(-1,-1), "TOP"),
+            ("ALIGN",         (0,0),(-1,-1), "CENTER"),
+            ("TOPPADDING",    (0,0),(-1,-1), 5),
+            ("BOTTOMPADDING", (0,0),(-1,-1), 5),
+            ("LEFTPADDING",   (0,0),(-1,-1), 4),
+            ("RIGHTPADDING",  (0,0),(-1,-1), 4),
         ]))
         story.append(tbl)
         story.append(PageBreak())
@@ -274,18 +336,56 @@ def exportar_pauta(evento_id):
             if resumo.strip():
                 story.append(Spacer(1, 5))
                 story.append(Paragraph("Nota Técnica", sBold))
+
                 texto = _html_para_texto(resumo)
-                for linha in texto.split("\n"):
+                linhas = texto.split("\n")
+
+                # Monta lista de parágrafos para o quadro cinza
+                paras_nota = []
+                for idx_l, linha in enumerate(linhas):
                     linha = linha.strip()
                     if not linha:
-                        story.append(Spacer(1, 3))
+                        paras_nota.append(Spacer(1, 3))
                         continue
-                    # Detecta título de seção pelo emoji
+
                     emoji_sec = next((e for e in SECOES if linha.startswith(e)), None)
+
                     if emoji_sec:
-                        story.append(Paragraph(_sax.escape(linha), sSecao[emoji_sec]))
+                        # Título de seção — colorido e negrito
+                        st = sSecao[emoji_sec]
+                        paras_nota.append(Paragraph(_sax.escape(linha), st))
+                    elif "Análise baseada em" in linha or "baseada em:" in linha.lower():
+                        # "Análise baseada em" — vermelho itálico
+                        paras_nota.append(Paragraph(
+                            f'<font color="#CC0000"><i>{_sax.escape(linha)}</i></font>',
+                            _sNota_unico(idx_l)))
                     else:
-                        story.append(Paragraph(_sax.escape(linha), sNota))
+                        # Texto normal — SEMPRE preto, nome único para evitar cache
+                        paras_nota.append(Paragraph(_sax.escape(linha), _sNota_unico(idx_l)))
+
+                # Coloca os parágrafos em uma tabela de 1 coluna (quadro cinza claro)
+                if paras_nota:
+                    rows_nota = [[p] for p in paras_nota if not isinstance(p, Spacer)]
+                    # Insere spacers como linhas vazias
+                    rows_final = []
+                    for p in paras_nota:
+                        if isinstance(p, Spacer):
+                            rows_final.append([Paragraph("", _sNota_unico(9999))])
+                        else:
+                            rows_final.append([p])
+
+                    tbl_nota = Table(rows_final, colWidths=[doc.width])
+                    tbl_nota.setStyle(TableStyle([
+                        ("BACKGROUND",    (0,0),(-1,-1), colors.HexColor("#F5F5F5")),
+                        ("BOX",           (0,0),(-1,-1), 0.5, colors.HexColor("#CCCCCC")),
+                        ("LEFTPADDING",   (0,0),(-1,-1), 10),
+                        ("RIGHTPADDING",  (0,0),(-1,-1), 10),
+                        ("TOPPADDING",    (0,0),(-1,-1), 3),
+                        ("BOTTOMPADDING", (0,0),(-1,-1), 3),
+                        ("TOPPADDING",    (0,0),(-1,0),  8),
+                        ("BOTTOMPADDING", (0,-1),(-1,-1),8),
+                    ]))
+                    story.append(tbl_nota)
 
             story.append(Spacer(1, 16))
 
