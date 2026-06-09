@@ -2229,12 +2229,84 @@ Regras de estilo:
                 html_final = nota_req + html_final
             return jsonify({'resumo': html_final, 'fonte': 'gemini', 'parecer': parecer_info})
         except Exception as e:
-            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            logger.warning(f"Gemini falhou em analisar_ia: {e} — tentando Groq como fallback")
+            # ── Fallback automático para Groq ──────────────────────────────
+            groq_key = os.environ.get('GROQ_API_KEY', '')
+            if groq_key:
+                try:
+                    rg = requests.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {groq_key}",
+                                 "Content-Type": "application/json"},
+                        json={"model": "llama-3.3-70b-versatile",
+                              "messages": [{"role": "user", "content": prompt}],
+                              "max_tokens": 1500, "temperature": 0.3},
+                        timeout=60
+                    )
+                    rg.raise_for_status()
+                    texto = rg.json()['choices'][0]['message']['content']
+
+                    # Mesmo pós-processamento do Gemini
+                    titulos_secao = ['📘', '🟢', '🔴', '⚖️', '↔️', '⚠️']
+                    linhas = texto.split('\n')
+                    linhas_corrigidas = []
+                    for linha in linhas:
+                        linha_strip = linha.strip()
+                        separado = False
+                        for emoji in titulos_secao:
+                            if linha_strip.startswith(emoji) and len(linha_strip) > len(emoji) + 30:
+                                partes = linha_strip.split(None, 5)
+                                if len(partes) >= 3:
+                                    titulo_palavras = [partes[0]]
+                                    i = 1
+                                    while i < len(partes) and i < 4:
+                                        titulo_palavras.append(partes[i])
+                                        i += 1
+                                        if partes[i-1][-1:] in '.,:' or len(' '.join(titulo_palavras)) > 30:
+                                            break
+                                    titulo = ' '.join(titulo_palavras)
+                                    resto = linha_strip[len(titulo):].strip()
+                                    if resto:
+                                        linhas_corrigidas.append(titulo)
+                                        linhas_corrigidas.append('')
+                                        linhas_corrigidas.append(resto)
+                                        separado = True
+                                        break
+                        if not separado:
+                            linhas_corrigidas.append(linha)
+                    texto = '\n'.join(linhas_corrigidas)
+
+                    # Converte para HTML
+                    TITULOS_MAP = {
+                        '📘': ('📘 Resumo Técnico',        '#0D2B5E'),
+                        '🟢': ('🟢 Pontos Positivos',       '#1A6B3A'),
+                        '🔴': ('🔴 Pontos Negativos',       '#8B0000'),
+                        '⚖️': ('⚖️ Riscos Políticos e de Imagem', '#7B5C00'),
+                        '↔️': ('↔️ Orientação Sugerida',   '#0D2B5E'),
+                        '⚠️': ('⚠️ Críticas e Pontos de Combate', '#8B0000'),
+                    }
+                    html_linhas = []
+                    for linha in texto.split('\n'):
+                        emoji_enc = next((e for e in TITULOS_MAP if linha.strip().startswith(e)), None)
+                        if emoji_enc:
+                            titulo_padrao, cor = TITULOS_MAP[emoji_enc]
+                            html_linhas.append(f'<p><strong>{titulo_padrao}</strong></p>')
+                        elif linha.strip():
+                            html_linhas.append(f'<p>{linha}</p>')
+                        else:
+                            html_linhas.append('<p><br></p>')
+
+                    html_final = '\n'.join(html_linhas)
+                    if nota_req:
+                        html_final = nota_req + html_final
+                    return jsonify({'resumo': html_final, 'fonte': 'groq_fallback', 'parecer': parecer_info})
+                except Exception as eg:
+                    logger.error(f"Groq fallback também falhou: {eg}")
+                    return jsonify({'error': 'Gemini e Groq indisponíveis no momento. Tente novamente em alguns instantes.'}), 503
+
             import traceback
-            logger.error(f"Gemini falhou analisar_ia status={status}: {e}\n{traceback.format_exc()[-500:]}")
-            if status == 429:
-                return jsonify({'error': 'Limite de requisições atingido. Aguarde alguns segundos e tente novamente.'}), 429
-            return jsonify({'error': f'Erro Gemini ({status}): {str(e)}'}), 500
+            logger.error(f"Gemini falhou analisar_ia (sem Groq): {e}\n{traceback.format_exc()[-300:]}")
+            return jsonify({'error': 'Serviço de IA indisponível. Tente novamente em alguns instantes.'}), 503
 
     return jsonify({'error': 'GEMINI_API_KEY não configurada.'}), 500
 
