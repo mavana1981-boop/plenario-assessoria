@@ -407,22 +407,32 @@ def exportar_pauta(evento_id):
                 ParagraphStyle("pm"+str(it.get("ordem",0)),
                     parent=SS["Normal"], alignment=TA_CENTER, wordWrap="CJK"))
 
-            # Coluna objeto: prioriza a NOTA TÉCNICA do usuário; senão usa resumo IA
-            nota_usuario  = _strip_html(it.get("resumo_materia","") or "")
-            resumo_ia_tab = nota_usuario if nota_usuario else _strip_html(it.get("resumo_ia","") or "")
-            ementa_obj    = _strip_html(it.get("ementa","") or "")
+            # Coluna objeto: usa nota do usuário (ou resumo_ia como fallback)
+            # _texto_para_paragrafos extrai texto puro — mesmo conteúdo que o Quill exibe
+            raw_nota = it.get("resumo_materia","") or it.get("resumo_ia","") or ""
+            ementa_obj = _strip_html(it.get("ementa","") or "")
             import xml.sax.saxutils as _xml2
-            ementa_obj_esc = _xml2.escape(ementa_obj) if ementa_obj else ''
 
-            if resumo_ia_tab and ementa_obj_esc:
-                objeto_xml = (resumo_ia_tab +
+            # Extrai texto puro do HTML (mesmo que Quill mostraria)
+            import html as _hmod
+            txt_obj = re.sub(r'<br\s*/?>', '\n', raw_nota, flags=re.IGNORECASE)
+            txt_obj = re.sub(r'</p>', '\n', txt_obj, flags=re.IGNORECASE)
+            txt_obj = re.sub(r'<[^>]+>', '', txt_obj)
+            txt_obj = _hmod.unescape(txt_obj).strip()
+            # Trunca para não estourar célula da tabela
+            if len(txt_obj) > 800:
+                txt_obj = txt_obj[:800] + '…'
+            txt_obj_esc = _xml2.escape(txt_obj)
+            ementa_obj_esc = _xml2.escape(ementa_obj[:300]) if ementa_obj else ''
+
+            if txt_obj_esc and ementa_obj_esc:
+                objeto_xml = (txt_obj_esc +
                     f'<br/><font size="6" color="#777777"><i>Ementa: {ementa_obj_esc}</i></font>')
-                objeto_para = Paragraph(objeto_xml, sObjeto)
             elif ementa_obj_esc:
                 objeto_xml = f'<font size="6" color="#777777"><i>Ementa: {ementa_obj_esc}</i></font>'
-                objeto_para = Paragraph(objeto_xml, sObjeto)
             else:
-                objeto_para = Paragraph(resumo_ia_tab or "—", sObjeto)
+                objeto_xml = txt_obj_esc or "—"
+            objeto_para = Paragraph(objeto_xml, sObjeto)
 
             tdata.append([
                 Paragraph(str(it.get("ordem","—")), sNum),
