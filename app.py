@@ -11,7 +11,38 @@ from datetime import datetime, timedelta, timezone
 # Fuso horário de Brasília (UTC-3)
 TZ_BRASILIA = timezone(timedelta(hours=-3))
 
-def now_brasilia():
+# ── Helper Gemini com retry automático ──────────────────────────────────────
+GEMINI_MODEL = "gemini-2.0-flash"  # Limites maiores que o lite
+
+def gemini_post(key, prompt, max_tokens=1500, temperatura=0.3, tentativas=3):
+    """Chama a API Gemini com retry automático em caso de rate limit (429)."""
+    import time
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperatura}
+    }
+    for i in range(tentativas):
+        try:
+            r = requests.post(url, headers={"Content-Type": "application/json"},
+                              json=payload, timeout=60)
+            if r.status_code == 429:
+                espera = 10 * (i + 1)  # 10s, 20s, 30s
+                logger.warning(f"Gemini 429 — aguardando {espera}s (tentativa {i+1}/{tentativas})")
+                time.sleep(espera)
+                continue
+            r.raise_for_status()
+            return r.json()['candidates'][0]['content']['parts'][0]['text']
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 429 and i < tentativas - 1:
+                espera = 10 * (i + 1)
+                logger.warning(f"Gemini HTTPError 429 — aguardando {espera}s")
+                time.sleep(espera)
+                continue
+            raise
+    raise Exception("Limite de requisições Gemini atingido após retries. Tente novamente em alguns minutos.")
+
+
     """Retorna datetime atual no fuso de Brasília."""
     return datetime.now(TZ_BRASILIA)
 import os
@@ -2125,17 +2156,7 @@ Regras de estilo:
     # Tenta Gemini primeiro, fallback para Groq
     if gemini_key:
         try:
-            r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
-                headers={"Content-Type": "application/json"},
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"maxOutputTokens": 1500, "temperature": 0.3}
-                },
-                timeout=30
-            )
-            r.raise_for_status()
-            texto = r.json()['candidates'][0]['content']['parts'][0]['text']
+            texto = gemini_post(gemini_key, prompt, max_tokens=1500, temperatura=0.3)
 
             # Pós-processamento: garante que cada título de seção fique sozinho na linha
             titulos_secao = ['📘', '🟢', '🔴', '⚖️', '↔️', '⚠️']
@@ -2172,7 +2193,41 @@ Regras de estilo:
                     linhas_corrigidas.append(linha)
 
             texto = '\n'.join(linhas_corrigidas)
-            return jsonify({'resumo': texto, 'fonte': 'gemini', 'parecer': parecer_info})
+
+            # Converte texto puro em HTML com títulos padronizados
+            TITULOS_MAP = {
+                '📘': ('📘 Resumo Técnico', '#0D2B5E'),
+                '🟢': ('🟢 Pontos Positivos', '#1A6B3A'),
+                '🔴': ('🔴 Pontos Negativos', '#8B0000'),
+                '⚖️': ('⚖️ Riscos Políticos e de Imagem', '#7B5C00'),
+                '↔️': ('↔️ Orientação Sugerida', '#0D2B5E'),
+                '⚠️': ('⚠️ Críticas e Pontos de Combate', '#8B0000'),
+            }
+            html_linhas = []
+            linhas_html = texto.split('\n')
+            i = 0
+            while i < len(linhas_html):
+                linha = linhas_html[i].strip()
+                # Verifica se é título de seção
+                titulo_encontrado = False
+                for emoji, (titulo_padrao, cor) in TITULOS_MAP.items():
+                    if linha.startswith(emoji):
+                        html_linhas.append(
+                            f'<p><strong><span style="font-size:16px;color:{cor};">{titulo_padrao}</span></strong></p>'
+                        )
+                        titulo_encontrado = True
+                        break
+                if not titulo_encontrado:
+                    if linha:
+                        html_linhas.append(f'<p>{linha}</p>')
+                    else:
+                        html_linhas.append('<p><br></p>')
+                i += 1
+
+            html_final = '\n'.join(html_linhas)
+            if nota_req:
+                html_final = nota_req + html_final
+            return jsonify({'resumo': html_final, 'fonte': 'gemini', 'parecer': parecer_info})
         except Exception as e:
             status = getattr(getattr(e, 'response', None), 'status_code', None)
             import traceback
@@ -2744,7 +2799,7 @@ Liste as diferenças de forma clara e numerada:"""
             return jsonify({'error': 'GEMINI_API_KEY não configurada.'})
 
         r_ai = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
             json={"contents":[{"parts":[{"text": prompt}]}],
                   "generationConfig":{"maxOutputTokens":2000,"temperature":0.3}},
             timeout=60
@@ -2852,7 +2907,7 @@ Responda APENAS com o JSON, sem ```json, sem comentários."""
     if gemini_key:
         try:
             r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
                 headers={"Content-Type": "application/json"},
                 json={"contents": [{"parts": [{"text": prompt}]}],
                       "generationConfig": {"maxOutputTokens": 512, "temperature": 0.2}},
@@ -3281,7 +3336,7 @@ Não use ### ou ** fora do HTML."""
             if gemini_key:
                 try:
                     r = requests.post(
-                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
                         headers={"Content-Type": "application/json"},
                         json={"contents": [{"parts": [{"text": prompt_emenda}]}],
                               "generationConfig": {"maxOutputTokens": 512, "temperature": 0.3}},
@@ -3339,7 +3394,7 @@ Não use ### ou ** fora do HTML. Não repita análise de outras emendas."""
             if gemini_key:
                 try:
                     r = requests.post(
-                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
                         headers={"Content-Type": "application/json"},
                         json={"contents": [{"parts": [{"text": prompt_emenda}]}],
                               "generationConfig": {"maxOutputTokens": 600, "temperature": 0.3}},
@@ -3458,7 +3513,7 @@ Não use ### ou ** fora do HTML."""
     if gemini_key:
         try:
             r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
                 headers={"Content-Type": "application/json"},
                 json={"contents": [{"parts": [{"text": prompt}]}],
                       "generationConfig": {"maxOutputTokens": 512, "temperature": 0.3}},
@@ -3996,7 +4051,7 @@ Proposição: {resumo[:300]}"""
 
     for key, url, body_fn in [
         (gemini_key,
-         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
          lambda: {"contents":[{"parts":[{"text":prompt_kw}]}],"generationConfig":{"maxOutputTokens":20,"temperature":0.1}}),
         (groq_key,
          "https://api.groq.com/openai/v1/chat/completions",
@@ -4224,7 +4279,7 @@ Responda APENAS com o resumo, sem introdução, sem aspas."""
     # Tenta Gemini primeiro, depois Groq
     for key, url, body_fn in [
         (gemini_key,
-         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={gemini_key}",
+         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
          lambda: {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"maxOutputTokens": 100, "temperature": 0.4}}),
         (groq_key,
          "https://api.groq.com/openai/v1/chat/completions",
