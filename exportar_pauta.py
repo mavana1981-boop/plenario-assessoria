@@ -69,17 +69,34 @@ def _get_evento(evento_id):
         return {"descricao": "", "dataHoraInicio": "", "local": "Plenário"}
 
 def _get_itens(evento_id):
-    """Busca itens da pauta e injeta resumo_materia SEMPRE fresco do banco."""
+    """Busca itens, injeta resumo_materia E resumo_ia sempre frescos do banco."""
     try:
-        from app import fetch_pauta, load_notas
+        from app import fetch_pauta, load_notas, get_conn
         itens, _ = fetch_pauta(evento_id, force_reload=False)
-        notas = load_notas()   # busca direto do banco, sem cache
+        notas = load_notas()
+
+        # Carrega resumos_ia da tabela resumos_ia
+        resumos_ia = {}
+        try:
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=? OR evento_id=?',
+                      (evento_id, str(evento_id)))
+            resumos_ia = {str(r[0]): r[1] for r in c.fetchall()}
+            conn.close()
+        except Exception:
+            pass
+
         for item in itens:
-            key = f"PROP_{item.get('id_principal', '')}"
+            rid = str(item.get('id_principal', ''))
+            key = f"PROP_{rid}"
             if key in notas:
                 nota = notas[key]
                 item["resumo_materia"] = nota.get("resumo_materia", "") or ""
-                item["orientacao"]     = nota.get("orientacao", "")    or item.get("orientacao", "")
+                item["orientacao"]     = nota.get("orientacao", "") or item.get("orientacao", "")
+            # Injeta resumo_ia
+            if rid in resumos_ia:
+                item["resumo_ia"] = resumos_ia[rid]
         return itens
     except Exception as e:
         current_app.logger.error(f"[exportar] _get_itens erro: {e}")
@@ -133,10 +150,29 @@ def exportar_pauta(evento_id):
             return "Nenhum item encontrado para esta pauta.", 200
 
         static = os.path.join(current_app.root_path, "static")
-        logos  = [
-            os.path.join(static, "logo_minoria.png"),
-            os.path.join(static, "logo_oposicao.png"),
-        ]
+        logo_min = os.path.join(static, "logo_minoria.png")
+        logo_opo = os.path.join(static, "logo_oposicao.png")
+
+        # Se não achar localmente, baixa da própria app
+        def _garantir_logo(path, url_suffix):
+            if os.path.exists(path):
+                return path
+            # Tenta baixar
+            try:
+                import requests as _req
+                base = current_app.config.get("SERVER_NAME") or "localhost:5000"
+                r = _req.get(f"http://localhost:5000/static/{url_suffix}", timeout=3)
+                if r.ok:
+                    tmp = f"/tmp/{url_suffix}"
+                    open(tmp,"wb").write(r.content)
+                    return tmp
+            except Exception:
+                pass
+            return path  # retorna mesmo não existindo; drawImage vai falhar silenciosamente
+
+        logo_min = _garantir_logo(logo_min, "logo_minoria.png")
+        logo_opo = _garantir_logo(logo_opo, "logo_oposicao.png")
+        logos = [logo_min, logo_opo]
 
         SS   = getSampleStyleSheet()
         VERDE = colors.HexColor("#1A6B3A")
@@ -261,47 +297,44 @@ def exportar_pauta(evento_id):
             cor_ori = COR_ORI.get(ori, CINZA)
 
             # ── Coluna Proposição ──
-            # Nome em negrito preto (sem itálico)
-            # Linha em branco
-            # Autor: e Relator: em fonte menor sem negrito
+            # Nome: negrito preto tamanho 10
+            # linha em branco
+            # Autor/Relator: itálico menor sem negrito
             proj_txt       = _sax.escape(str(it.get("projeto","—")))
             autor_full     = str(it.get("autor","") or "")
             relator_str    = str(it.get("relator","") or "")
             primeiro_autor = _sax.escape(autor_full.split(",")[0].strip()) if autor_full else ""
             relator_esc    = _sax.escape(relator_str[:80]) if relator_str and relator_str != "Não atribuído" else ""
 
-            # <b> apenas no nome, autor/relator em Helvetica 7.5 sem negrito
             proj_xml = f'<b><font size="10">{proj_txt}</font></b>'
             if primeiro_autor or relator_esc:
-                proj_xml += '<br/><br/>'  # linha em branco entre nome e autor
+                proj_xml += '<br/><br/>'
             if primeiro_autor:
-                proj_xml += f'<font name="Helvetica" size="7.5">Autor: {primeiro_autor}</font>'
+                proj_xml += f'<font size="7.5"><i>Autor: {primeiro_autor}</i></font>'
             if relator_esc:
-                proj_xml += f'<br/><font name="Helvetica" size="7.5">Relator: {relator_esc}</font>'
+                proj_xml += f'<br/><font size="7.5"><i>Relator: {relator_esc}</i></font>'
 
             # ── Coluna Objeto ──
-            # Resumo IA: azul negrito (destaque)
-            # Linha em branco
-            # Ementa completa: itálico cinza, sem limite de caracteres
+            # Resumo IA em azul negrito destaque
+            # linha em branco
+            # Ementa completa em itálico cinza
             resumo_ia  = _sax.escape(_html_para_texto(it.get("resumo_ia","") or ""))
             ementa_txt = _sax.escape(_html_para_texto(it.get("ementa","") or ""))
 
             obj_xml = ""
             if resumo_ia:
-                obj_xml = f'<font color="#0D2B5E" name="Helvetica-Bold" size="9"><b>{resumo_ia}</b></font>'
+                obj_xml = f'<b><font color="#0D2B5E" size="9">{resumo_ia}</font></b>'
             if ementa_txt:
-                separador = "<br/><br/>" if obj_xml else ""
-                obj_xml += f'{separador}<font name="Helvetica-Oblique" size="7.5" color="#555555"><i>{ementa_txt}</i></font>'
+                sep = "<br/><br/>" if obj_xml else ""
+                obj_xml += f'{sep}<font size="7.5" color="#555555"><i>{ementa_txt}</i></font>'
             if not obj_xml:
                 obj_xml = "—"
 
             # ── Coluna Orientação ──
-            # Fonte pequena o suficiente para OBSTRUÇÃO caber numa linha
-            # Coluna de 3.2cm: OBSTRUÇÃO tem 9 chars → usa fonte 7.5
+            # Fonte 9pt para todas — OBSTRUÇÃO cabe em 3.2cm com 9pt
             if ori:
-                fs_ori = 7 if len(ori) >= 8 else 9
                 hex_ori = _hex(cor_ori)
-                ori_xml = f'<font color="#{hex_ori}" size="{fs_ori}"><b>{_sax.escape(ori)}</b></font>'
+                ori_xml = f'<b><font color="#{hex_ori}" size="9">{_sax.escape(ori)}</font></b>'
             else:
                 ori_xml = "—"
 
