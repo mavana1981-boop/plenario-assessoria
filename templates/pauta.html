@@ -681,7 +681,7 @@
           if (campoBaseada && campoBaseada.value.trim()) {
             atualizarBaseadaEm(ordem, campoBaseada.value.trim());
             // Re-lê o resumo já com a linha atualizada
-            dataToSend.resumo_materia = quillInstances[ordem] ? quillInstances[ordem].getText() : dataToSend.resumo_materia;
+            dataToSend.resumo_materia = quillInstances[ordem] ? quillInstances[ordem].root.innerHTML : dataToSend.resumo_materia;
           }
 
           try {
@@ -1932,4 +1932,4 @@
       // Pega o último número da descrição
       const todosNumsDesc = descricao.match(/\d+/g) || [];
       const todosNumsTit  = numero.match(/\d+/g) || [];
-      // Prefere
+      // Pr
