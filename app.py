@@ -2104,9 +2104,9 @@ def analisar_ia():
 <li><strong>Questionamentos ao relator:</strong> [perguntas incisivas para fazer ao relator no plenário]</li>
 </ul>"""
 
-    prompt = (
-        "Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil,"
-        " trabalhando para a Oposição e Minoria (bancada do PL e aliados).\n\n"
-        "**Proposição:** " + str(projeto) + "\n"
-        "**Autor(es):** " + str(autor) + "\n"
-        "**Relator:** " + str(rela
+    partes_prompt = [
+        "Você é um assessor legislativo especializado em análise de proposições da Câmara dos Deputados do Brasil,",
+        " trabalhando para a Oposição e Minoria (bancada do PL e aliados).\n\n",
+        "**Proposição:** ", str(projeto), "\n",
+        "**Autor(es):** ",  str(autor),   "\n",
+        "**Relator:** ",
