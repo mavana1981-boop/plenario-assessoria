@@ -244,47 +244,36 @@ def _get_evento(evento_id):
 
 def _get_itens(evento_id):
     try:
-        from app import fetch_pauta, get_conn
+        from app import fetch_pauta, load_notas
         itens, _ = fetch_pauta(evento_id, force_reload=False)
 
-        # Busca SEMPRE do banco — nunca do cache — para ter dados atuais
-        resumos_ia      = {}
-        resumos_materia = {}
+        # Busca notas SEMPRE frescas do banco (load_notas não tem cache)
+        notas = load_notas()  # {item_key: {resumo_materia, orientacao, ...}}
+
+        resumos_ia = {}
         try:
+            from app import get_conn
             conn = get_conn()
             c = conn.cursor()
-            c.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
+            c.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=? OR evento_id=?',
+                      (evento_id, str(evento_id)))
             resumos_ia = {str(r[0]): r[1] for r in c.fetchall()}
-            try:
-                # Busca por evento_id como int E como string (robustez de tipo)
-                c.execute('SELECT item_key, resumo_materia FROM notas WHERE evento_id=? OR evento_id=?',
-                          (evento_id, str(evento_id)))
-                for item_key, rm in c.fetchall():
-                    if rm:
-                        resumos_materia[str(item_key)] = rm
-            except Exception:
-                # Fallback: busca todas as notas e filtra em Python
-                try:
-                    c.execute('SELECT item_key, resumo_materia, evento_id FROM notas')
-                    for item_key, rm, ev in c.fetchall():
-                        if rm and str(ev) == str(evento_id):
-                            resumos_materia[str(item_key)] = rm
-                except Exception:
-                    pass
             conn.close()
         except Exception:
             pass
 
         for item in itens:
             rid      = str(item.get('id_principal',''))
-            item_key = f"PROP_{rid}"  # mesmo formato do save_item no app.py
+            item_key = f"PROP_{rid}"
 
             if rid in resumos_ia:
                 item['resumo_ia'] = resumos_ia[rid]
 
-            # Nota do banco tem PRIORIDADE ABSOLUTA sobre cache
-            if item_key in resumos_materia:
-                item['resumo_materia'] = resumos_materia[item_key]
+            # Nota do banco (load_notas) tem PRIORIDADE — sempre fresca
+            if item_key in notas:
+                item['resumo_materia'] = notas[item_key].get('resumo_materia', '') or ''
+                if notas[item_key].get('orientacao'):
+                    item['orientacao'] = notas[item_key]['orientacao']
             else:
                 item['resumo_materia'] = ''
 
