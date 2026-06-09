@@ -106,27 +106,38 @@ def _get_itens(evento_id):
 def _header_footer(canvas, doc, logos, titulo):
     w, h = A4
     canvas.saveState()
+
+    LOGO_W = 2.0*cm
+    LOGO_H = 1.2*cm
+    LOGO_Y = h - 2.4*cm
+
+    # Logo minoria — lado esquerdo
+    try:
+        canvas.drawImage(ImageReader(logos[0]), 1.5*cm, LOGO_Y,
+                         width=LOGO_W, height=LOGO_H,
+                         preserveAspectRatio=True, mask="auto")
+    except Exception:
+        pass
+
+    # Logo oposição — lado direito
+    try:
+        canvas.drawImage(ImageReader(logos[1]), w - 1.5*cm - LOGO_W, LOGO_Y,
+                         width=LOGO_W, height=LOGO_H,
+                         preserveAspectRatio=True, mask="auto")
+    except Exception:
+        pass
+
+    # Linha separadora
     canvas.setStrokeColorRGB(0.1, 0.42, 0.23)
     canvas.setLineWidth(1.2)
-    canvas.line(1.5*cm, h-1.9*cm, w-1.5*cm, h-1.9*cm)
-    # logos lado a lado à esquerda — usa ImageReader para PNG com transparência
-    x_logo = 1.5*cm
-    for path in logos:
-        try:
-            img = ImageReader(path)
-            iw, ih = img.getSize()
-            # Mantém proporção: largura fixa 2cm
-            draw_w = 2.0*cm
-            draw_h = draw_w * ih / iw
-            y_logo = h - 1.5*cm - draw_h
-            canvas.drawImage(img, x_logo, y_logo, width=draw_w, height=draw_h,
-                             preserveAspectRatio=True, mask="auto")
-            x_logo += draw_w + 0.2*cm
-        except Exception:
-            pass
+    canvas.line(1.5*cm, h-2.6*cm, w-1.5*cm, h-2.6*cm)
+
+    # Título centralizado entre os logos
     canvas.setFont("Helvetica-Bold", 9.5)
     tw = stringWidth(titulo, "Helvetica-Bold", 9.5)
-    canvas.drawString((w - tw) / 2, h-1.7*cm, titulo)
+    canvas.drawString((w - tw) / 2, h - 1.8*cm, titulo)
+
+    # Rodapé
     canvas.setStrokeColorRGB(0.1, 0.42, 0.23)
     canvas.setLineWidth(0.8)
     canvas.line(1.5*cm, 1.4*cm, w-1.5*cm, 1.4*cm)
@@ -250,7 +261,7 @@ def exportar_pauta(evento_id):
         doc = PautaDoc(buffer, titulo=f"Pauta_{evento_id}",
             pagesize=A4,
             leftMargin=2.0*cm, rightMargin=2.0*cm,
-            topMargin=2.8*cm,  bottomMargin=2.2*cm)
+            topMargin=3.2*cm,  bottomMargin=2.2*cm)
         frame = Frame(doc.leftMargin, doc.bottomMargin,
                       doc.width, doc.height, id="normal")
         doc.addPageTemplates([PageTemplate(
