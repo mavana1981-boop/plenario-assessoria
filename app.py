@@ -25,9 +25,9 @@ def gemini_post(key, prompt, max_tokens=1500, temperatura=0.3, tentativas=3):
     for i in range(tentativas):
         try:
             r = requests.post(url, headers={"Content-Type": "application/json"},
-                              json=payload, timeout=60)
+                              json=payload, timeout=15)  # 15s máximo
             if r.status_code == 429:
-                espera = 10 * (i + 1)  # 10s, 20s, 30s
+                espera = 5 * (i + 1)
                 logger.warning(f"Gemini 429 — aguardando {espera}s (tentativa {i+1}/{tentativas})")
                 time.sleep(espera)
                 continue
@@ -35,12 +35,29 @@ def gemini_post(key, prompt, max_tokens=1500, temperatura=0.3, tentativas=3):
             return r.json()['candidates'][0]['content']['parts'][0]['text']
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 429 and i < tentativas - 1:
-                espera = 10 * (i + 1)
+                espera = 5 * (i + 1)
                 logger.warning(f"Gemini HTTPError 429 — aguardando {espera}s")
                 time.sleep(espera)
                 continue
             raise
-    raise Exception("Limite de requisições Gemini atingido após retries. Tente novamente em alguns minutos.")
+    raise Exception("Gemini indisponível após retries.")
+
+
+def groq_post(prompt, max_tokens=1500, temperatura=0.3):
+    """Chama Groq como fallback. Retorna texto ou lança exceção."""
+    groq_key = os.environ.get('GROQ_API_KEY', '')
+    if not groq_key:
+        raise Exception("GROQ_API_KEY não configurada.")
+    r = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+        json={"model": "llama-3.3-70b-versatile",
+              "messages": [{"role": "user", "content": prompt}],
+              "max_tokens": max_tokens, "temperature": temperatura},
+        timeout=30
+    )
+    r.raise_for_status()
+    return r.json()['choices'][0]['message']['content']
 
 
 def now_brasilia():
@@ -2104,162 +2121,82 @@ def analisar_ia():
 
     prompt = cabecalho + dados + instrucao + estrutura + regras + secao_criticas
 
-    # Tenta Gemini primeiro, fallback para Groq
-    if gemini_key:
-        try:
-            texto = gemini_post(gemini_key, prompt, max_tokens=1500, temperatura=0.3)
+    # ── OpenAI (gpt-4o-mini) ────────────────────────────────────────────────
+    openai_key = os.environ.get('OPENAI_API_KEY', '')
+    if not openai_key:
+        return jsonify({'error': 'OPENAI_API_KEY não configurada.'}), 500
 
-            # Pós-processamento: garante que cada título de seção fique sozinho na linha
-            titulos_secao = ['📘', '🟢', '🔴', '⚖️', '↔️', '⚠️']
-            linhas = texto.split('\n')
-            linhas_corrigidas = []
-            for linha in linhas:
-                linha_strip = linha.strip()
-                # Se a linha começa com emoji de seção mas tem texto depois
-                for emoji in titulos_secao:
-                    if linha_strip.startswith(emoji) and len(linha_strip) > len(emoji) + 30:
-                        # Separa o título do texto
-                        # Encontra onde termina o título (até o primeiro ponto ou dois pontos longo)
-                        idx_sep = linha_strip.find('\n')
-                        # Tenta separar após o nome da seção (ex: "📘 Resumo técnico\nTexto...")
-                        partes = linha_strip.split(None, 5)
-                        if len(partes) >= 3:
-                            # Heurística: título são as primeiras 2-4 palavras com o emoji
-                            titulo_palavras = [partes[0]]  # emoji
-                            i = 1
-                            while i < len(partes) and i < 4:
-                                titulo_palavras.append(partes[i])
-                                i += 1
-                                # Para quando encontrar palavra que parece início de parágrafo
-                                if partes[i-1][-1:] in '.,:' or len(' '.join(titulo_palavras)) > 30:
-                                    break
-                            titulo = ' '.join(titulo_palavras)
-                            resto = linha_strip[len(titulo):].strip()
-                            if resto:
-                                linhas_corrigidas.append(titulo)
-                                linhas_corrigidas.append('')
-                                linhas_corrigidas.append(resto)
+    try:
+        ro = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {openai_key}",
+                     "Content-Type": "application/json"},
+            json={"model": "gpt-4o-mini",
+                  "messages": [{"role": "user", "content": prompt}],
+                  "max_tokens": 1500, "temperature": 0.3},
+            timeout=30
+        )
+        ro.raise_for_status()
+        texto = ro.json()['choices'][0]['message']['content']
+
+        # Pós-processamento: garante que cada título de seção fique sozinho na linha
+        titulos_secao = ['📘', '🟢', '🔴', '⚖️', '↔️', '⚠️']
+        linhas = texto.split('\n')
+        linhas_corrigidas = []
+        for linha in linhas:
+            linha_strip = linha.strip()
+            separado = False
+            for emoji in titulos_secao:
+                if linha_strip.startswith(emoji) and len(linha_strip) > len(emoji) + 30:
+                    partes = linha_strip.split(None, 5)
+                    if len(partes) >= 3:
+                        titulo_palavras = [partes[0]]
+                        i = 1
+                        while i < len(partes) and i < 4:
+                            titulo_palavras.append(partes[i])
+                            i += 1
+                            if partes[i-1][-1:] in '.,:' or len(' '.join(titulo_palavras)) > 30:
                                 break
-                else:
-                    linhas_corrigidas.append(linha)
+                        titulo = ' '.join(titulo_palavras)
+                        resto = linha_strip[len(titulo):].strip()
+                        if resto:
+                            linhas_corrigidas.append(titulo)
+                            linhas_corrigidas.append('')
+                            linhas_corrigidas.append(resto)
+                            separado = True
+                            break
+            if not separado:
+                linhas_corrigidas.append(linha)
+        texto = '\n'.join(linhas_corrigidas)
 
-            texto = '\n'.join(linhas_corrigidas)
+        TITULOS_MAP = {
+            '📘': ('📘 Resumo Técnico',                '#0D2B5E'),
+            '🟢': ('🟢 Pontos Positivos',              '#1A6B3A'),
+            '🔴': ('🔴 Pontos Negativos',              '#8B0000'),
+            '⚖️': ('⚖️ Riscos Políticos e de Imagem', '#7B5C00'),
+            '↔️': ('↔️ Orientação Sugerida',           '#0D2B5E'),
+            '⚠️': ('⚠️ Críticas e Pontos de Combate', '#8B0000'),
+        }
+        html_linhas = []
+        for linha in texto.split('\n'):
+            emoji_enc = next((e for e in TITULOS_MAP if linha.strip().startswith(e)), None)
+            if emoji_enc:
+                titulo_padrao, cor = TITULOS_MAP[emoji_enc]
+                html_linhas.append(f'<p><strong><span style="font-size:16px;color:{cor};">{titulo_padrao}</span></strong></p>')
+            elif linha.strip():
+                html_linhas.append(f'<p>{linha}</p>')
+            else:
+                html_linhas.append('<p><br></p>')
 
-            # Converte texto puro em HTML com títulos padronizados
-            TITULOS_MAP = {
-                '📘': ('📘 Resumo Técnico', '#0D2B5E'),
-                '🟢': ('🟢 Pontos Positivos', '#1A6B3A'),
-                '🔴': ('🔴 Pontos Negativos', '#8B0000'),
-                '⚖️': ('⚖️ Riscos Políticos e de Imagem', '#7B5C00'),
-                '↔️': ('↔️ Orientação Sugerida', '#0D2B5E'),
-                '⚠️': ('⚠️ Críticas e Pontos de Combate', '#8B0000'),
-            }
-            html_linhas = []
-            linhas_html = texto.split('\n')
-            i = 0
-            while i < len(linhas_html):
-                linha = linhas_html[i].strip()
-                # Verifica se é título de seção
-                titulo_encontrado = False
-                for emoji, (titulo_padrao, cor) in TITULOS_MAP.items():
-                    if linha.startswith(emoji):
-                        html_linhas.append(
-                            f'<p><strong><span style="font-size:16px;color:{cor};">{titulo_padrao}</span></strong></p>'
-                        )
-                        titulo_encontrado = True
-                        break
-                if not titulo_encontrado:
-                    if linha:
-                        html_linhas.append(f'<p>{linha}</p>')
-                    else:
-                        html_linhas.append('<p><br></p>')
-                i += 1
+        html_final = '\n'.join(html_linhas)
+        if nota_req:
+            html_final = nota_req + html_final
+        return jsonify({'resumo': html_final, 'fonte': 'openai', 'parecer': parecer_info})
 
-            html_final = '\n'.join(html_linhas)
-            if nota_req:
-                html_final = nota_req + html_final
-            return jsonify({'resumo': html_final, 'fonte': 'gemini', 'parecer': parecer_info})
-        except Exception as e:
-            logger.warning(f"Gemini falhou em analisar_ia: {e} — tentando Groq como fallback")
-            # ── Fallback automático para Groq ──────────────────────────────
-            groq_key = os.environ.get('GROQ_API_KEY', '')
-            if groq_key:
-                try:
-                    rg = requests.post(
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        headers={"Authorization": f"Bearer {groq_key}",
-                                 "Content-Type": "application/json"},
-                        json={"model": "llama-3.3-70b-versatile",
-                              "messages": [{"role": "user", "content": prompt}],
-                              "max_tokens": 1500, "temperature": 0.3},
-                        timeout=60
-                    )
-                    rg.raise_for_status()
-                    texto = rg.json()['choices'][0]['message']['content']
-
-                    # Mesmo pós-processamento do Gemini
-                    titulos_secao = ['📘', '🟢', '🔴', '⚖️', '↔️', '⚠️']
-                    linhas = texto.split('\n')
-                    linhas_corrigidas = []
-                    for linha in linhas:
-                        linha_strip = linha.strip()
-                        separado = False
-                        for emoji in titulos_secao:
-                            if linha_strip.startswith(emoji) and len(linha_strip) > len(emoji) + 30:
-                                partes = linha_strip.split(None, 5)
-                                if len(partes) >= 3:
-                                    titulo_palavras = [partes[0]]
-                                    i = 1
-                                    while i < len(partes) and i < 4:
-                                        titulo_palavras.append(partes[i])
-                                        i += 1
-                                        if partes[i-1][-1:] in '.,:' or len(' '.join(titulo_palavras)) > 30:
-                                            break
-                                    titulo = ' '.join(titulo_palavras)
-                                    resto = linha_strip[len(titulo):].strip()
-                                    if resto:
-                                        linhas_corrigidas.append(titulo)
-                                        linhas_corrigidas.append('')
-                                        linhas_corrigidas.append(resto)
-                                        separado = True
-                                        break
-                        if not separado:
-                            linhas_corrigidas.append(linha)
-                    texto = '\n'.join(linhas_corrigidas)
-
-                    # Converte para HTML
-                    TITULOS_MAP = {
-                        '📘': ('📘 Resumo Técnico',        '#0D2B5E'),
-                        '🟢': ('🟢 Pontos Positivos',       '#1A6B3A'),
-                        '🔴': ('🔴 Pontos Negativos',       '#8B0000'),
-                        '⚖️': ('⚖️ Riscos Políticos e de Imagem', '#7B5C00'),
-                        '↔️': ('↔️ Orientação Sugerida',   '#0D2B5E'),
-                        '⚠️': ('⚠️ Críticas e Pontos de Combate', '#8B0000'),
-                    }
-                    html_linhas = []
-                    for linha in texto.split('\n'):
-                        emoji_enc = next((e for e in TITULOS_MAP if linha.strip().startswith(e)), None)
-                        if emoji_enc:
-                            titulo_padrao, cor = TITULOS_MAP[emoji_enc]
-                            html_linhas.append(f'<p><strong>{titulo_padrao}</strong></p>')
-                        elif linha.strip():
-                            html_linhas.append(f'<p>{linha}</p>')
-                        else:
-                            html_linhas.append('<p><br></p>')
-
-                    html_final = '\n'.join(html_linhas)
-                    if nota_req:
-                        html_final = nota_req + html_final
-                    return jsonify({'resumo': html_final, 'fonte': 'groq_fallback', 'parecer': parecer_info})
-                except Exception as eg:
-                    logger.error(f"Groq fallback também falhou: {eg}")
-                    return jsonify({'error': 'Gemini e Groq indisponíveis no momento. Tente novamente em alguns instantes.'}), 503
-
-            import traceback
-            logger.error(f"Gemini falhou analisar_ia (sem Groq): {e}\n{traceback.format_exc()[-300:]}")
-            return jsonify({'error': 'Serviço de IA indisponível. Tente novamente em alguns instantes.'}), 503
-
-    return jsonify({'error': 'GEMINI_API_KEY não configurada.'}), 500
+    except Exception as e:
+        import traceback
+        logger.error(f"OpenAI falhou em analisar_ia: {e}\n{traceback.format_exc()[-300:]}")
+        return jsonify({'error': 'Serviço OpenAI indisponível. Tente novamente.'}), 503
 
 @app.route('/infografico/<int:evento_id>')
 @login_required
@@ -2818,18 +2755,26 @@ DOCUMENTO 2 — {label2}:
 Liste as diferenças de forma clara e numerada:"""
 
         gemini_key = os.environ.get('GEMINI_API_KEY','')
-        if not gemini_key:
-            return jsonify({'error': 'GEMINI_API_KEY não configurada.'})
+        fonte = 'gemini'
+        texto_ia = None
+        aviso = ''
 
-        r_ai = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
-            json={"contents":[{"parts":[{"text": prompt}]}],
-                  "generationConfig":{"maxOutputTokens":2000,"temperature":0.3}},
-            timeout=60
-        )
-        r_ai.raise_for_status()
-        resp = r_ai.json()['candidates'][0]['content']['parts'][0]['text']
-        return jsonify({'comparacao': resp})
+        if gemini_key:
+            try:
+                texto_ia = gemini_post(gemini_key, prompt, max_tokens=2000, temperatura=0.3)
+            except Exception as eg:
+                logger.warning(f"Gemini falhou em comparar_documentos: {eg} — usando Groq")
+                aviso = '⚠️ Gemini falhou, analisando no Groq...\n\n'
+                fonte = 'groq'
+
+        if texto_ia is None:
+            try:
+                texto_ia = groq_post(prompt, max_tokens=2000, temperatura=0.3)
+            except Exception as egr:
+                logger.error(f"Groq também falhou em comparar_documentos: {egr}")
+                return jsonify({'error': 'Gemini e Groq indisponíveis. Tente novamente.'})
+
+        return jsonify({'comparacao': aviso + texto_ia, 'fonte': fonte})
     except Exception as e:
         logger.error(f"Erro ao comparar documentos: {e}")
         return jsonify({'error': str(e)})
@@ -3358,21 +3303,16 @@ Não use ### ou ** fora do HTML."""
 
             if gemini_key:
                 try:
-                    r = requests.post(
-                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
-                        headers={"Content-Type": "application/json"},
-                        json={"contents": [{"parts": [{"text": prompt_emenda}]}],
-                              "generationConfig": {"maxOutputTokens": 512, "temperature": 0.3}},
-                        timeout=30
-                    )
-                    r.raise_for_status()
-                    texto_resp = r.json()['candidates'][0]['content']['parts'][0]['text']
+                    texto_resp = gemini_post(gemini_key, prompt_emenda, max_tokens=512, temperatura=0.3)
                     return jsonify({'resumo': texto_resp, 'doc_usado': tipo_doc})
                 except Exception as e:
-                    status = getattr(getattr(e, 'response', None), 'status_code', None)
-                    if status == 429:
-                        return jsonify({'error': 'Limite de requisições. Aguarde e tente novamente.'}), 429
-                    logger.warning(f"Gemini falhou (emenda): {e}")
+                    logger.warning(f"Gemini falhou (emenda): {e} — usando Groq")
+            try:
+                texto_resp = groq_post(prompt_emenda, max_tokens=512, temperatura=0.3)
+                aviso = '<p><em style="color:#cc6600;">⚠️ Gemini falhou, analisando no Groq...</em></p><br>'
+                return jsonify({'resumo': aviso + texto_resp, 'doc_usado': tipo_doc})
+            except Exception as egr:
+                logger.error(f"Groq também falhou (emenda): {egr}")
             return jsonify({'error': 'Falha ao analisar emenda.'}), 500
 
         # ── Bloco else: PDF não disponível, usa avulso/PRLP ──────────────
@@ -3416,21 +3356,16 @@ Não use ### ou ** fora do HTML. Não repita análise de outras emendas."""
 
             if gemini_key:
                 try:
-                    r = requests.post(
-                        f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
-                        headers={"Content-Type": "application/json"},
-                        json={"contents": [{"parts": [{"text": prompt_emenda}]}],
-                              "generationConfig": {"maxOutputTokens": 600, "temperature": 0.3}},
-                        timeout=30
-                    )
-                    r.raise_for_status()
-                    texto_resp = r.json()['candidates'][0]['content']['parts'][0]['text']
+                    texto_resp = gemini_post(gemini_key, prompt_emenda, max_tokens=600, temperatura=0.3)
                     return jsonify({'resumo': texto_resp, 'doc_usado': tipo_doc})
                 except Exception as e:
-                    status = getattr(getattr(e, 'response', None), 'status_code', None)
-                    if status == 429:
-                        return jsonify({'error': 'Limite de requisições. Aguarde e tente novamente.'}), 429
-                    logger.warning(f"Gemini falhou (emenda fallback): {e}")
+                    logger.warning(f"Gemini falhou (emenda fallback): {e} — usando Groq")
+            try:
+                texto_resp = groq_post(prompt_emenda, max_tokens=600, temperatura=0.3)
+                aviso = '<p><em style="color:#cc6600;">⚠️ Gemini falhou, analisando no Groq...</em></p><br>'
+                return jsonify({'resumo': aviso + texto_resp, 'doc_usado': tipo_doc})
+            except Exception as egr:
+                logger.error(f"Groq também falhou (emenda fallback): {egr}")
             return jsonify({'error': 'Falha ao analisar emenda.'}), 500
 
     # ── Fluxo normal (não emenda) ───────────────────────────────────────────
@@ -3535,22 +3470,16 @@ Não use ### ou ** fora do HTML."""
 
     if gemini_key:
         try:
-            r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
-                headers={"Content-Type": "application/json"},
-                json={"contents": [{"parts": [{"text": prompt}]}],
-                      "generationConfig": {"maxOutputTokens": 512, "temperature": 0.3}},
-                timeout=30
-            )
-            r.raise_for_status()
-            texto = r.json()['candidates'][0]['content']['parts'][0]['text']
+            texto = gemini_post(gemini_key, prompt, max_tokens=512, temperatura=0.3)
             return jsonify({'resumo': texto, 'doc_usado': tipo_doc})
         except Exception as e:
-            status = getattr(getattr(e, 'response', None), 'status_code', None)
-            if status == 429:
-                return jsonify({'error': 'Limite de requisições atingido. Aguarde alguns segundos e tente novamente.'}), 429
-            logger.warning(f"Gemini falhou em analisar_destaque: {e}")
-
+            logger.warning(f"Gemini falhou em analisar_destaque: {e} — usando Groq")
+    try:
+        texto = groq_post(prompt, max_tokens=512, temperatura=0.3)
+        aviso = '<p><em style="color:#cc6600;">⚠️ Gemini falhou, analisando no Groq...</em></p><br>'
+        return jsonify({'resumo': aviso + texto, 'doc_usado': tipo_doc})
+    except Exception as egr:
+        logger.error(f"Groq também falhou em analisar_destaque: {egr}")
     return jsonify({'error': 'Falha ao gerar análise. Tente novamente.'}), 500
 
 @app.route('/buscar_url_prlp', methods=['POST'])
