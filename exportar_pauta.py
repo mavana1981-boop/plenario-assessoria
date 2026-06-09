@@ -85,47 +85,35 @@ def _strip_html(s):
     txt = re.sub(r"\s+", " ", txt)
     return txt.strip()
 
-def _texto_para_paragrafos(texto, estilo):
-    """Converte texto puro em Paragraphs. Títulos com emoji ficam coloridos/negrito.
-    Todo o resto: Helvetica preto. Nenhum HTML passado ao ReportLab."""
+def _texto_para_paragrafos(html_ou_texto, estilo):
+    """Extrai texto puro do HTML do Quill e retorna Paragraphs simples.
+    Sem cores, sem tamanhos diferentes — exatamente o texto digitado."""
+    import html as _h
     from reportlab.platypus import Paragraph, Spacer
-    from reportlab.lib.styles import ParagraphStyle
 
-    CORES = {
-        '\U0001f4d8': colors.HexColor("#0D2B5E"),  # 📘
-        '\U0001f7e2': colors.HexColor("#1A6B3A"),  # 🟢
-        '\U0001f534': colors.HexColor("#8B0000"),  # 🔴
-        '\u2696\ufe0f': colors.HexColor("#7B5C00"), # ⚖️
-        '\u2194\ufe0f': colors.HexColor("#0D2B5E"), # ↔️
-        '\u26a0\ufe0f': colors.HexColor("#8B0000"), # ⚠️
-    }
+    s = str(html_ou_texto or '')
+    # Converte quebras de linha HTML
+    s = re.sub(r'<br\s*/?>', '\n', s, flags=re.IGNORECASE)
+    s = re.sub(r'</p>',      '\n', s, flags=re.IGNORECASE)
+    s = re.sub(r'</li>',     '\n', s, flags=re.IGNORECASE)
+    s = re.sub(r'<li[^>]*>', '- ', s, flags=re.IGNORECASE)
+    # Remove todas as tags HTML
+    s = re.sub(r'<[^>]+>', '', s)
+    # Decodifica entidades HTML
+    s = _h.unescape(s)
 
     result = []
-    for i, linha in enumerate(str(texto or '').split('\n')):
+    for linha in s.split('\n'):
         linha = linha.strip()
         if not linha:
             if result:
-                result.append(Spacer(1, 3))
+                result.append(Spacer(1, 2))
             continue
-        emoji = next((e for e in CORES if linha.startswith(e)), None)
-        if emoji:
-            st = ParagraphStyle(f"_T{i}",
-                fontName="Helvetica-Bold",
-                fontSize=estilo.fontSize + 1,
-                leading=estilo.fontSize + 5,
-                textColor=CORES[emoji],
-                spaceBefore=8, spaceAfter=2)
-        else:
-            st = ParagraphStyle(f"_B{i}",
-                fontName="Helvetica",
-                fontSize=estilo.fontSize,
-                leading=estilo.leading,
-                textColor=colors.black)
         try:
-            result.append(Paragraph(linha, st))
+            result.append(Paragraph(linha, estilo))
         except Exception:
-            result.append(Paragraph(linha.encode('ascii','replace').decode(), st))
-    return result or [Paragraph("", estilo)]
+            result.append(Paragraph(linha.encode('ascii', 'replace').decode(), estilo))
+    return result or [Paragraph('', estilo)]
 
 
 # ── Cabeçalho / Rodapé ─────────────────────────────────────────────────────
