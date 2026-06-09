@@ -256,12 +256,21 @@ def _get_itens(evento_id):
             c.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
             resumos_ia = {str(r[0]): r[1] for r in c.fetchall()}
             try:
-                c.execute('SELECT item_key, resumo_materia FROM notas WHERE evento_id=?', (evento_id,))
+                # Busca por evento_id como int E como string (robustez de tipo)
+                c.execute('SELECT item_key, resumo_materia FROM notas WHERE evento_id=? OR evento_id=?',
+                          (evento_id, str(evento_id)))
                 for item_key, rm in c.fetchall():
                     if rm:
                         resumos_materia[str(item_key)] = rm
             except Exception:
-                pass
+                # Fallback: busca todas as notas e filtra em Python
+                try:
+                    c.execute('SELECT item_key, resumo_materia, evento_id FROM notas')
+                    for item_key, rm, ev in c.fetchall():
+                        if rm and str(ev) == str(evento_id):
+                            resumos_materia[str(item_key)] = rm
+                except Exception:
+                    pass
             conn.close()
         except Exception:
             pass
@@ -278,6 +287,14 @@ def _get_itens(evento_id):
                 item['resumo_materia'] = resumos_materia[item_key]
             else:
                 item['resumo_materia'] = ''
+
+        try:
+            current_app.logger.info(
+                f"[export_resumo evt={evento_id}] notas_banco={list(resumos_materia.keys())} "
+                f"itens_keys={['PROP_'+str(i.get('id_principal','')) for i in itens]}"
+            )
+        except Exception:
+            pass
 
         return itens
     except Exception as e:
