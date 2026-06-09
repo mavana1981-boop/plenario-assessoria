@@ -83,22 +83,29 @@ def ia_chain(prompt, max_tokens=1500, temperatura=0.3, contexto=""):
     erros = []
 
     # 1. Groq (llama-3.3-70b, 30 RPM gratuito)
-    try:
-        texto = groq_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
-        logger.info(f"ia_chain [{contexto}]: Groq OK")
-        return texto, 'groq'
-    except Exception as e:
-        logger.warning(f"ia_chain [{contexto}]: Groq falhou — {e}")
-        erros.append(f"Groq: {e}")
+    groq_key = os.environ.get('GROQ_API_KEY', '')
+    if groq_key:
+        try:
+            texto = groq_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
+            if texto and texto.strip():
+                logger.info(f"ia_chain [{contexto}]: Groq OK")
+                return texto, 'groq'
+        except Exception as e:
+            logger.warning(f"ia_chain [{contexto}]: Groq falhou — {e}")
+            erros.append(f"Groq: {e}")
 
     # 2. Cloudflare Workers AI (llama-3.1-70b, 500 RPM gratuito)
-    try:
-        texto = cloudflare_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
-        logger.info(f"ia_chain [{contexto}]: Cloudflare OK")
-        return texto, 'cloudflare'
-    except Exception as e:
-        logger.warning(f"ia_chain [{contexto}]: Cloudflare falhou — {e}")
-        erros.append(f"Cloudflare: {e}")
+    cf_account = os.environ.get('CF_ACCOUNT_ID', '')
+    cf_token   = os.environ.get('CF_API_TOKEN', '')
+    if cf_account and cf_token:
+        try:
+            texto = cloudflare_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
+            if texto and texto.strip():
+                logger.info(f"ia_chain [{contexto}]: Cloudflare OK")
+                return texto, 'cloudflare'
+        except Exception as e:
+            logger.warning(f"ia_chain [{contexto}]: Cloudflare falhou — {e}")
+            erros.append(f"Cloudflare: {e}")
 
     # 3. Gemini (fallback final)
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
@@ -106,8 +113,9 @@ def ia_chain(prompt, max_tokens=1500, temperatura=0.3, contexto=""):
         try:
             texto = gemini_post(gemini_key, prompt, max_tokens=max_tokens,
                                 temperatura=temperatura, tentativas=1)
-            logger.info(f"ia_chain [{contexto}]: Gemini OK")
-            return texto, 'gemini'
+            if texto and texto.strip():
+                logger.info(f"ia_chain [{contexto}]: Gemini OK")
+                return texto, 'gemini'
         except Exception as e:
             logger.warning(f"ia_chain [{contexto}]: Gemini falhou — {e}")
             erros.append(f"Gemini: {e}")
@@ -2115,14 +2123,4 @@ def analisar_ia():
                         projeto_pl = f"{sigla_ref} {num_ref}/{ano_ref}"
                         logger.info(f"REQ → analisando {projeto_pl} (id={id_pl_ref})")
             except Exception as e:
-                logger.warning(f"Erro buscar PL do REQ: {e}")
-
-        # Usa dados do PL referenciado para a análise
-        projeto      = projeto_pl
-        ementa       = ementa_pl
-        id_principal = id_pl_ref or id_principal
-        nota_req     = f"<p><em>Este requerimento solicita <strong>urgência</strong> para o {projeto_pl}.</em></p><br>"
-    else:
-        nota_req = ''
-
-    # ── Busca último documento disp
+                lo
