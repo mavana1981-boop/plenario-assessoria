@@ -565,26 +565,15 @@ def exportar_pauta(evento_id):
                 ]))
                 bloco.append(nota_hdr)
 
-                # Converte HTML preservando ícones e quebras de linha
-                # IMPORTANTE: usa o raw_html mas remove todas as tags de cor/estilo
-                # para evitar que o ReportLab interprete spans coloridos do Quill
+                # Converte texto da nota em parágrafos
                 raw_html = it.get("resumo_materia", "") or ""
                 paras_nota = _texto_para_paragrafos(raw_html, sNota)
 
-                # Monta tabela com todos os parágrafos
-                rows = [[p] for p in paras_nota]
-                nota_tbl = Table(rows, colWidths=[doc.width])
-                nota_tbl.setStyle(TableStyle([
-                    ("BACKGROUND",(0,0),(-1,-1), colors.HexColor("#F8F8F8")),
-                    ("TOPPADDING",(0,0),(-1,-1), 3),
-                    ("BOTTOMPADDING",(0,0),(-1,-1), 3),
-                    ("LEFTPADDING",(0,0),(-1,-1), 8),
-                    ("RIGHTPADDING",(0,0),(-1,-1), 8),
-                    ("BOX",(0,0),(-1,-1), 0.5, C_CINZA),
-                    ("TOPPADDING",(0,0),(-1,0), 6),
-                    ("BOTTOMPADDING",(0,-1),(-1,-1), 6),
-                ]))
-                bloco.append(nota_tbl)
+                # Adiciona parágrafos DIRETO no bloco (sem tabela)
+                # Tabelas não quebram entre páginas; parágrafos sim.
+                bloco.append(Spacer(1, 3))
+                for pn in paras_nota:
+                    bloco.append(pn)
 
             bloco.append(Spacer(1, 14))
             story.append(KeepTogether(bloco[:4]))  # cabeçalho junto
