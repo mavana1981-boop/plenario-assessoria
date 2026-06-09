@@ -135,7 +135,7 @@ def exportar_pauta(evento_id):
         static = os.path.join(current_app.root_path, "static")
         logos  = [
             (os.path.join(static, "logo_minoria.png"),  1.5*cm),
-            (os.path.join(static, "logo_oposicao.png"), A4[0]-3.5*cm),
+            (os.path.join(static, "logo_oposicao.png"), 3.9*cm),
         ]
 
         SS   = getSampleStyleSheet()
@@ -225,124 +225,155 @@ def exportar_pauta(evento_id):
             "LIBERADO":  colors.HexColor("#7B5C00"),
             "OBSTRUÇÃO": colors.HexColor("#0D2B5E"),
             "ABSTENÇÃO": colors.HexColor("#555555"),
+            "NEGOCIAÇÃO":colors.HexColor("#7B5C00"),
         }
 
-        sTabProj  = ParagraphStyle("sTP", parent=SS["Normal"],
-            fontSize=9.5, leading=13, wordWrap="CJK", alignment=1)
-        sTabMeta  = ParagraphStyle("sTM", parent=SS["Normal"],
-            fontSize=7.5, leading=10, wordWrap="CJK", alignment=1,
-            fontName="Helvetica-Oblique", textColor=colors.HexColor("#444444"))
-        sTabEmenta = ParagraphStyle("sTE", parent=SS["Normal"],
-            fontSize=9, leading=12, wordWrap="CJK", alignment=1)
-        sTabEmentaSub = ParagraphStyle("sTES", parent=SS["Normal"],
-            fontSize=7, leading=10, wordWrap="CJK", alignment=1,
-            fontName="Helvetica-Oblique", textColor=colors.HexColor("#666666"))
-        sTabOri   = ParagraphStyle("sTO", parent=SS["Normal"],
-            fontSize=9.5, leading=13, wordWrap="CJK", alignment=1)
-        sTabNum   = ParagraphStyle("sTN", parent=SS["Normal"],
-            fontSize=9.5, leading=13, wordWrap="CJK", alignment=1)
+        def _hex(c):
+            return "%02x%02x%02x" % (int(c.red*255), int(c.green*255), int(c.blue*255))
 
-        tdata = [[ Paragraph("<b>Nº</b>", sTabNum),
-                   Paragraph("<b>Proposição</b>", sTabProj),
-                   Paragraph("<b>Objeto</b>", sTabEmenta),
-                   Paragraph("<b>Orientação</b>", sTabOri) ]]
+        # ── Estilos da tabela de resumo ──────────────────────────────────
+        sTabNum  = ParagraphStyle("sTN", parent=SS["Normal"],
+            fontSize=10, leading=13, alignment=1, fontName="Helvetica-Bold")
+        sTabProj = ParagraphStyle("sTP", parent=SS["Normal"],
+            fontSize=11, leading=14, alignment=1, fontName="Helvetica-Bold",
+            textColor=colors.black)
+        sTabMeta = ParagraphStyle("sTMt", parent=SS["Normal"],
+            fontSize=8, leading=11, alignment=1,
+            fontName="Helvetica-Oblique", textColor=colors.HexColor("#444444"))
+        sTabObj  = ParagraphStyle("sTO2", parent=SS["Normal"],
+            fontSize=9, leading=12, alignment=1, wordWrap="CJK")
+        sTabOri  = ParagraphStyle("sTO", parent=SS["Normal"],
+            fontSize=12, leading=15, alignment=1, fontName="Helvetica-Bold")
+
+        tdata = [[
+            Paragraph("<b>Nº</b>",         sTabNum),
+            Paragraph("<b>Proposição</b>",  sTabProj),
+            Paragraph("<b>Objeto</b>",      sTabObj),
+            Paragraph("<b>Orientação</b>",  sTabOri),
+        ]]
 
         for it in itens:
             ori     = (it.get("orientacao") or "").strip()
             cor_ori = COR_ORI.get(ori, CINZA)
 
-            # Coluna Proposição: título + autor + relator
-            proj_txt   = _sax.escape(str(it.get("projeto","—")))
-            autor_txt  = _sax.escape(str(it.get("autor","") or ""))
-            relator_txt= _sax.escape(str(it.get("relator","") or ""))
-            # Primeiro autor apenas
-            primeiro_autor = autor_txt.split(",")[0].strip() if autor_txt else ""
-            proj_xml = f"<b>{proj_txt}</b>"
+            # ── Coluna Proposição: nome grande negrito preto, depois autor e relator ──
+            proj_txt    = _sax.escape(str(it.get("projeto","—")))
+            autor_full  = str(it.get("autor","") or "")
+            relator_str = str(it.get("relator","") or "")
+            primeiro_autor = _sax.escape(autor_full.split(",")[0].strip()) if autor_full else ""
+            relator_esc    = _sax.escape(relator_str[:60]) if relator_str and relator_str != "Não atribuído" else ""
+
+            proj_xml = f'<font size="11"><b>{proj_txt}</b></font>'
             if primeiro_autor:
-                proj_xml += f"<br/><i>{primeiro_autor}</i>"
-            if relator_txt and relator_txt != "Não atribuído":
-                proj_xml += f"<br/><i>Rel: {relator_txt[:50]}</i>"
+                proj_xml += f'<br/><font size="8"><i>Autor: {primeiro_autor}</i></font>'
+            if relator_esc:
+                proj_xml += f'<br/><font size="8"><i>Relator: {relator_esc}</i></font>'
 
-            # Coluna Objeto: resumo da nota ou resumo_ia; abaixo ementa em cinza menor
-            nota_txt   = _html_para_texto(it.get("resumo_materia","") or "")
-            resumo_ia  = _html_para_texto(it.get("resumo_ia","") or "")
-            ementa_txt = _html_para_texto(it.get("ementa","") or "")
-            objeto_principal = nota_txt[:400] if nota_txt.strip() else resumo_ia[:400]
-            objeto_xml = _sax.escape(objeto_principal)
+            # ── Coluna Objeto: resumo IA em negrito + ementa em itálico cinza ──
+            resumo_ia  = _sax.escape((_html_para_texto(it.get("resumo_ia","") or ""))[:350])
+            ementa_txt = _sax.escape((_html_para_texto(it.get("ementa","") or ""))[:250])
+            if resumo_ia:
+                obj_xml = f'<b>{resumo_ia}</b>'
+            else:
+                obj_xml = ""
             if ementa_txt:
-                objeto_xml += f'<br/><font size="7" color="#666666"><i>{_sax.escape(ementa_txt[:250])}</i></font>'
+                obj_xml += (f'<br/>' if obj_xml else "") + \
+                           f'<font size="7" color="#555555"><i>{ementa_txt}</i></font>'
+            if not obj_xml:
+                obj_xml = "—"
 
-            # Coluna orientação com cor
+            # ── Coluna Orientação: colorida e grande ──
             if ori:
-                hex_ori = "%02x%02x%02x" % (
-                    int(cor_ori.red*255), int(cor_ori.green*255), int(cor_ori.blue*255))
-                ori_xml = f'<b><font color="#{hex_ori}">{_sax.escape(ori)}</font></b>'
+                ori_xml = f'<font color="#{_hex(cor_ori)}" size="12"><b>{_sax.escape(ori)}</b></font>'
             else:
                 ori_xml = "—"
 
             tdata.append([
                 Paragraph(str(it.get("ordem","—")), sTabNum),
                 Paragraph(proj_xml, sTabMeta),
-                Paragraph(objeto_xml or "—", sTabEmenta),
-                Paragraph(ori_xml, sTabOri),
+                Paragraph(obj_xml,  sTabObj),
+                Paragraph(ori_xml,  sTabOri),
             ])
 
-        tbl = Table(tdata, colWidths=[1.0*cm, 4.0*cm, 9.4*cm, 2.8*cm],
+        tbl = Table(tdata, colWidths=[1.0*cm, 4.2*cm, 9.2*cm, 2.8*cm],
                     repeatRows=1, splitByRow=True)
         tbl.setStyle(TableStyle([
             ("FONTNAME",      (0,0),(-1,0),  "Helvetica-Bold"),
             ("BACKGROUND",    (0,0),(-1,0),  colors.HexColor("#E8F3EC")),
             ("GRID",          (0,0),(-1,-1), 0.3, colors.HexColor("#cccccc")),
             ("ROWBACKGROUNDS",(0,1),(-1,-1), [colors.white, colors.HexColor("#F8F8F8")]),
-            ("VALIGN",        (0,0),(-1,-1), "TOP"),
+            ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
             ("ALIGN",         (0,0),(-1,-1), "CENTER"),
-            ("TOPPADDING",    (0,0),(-1,-1), 5),
-            ("BOTTOMPADDING", (0,0),(-1,-1), 5),
-            ("LEFTPADDING",   (0,0),(-1,-1), 4),
-            ("RIGHTPADDING",  (0,0),(-1,-1), 4),
+            ("TOPPADDING",    (0,0),(-1,-1), 6),
+            ("BOTTOMPADDING", (0,0),(-1,-1), 6),
+            ("LEFTPADDING",   (0,0),(-1,-1), 5),
+            ("RIGHTPADDING",  (0,0),(-1,-1), 5),
         ]))
         story.append(tbl)
         story.append(PageBreak())
 
         # ── Itens detalhados ────────────────────────────────────────────
+        sHeadItem = ParagraphStyle("sHI", parent=SS["Normal"],
+            fontName="Helvetica-Bold", fontSize=13, leading=16,
+            textColor=AZUL, spaceBefore=14, spaceAfter=2)
+        sResumoIA = ParagraphStyle("sRIA", parent=SS["Normal"],
+            fontSize=11, leading=14, wordWrap="CJK",
+            fontName="Helvetica-Oblique",
+            textColor=VERDE, spaceAfter=4)
+
         for it in itens:
             projeto  = _sax.escape(str(it.get("projeto","—")))
             autor    = _sax.escape(str(it.get("autor","N/D") or "N/D"))
             relator  = _sax.escape(str(it.get("relator","N/D") or "N/D"))
             situacao = _sax.escape(str(it.get("situacao","") or ""))
-            ori      = _sax.escape(str(it.get("orientacao","") or ""))
-            ementa   = _sax.escape(_html_para_texto(it.get("ementa","") or ""))
+            ori_raw  = str(it.get("orientacao","") or "")
+            ori      = _sax.escape(ori_raw)
+            cor_ori  = COR_ORI.get(ori_raw, CINZA)
+            resumo_ia_det = _sax.escape(_html_para_texto(it.get("resumo_ia","") or ""))
 
-            bloco = []
-            bloco.append(Paragraph(
-                f'<font color="#0D2B5E"><b>Item {it.get("ordem","—")} — {projeto}</b></font>',
-                sHead))
+            # Cabeçalho do item: título à esquerda, orientação à direita na mesma linha
+            if ori_raw:
+                ori_str = f'<font color="#{_hex(cor_ori)}" size="14"><b>{ori}</b></font>'
+            else:
+                ori_str = ""
+
+            # Monta cabeçalho em tabela de 2 colunas (título | orientação)
+            cab_tbl = Table([[
+                Paragraph(f'<font color="#0D2B5E"><b>Item {it.get("ordem","—")} — {projeto}</b></font>', sHeadItem),
+                Paragraph(ori_str, ParagraphStyle("sOriD", parent=SS["Normal"],
+                    fontSize=14, leading=16, alignment=2, fontName="Helvetica-Bold")),
+            ]], colWidths=[doc.width * 0.72, doc.width * 0.28])
+            cab_tbl.setStyle(TableStyle([
+                ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
+                ("LEFTPADDING",   (0,0),(-1,-1), 0),
+                ("RIGHTPADDING",  (0,0),(-1,-1), 0),
+                ("TOPPADDING",    (0,0),(-1,-1), 0),
+                ("BOTTOMPADDING", (0,0),(-1,-1), 0),
+            ]))
+
+            bloco = [cab_tbl]
             bloco.append(Paragraph(f"<b>Autor:</b> {autor}", sNormal))
             bloco.append(Paragraph(f"<b>Relator:</b> {relator}", sNormal))
             if situacao:
                 bloco.append(Paragraph(f"<b>Situação:</b> {situacao}", sNormal))
-            if ementa:
-                bloco.append(Paragraph(f"<b>Ementa:</b> {ementa}", sNormal))
-            if ori:
-                cor_ori = COR_ORI.get(it.get("orientacao",""), CINZA)
-                bloco.append(Paragraph(
-                    f'<b>Orientação:</b> <font color="#{cor_ori.hexval()[2:]}">{ori}</font>',
-                    sNormal))
+
+            # Resumo IA em verde itálico (em vez de ementa)
+            if resumo_ia_det:
+                bloco.append(Spacer(1, 4))
+                bloco.append(Paragraph(f"<b>Resumo:</b>", sNormal))
+                bloco.append(Paragraph(resumo_ia_det, sResumoIA))
 
             story.append(KeepTogether(bloco))
 
-            # ── Nota técnica ──────────────────────────────────────────
+            # ── Nota técnica em quadro cinza ─────────────────────────────
             resumo = it.get("resumo_materia", "") or ""
             if resumo.strip():
                 story.append(Spacer(1, 5))
                 story.append(Paragraph("Nota Técnica", sBold))
 
                 texto = _html_para_texto(resumo)
-                linhas = texto.split("\n")
-
-                # Monta lista de parágrafos para o quadro cinza
                 paras_nota = []
-                for idx_l, linha in enumerate(linhas):
+                for idx_l, linha in enumerate(texto.split("\n")):
                     linha = linha.strip()
                     if not linha:
                         paras_nota.append(Spacer(1, 3))
@@ -351,26 +382,25 @@ def exportar_pauta(evento_id):
                     emoji_sec = next((e for e in SECOES if linha.startswith(e)), None)
 
                     if emoji_sec:
-                        # Título de seção — colorido e negrito
-                        st = sSecao[emoji_sec]
-                        paras_nota.append(Paragraph(_sax.escape(linha), st))
+                        paras_nota.append(Paragraph(_sax.escape(linha), sSecao[emoji_sec]))
                     elif "Análise baseada em" in linha or "baseada em:" in linha.lower():
-                        # "Análise baseada em" — vermelho itálico
                         paras_nota.append(Paragraph(
                             f'<font color="#CC0000"><i>{_sax.escape(linha)}</i></font>',
-                            _sNota_unico(idx_l)))
+                            ParagraphStyle(f"sNtB_{idx_l}", parent=SS["Normal"],
+                                fontSize=9, leading=12, fontName="Helvetica-Oblique",
+                                textColor=colors.HexColor("#CC0000"))))
                     else:
-                        # Texto normal — SEMPRE preto, nome único para evitar cache
-                        paras_nota.append(Paragraph(_sax.escape(linha), _sNota_unico(idx_l)))
+                        paras_nota.append(Paragraph(_sax.escape(linha),
+                            ParagraphStyle(f"sNtU_{idx_l}", parent=SS["Normal"],
+                                fontSize=9.5, leading=13.5, wordWrap="CJK",
+                                textColor=colors.black, fontName="Helvetica")))
 
-                # Coloca os parágrafos em uma tabela de 1 coluna (quadro cinza claro)
                 if paras_nota:
-                    rows_nota = [[p] for p in paras_nota if not isinstance(p, Spacer)]
-                    # Insere spacers como linhas vazias
                     rows_final = []
                     for p in paras_nota:
                         if isinstance(p, Spacer):
-                            rows_final.append([Paragraph("", _sNota_unico(9999))])
+                            rows_final.append([Paragraph("", ParagraphStyle(f"sNtSp_{id(p)}",
+                                parent=SS["Normal"], fontSize=4))])
                         else:
                             rows_final.append([p])
 
