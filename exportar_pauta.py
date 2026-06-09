@@ -13,6 +13,7 @@ from reportlab.platypus import (
 )
 from reportlab.pdfgen import canvas as pdfcanvas
 from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.lib.utils import ImageReader
 import xml.sax.saxutils as _sax
 
 exportar_bp = Blueprint("exportar", __name__, url_prefix="/exportar")
@@ -108,13 +109,19 @@ def _header_footer(canvas, doc, logos, titulo):
     canvas.setStrokeColorRGB(0.1, 0.42, 0.23)
     canvas.setLineWidth(1.2)
     canvas.line(1.5*cm, h-1.9*cm, w-1.5*cm, h-1.9*cm)
-    # logos lado a lado à esquerda — tenta desenhar mesmo sem verificar exists
+    # logos lado a lado à esquerda — usa ImageReader para PNG com transparência
     x_logo = 1.5*cm
     for path in logos:
         try:
-            canvas.drawImage(path, x_logo, h-2.55*cm, width=2.0*cm,
+            img = ImageReader(path)
+            iw, ih = img.getSize()
+            # Mantém proporção: largura fixa 2cm
+            draw_w = 2.0*cm
+            draw_h = draw_w * ih / iw
+            y_logo = h - 1.5*cm - draw_h
+            canvas.drawImage(img, x_logo, y_logo, width=draw_w, height=draw_h,
                              preserveAspectRatio=True, mask="auto")
-            x_logo += 2.3*cm
+            x_logo += draw_w + 0.2*cm
         except Exception:
             pass
     canvas.setFont("Helvetica-Bold", 9.5)
