@@ -85,102 +85,61 @@ def _strip_html(s):
     txt = re.sub(r"\s+", " ", txt)
     return txt.strip()
 
-def _limpar_html_quill(html):
-    """Remove TODOS os atributos inline e tags de estilo do HTML do Quill.
-    Mantém apenas estrutura: <p>, <br>, <strong>, <em>, <li>, <ul>, <ol>.
-    """
-    s = str(html or "")
-    # Remove todos os atributos de qualquer tag
-    s = re.sub(r'<(\w+)[^>]*>', lambda m: f'<{m.group(1)}>', s)
-    # Remove span e font completamente (só carregam estilos)
-    s = re.sub(r'</?span>', '', s, flags=re.IGNORECASE)
-    s = re.sub(r'</?font>', '', s, flags=re.IGNORECASE)
-    return s
-
-
 def _html_para_paragrafos(html, estilo):
-    """
-    Converte HTML do editor Quill em lista de Paragraphs ReportLab.
-    Títulos de seção (emoji): negrito, 2pt maior, cor própria.
-    Todo o restante: preto, tamanho fixo — sem exceção.
-    """
+    import html as _h
     from reportlab.platypus import Paragraph, Spacer
     from reportlab.lib.styles import ParagraphStyle
-    import html as _html_mod
-    import xml.sax.saxutils as _sax
 
-    TITULOS = {
-        '📘': colors.HexColor("#0D2B5E"),
-        '🟢': colors.HexColor("#1A6B3A"),
-        '🔴': colors.HexColor("#8B0000"),
-        '⚖️': colors.HexColor("#7B5C00"),
-        '↔️': colors.HexColor("#0D2B5E"),
-        '⚠️': colors.HexColor("#8B0000"),
-    }
-    KW_TITULOS = {
-        'PONTOS POSITIVOS': '🟢', 'PONTO POSITIVO': '🟢',
-        'PONTOS NEGATIVOS': '🔴', 'PONTO NEGATIVO': '🔴',
-        'RESUMO TÉCNICO':   '📘', 'RESUMO TECNICO': '📘',
-        'RISCOS POLÍTICOS': '⚖️', 'RISCOS POLITICOS': '⚖️',
-        'ORIENTAÇÃO SUGERIDA': '↔️', 'ORIENTACAO SUGERIDA': '↔️',
-        'CRÍTICAS E PONTOS': '⚠️', 'CRITICAS E PONTOS': '⚠️',
+    CORES = {
+        '\U0001f4d8': colors.HexColor("#0D2B5E"),  # 📘
+        '\U0001f7e2': colors.HexColor("#1A6B3A"),  # 🟢
+        '\U0001f534': colors.HexColor("#8B0000"),  # 🔴
+        '\u2696\ufe0f': colors.HexColor("#7B5C00"), # ⚖️
+        '\u2194\ufe0f': colors.HexColor("#0D2B5E"), # ↔️
+        '\u26a0\ufe0f': colors.HexColor("#8B0000"), # ⚠️
     }
 
-    fTitulo = estilo.fontSize + 2
-    fTexto  = estilo.fontSize
-
-    # 1. Remove estilos inline do Quill (cor, font-size, spans)
-    s = _limpar_html_quill(html)
-
-    # 2. Converte tags remanescentes em texto/quebras
+    # Extrai texto puro sem nenhum markup HTML
+    s = str(html or "")
     s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"</p>",      "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"</li>",     "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"<li[^>]*>", "• ", s, flags=re.IGNORECASE)
-    s = re.sub(r"<[^>]+>",   "",   s)   # remove todas as tags restantes
-    s = _html_mod.unescape(s)
+    s = re.sub(r"</p>",       "\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"</li>",      "\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"<li[^>]*>",  "- ",  s, flags=re.IGNORECASE)
+    s = re.sub(r"<[^>]+>",    "",    s)
+    s = _h.unescape(s)
 
-    linhas = [l.strip() for l in s.split("\n")]
-    paragrafos = []
-    idx = 0
-
-    for linha in linhas:
+    result = []
+    for i, linha in enumerate(s.split("\n")):
+        linha = linha.strip()
         if not linha:
-            if paragrafos:
-                paragrafos.append(Spacer(1, 3))
+            if result:
+                result.append(Spacer(1, 3))
             continue
 
-        idx += 1
+        emoji = next((e for e in CORES if linha.startswith(e)), None)
 
-        # Detecta título pelo emoji — ÚNICO critério aceito
-        emoji_enc = None
-        for emoji in TITULOS:
-            if linha.startswith(emoji):
-                emoji_enc = emoji
-                break
-
-        linha_escaped = _sax.escape(linha)
-
-        if emoji_enc:
-            cor = TITULOS[emoji_enc]
-            # Nome único para evitar cache do ReportLab
-            st = ParagraphStyle(f"sNT_t_{idx}", parent=estilo,
-                fontName="Helvetica-Bold", fontSize=fTitulo, leading=fTitulo+4,
-                textColor=cor, spaceBefore=8, spaceAfter=2)
+        if emoji:
+            st = ParagraphStyle(f"_T{i}",
+                fontName="Helvetica-Bold",
+                fontSize=estilo.fontSize + 1,
+                leading=estilo.fontSize + 5,
+                textColor=CORES[emoji],
+                spaceBefore=8, spaceAfter=2)
         else:
-            # PRETO SEMPRE — nome único para evitar cache
-            st = ParagraphStyle(f"sNT_b_{idx}", parent=estilo,
-                fontSize=fTexto, textColor=colors.black,
-                leading=fTexto+3, fontName="Helvetica")
+            st = ParagraphStyle(f"_B{i}",
+                fontName="Helvetica",
+                fontSize=estilo.fontSize,
+                leading=estilo.leading,
+                textColor=colors.black)
 
+        # Texto puro — sem nenhum markup passado ao ReportLab
         try:
-            paragrafos.append(Paragraph(linha_escaped, st))
+            result.append(Paragraph(linha, st))
         except Exception:
-            paragrafos.append(Paragraph(_sax.escape(re.sub(r'[^\x20-\x7E\u00C0-\u024F\u0400-\u04FF\U0001F300-\U0001FAFF]', '?', linha)), st))
+            result.append(Paragraph(linha.encode('ascii', 'replace').decode(), st))
 
-    return paragrafos if paragrafos else [Paragraph("", estilo)]
+    return result or [Paragraph("", estilo)]
 
-    return paragrafos if paragrafos else [Paragraph("", estilo)]
 
 # ── Cabeçalho / Rodapé ─────────────────────────────────────────────────────
 def _header_footer(canvas, doc, logos, header_text):
