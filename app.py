@@ -60,7 +60,7 @@ def groq_post(prompt, max_tokens=1500, temperatura=0.3):
     return r.json()['choices'][0]['message']['content']
 
 
-def cloudflare_post(prompt, max_tokens=1500, temperatura=0.3):
+def cloudflare_post(prompt, max_tokens=1500, temperatura=0.3, timeout=15):
     """Chama Cloudflare Workers AI (gratuito, 500 RPM). Retorna texto ou lança exceção."""
     cf_account = os.environ.get('CF_ACCOUNT_ID', '')
     cf_token   = os.environ.get('CF_API_TOKEN', '')
@@ -71,18 +71,20 @@ def cloudflare_post(prompt, max_tokens=1500, temperatura=0.3):
         headers={"Authorization": f"Bearer {cf_token}", "Content-Type": "application/json"},
         json={"messages": [{"role": "user", "content": prompt}],
               "max_tokens": max_tokens, "temperature": temperatura},
-        timeout=15
+        timeout=timeout
     )
     r.raise_for_status()
     return r.json()['result']['response']
 
 
 def ia_chain(prompt, max_tokens=1500, temperatura=0.3, contexto=""):
-    """Cadeia tripla: Groq → Cloudflare AI → Gemini. Máx 15s por tentativa.
+    """Cadeia tripla: Groq → Cloudflare AI → Gemini.
     Retorna (texto, fonte) ou lança Exception se todos falharem."""
     erros = []
 
-    # Log diagnóstico (só na primeira chamada ou em erro)
+    # Timeout maior para contextos que geram respostas longas
+    cf_timeout = 45 if contexto in ('banner', 'comparar_documentos') else 15
+
     groq_ok = bool(os.environ.get('GROQ_API_KEY', ''))
     cf_ok   = bool(os.environ.get('CF_ACCOUNT_ID', '') and os.environ.get('CF_API_TOKEN', ''))
     gem_ok  = bool(os.environ.get('GEMINI_API_KEY', ''))
@@ -105,7 +107,8 @@ def ia_chain(prompt, max_tokens=1500, temperatura=0.3, contexto=""):
     cf_token   = os.environ.get('CF_API_TOKEN', '')
     if cf_account and cf_token:
         try:
-            texto = cloudflare_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
+            texto = cloudflare_post(prompt, max_tokens=max_tokens,
+                                    temperatura=temperatura, timeout=cf_timeout)
             if texto and texto.strip():
                 logger.info(f"ia_chain [{contexto}]: Cloudflare OK")
                 return texto, 'cloudflare'
@@ -4413,7 +4416,6 @@ def gerar_banner_proposicao():
         regime       = request.form.get('regime', '').strip()
         comissoes    = request.form.get('comissoes', 'Plenário').strip()
         orientacao   = request.form.get('orientacao', 'SIM').strip().upper()
-        nota_tecnica = request.form.get('nota_tecnica', '').strip()
         resumo_extra = request.form.get('resumo_extra', '').strip()
 
         imagem_b64  = None
@@ -4425,53 +4427,39 @@ def gerar_banner_proposicao():
                 imagem_b64  = _b64.b64encode(img_bytes).decode('utf-8')
                 imagem_mime = img_file.content_type or 'image/jpeg'
 
-        # Fonte principal: nota técnica preenchida pelo assessor
-        # Fallback: ementa (se nota vazia)
-        fonte_conteudo = nota_tecnica if nota_tecnica else ementa
-        instrucao_fonte = (
-            "A nota técnica abaixo foi elaborada pelo assessor parlamentar e é a ÚNICA fonte "
-            "de conteúdo que você deve usar. NÃO invente, NÃO complemente com conhecimento "
-            "externo, NÃO use a ementa como substituto. Extraia exclusivamente o que está "
-            "escrito na nota técnica. Se algum campo não puder ser preenchido com base na nota, "
-            "deixe uma frase curta e genérica — nunca fabrique informação."
-            if nota_tecnica else
-            "Use a ementa abaixo como base. Seja fiel ao que está escrito."
-        )
-
         prompt = (
             "Você é especialista em comunicação legislativa brasileira da Câmara dos Deputados.\n"
-            f"{instrucao_fonte}\n\n"
-            "METADADOS (use apenas para preencher os campos de identificação):\n"
+            "Analise os dados desta proposição e retorne um JSON estruturado para um banner infográfico parlamentar.\n\n"
+            "DADOS:\n"
             f"Proposição: {proposicao}\n"
+            f"Ementa: {ementa}\n"
             f"Autor: {autor}\n"
             f"Relator: {relator or 'A definir'}\n"
             f"Regime: {regime or 'Ordinário'}\n"
             f"Comissões: {comissoes}\n"
-            f"Orientação da Minoria: {orientacao}\n\n"
-            f"{'NOTA TÉCNICA DO ASSESSOR' if nota_tecnica else 'EMENTA'}:\n"
-            f"{fonte_conteudo}\n\n"
-            + (f"COMENTÁRIOS ADICIONAIS DO USUÁRIO:\n{resumo_extra}\n\n" if resumo_extra else "")
-            + "RETORNE APENAS JSON VÁLIDO (sem markdown, sem ```json, sem explicações):\n"
+            f"Orientação da Minoria: {orientacao}\n"
+            f"Contexto adicional: {resumo_extra or 'Nenhum'}\n\n"
+            "RETORNE APENAS JSON VÁLIDO (sem markdown, sem ```json, sem explicações):\n"
             "{\n"
             '  "titulo": "sigla e número exatos da proposição (ex: PDL 570/2026)",\n'
             '  "subtitulo": "nome popular do projeto em até 3 linhas curtas",\n'
             '  "descricao_curta": "uma frase direta sobre o que o projeto faz",\n'
-            '  "ementa_resumida": "2 a 3 frases claras sem juridiquês, extraídas da nota",\n'
+            '  "ementa_resumida": "2 a 3 frases claras sem juridiquês",\n'
             '  "o_que_preve": [\n'
-            '    "Ponto positivo 1 extraído da nota — máx 12 palavras",\n'
+            '    "Benefício ou mudança concreta 1 — máx 12 palavras",\n'
             '    "Item 2", "Item 3", "Item 4", "Item 5", "Item 6", "Item 7", "Item 8"\n'
             '  ],\n'
             '  "criticas": [\n'
-            '    {"titulo": "Ponto negativo/risco da nota (máx 5 palavras)", "texto": "Explicação extraída da nota"},\n'
+            '    {"titulo": "Título curto (máx 5 palavras)", "texto": "Explicação em 2 frases objetivas"},\n'
             '    {"titulo": "Título 2", "texto": "Explicação 2"},\n'
             '    {"titulo": "Título 3", "texto": "Explicação 3"},\n'
             '    {"titulo": "Título 4", "texto": "Explicação 4"},\n'
             '    {"titulo": "Título 5", "texto": "Explicação 5"}\n'
             '  ],\n'
-            '  "justificativa_oficial": "Argumentos a favor mencionados na nota. 3 a 5 frases.",\n'
-            '  "argumento_chave": "Posição da Minoria extraída da nota, para 30s de plenário. 3 frases.",\n'
+            '  "justificativa_oficial": "O que o governo/autor argumenta a favor. 3 a 5 frases.",\n'
+            '  "argumento_chave": "Argumento da Minoria para 30 segundos de plenário. 3 frases assertivas.",\n'
             '  "na_pratica": [\n'
-            '    "Efeito prático 1 extraído da nota",\n'
+            '    "Efeito prático 1 para o cidadão",\n'
             '    "Efeito prático 2", "Efeito prático 3", "Efeito prático 4", "Efeito prático 5"\n'
             '  ],\n'
             f'  "orientacao": "{orientacao}",\n'
@@ -4483,7 +4471,7 @@ def gerar_banner_proposicao():
         )
 
         # Usa ia_chain (Groq → Cloudflare → Gemini) — mesma cadeia das outras rotas
-        raw, fonte = ia_chain(prompt, max_tokens=2000, temperatura=0.3, contexto='banner')
+        raw, fonte = ia_chain(prompt, max_tokens=1400, temperatura=0.3, contexto='banner')
         logger.info(f'Banner gerado via {fonte}')
 
         # Limpa marcadores de código que o modelo às vezes insere
@@ -4548,17 +4536,17 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
     def _e(txt):
         return str(txt or '').strip().replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;')
 
-    # Logos: fundo branco compartilhado, sem gap entre eles, mesmo tamanho
-    logo_style = "width:80px;height:80px;object-fit:contain;display:block;"
+    # Logos: mix-blend-mode:multiply remove fundo branco; mesmo tamanho 52x52px
+    logo_style = "width:52px;height:52px;object-fit:contain;mix-blend-mode:multiply;filter:brightness(1.05);"
     if logo_min_src:
         logo_min = f'<img src="{logo_min_src}" style="{logo_style}" alt="Minoria">'
     else:
-        logo_min = '<svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><rect width="80" height="80" fill="white"/><path d="M12 64V30L40 14L68 30V64H12Z" fill="none" stroke="#1a6b3a" stroke-width="3"/></svg>'
+        logo_min = '<svg width="52" height="52" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg"><rect width="52" height="52" rx="4" fill="#0d2137"/><path d="M8 42V20L26 9L44 20V42H8Z" fill="none" stroke="#2ecc71" stroke-width="2"/><line x1="26" y1="20" x2="26" y2="29" stroke="#2ecc71" stroke-width="3"/></svg>'
 
     if logo_opo_src:
         logo_opo = f'<img src="{logo_opo_src}" style="{logo_style}" alt="Oposição">'
     else:
-        logo_opo = '<svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><rect width="80" height="80" fill="white"/><text x="40" y="44" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold" fill="#1a3a5c">OPOSIÇÃO</text></svg>'
+        logo_opo = '<svg width="52" height="52" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg"><rect width="52" height="52" rx="4" fill="#0d2137"/><text x="26" y="28" text-anchor="middle" font-family="Arial" font-size="8" font-weight="bold" fill="white">OPOSIÇÃO</text></svg>'
 
     hoje = _date.today().strftime('%d/%m/%Y')
 
@@ -4588,102 +4576,98 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
         for x in d.get('na_pratica',[])[:5]
     )
 
-    # CSS — A4 exato: 794px × 1123px. Tudo Arial. Layout flex para ocupar folha inteira.
+    # CSS — A4 = 210mm × 297mm ≈ 794px × 1123px a 96dpi
     css = (
-        "*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}"
-        "body{background:#888;display:flex;flex-direction:column;align-items:center;padding:20px 0 60px}"
-        # Barra toolbar (não imprime)
+        "*{box-sizing:border-box;margin:0;padding:0}"
+        "body{font-family:Arial,sans-serif;background:#ccc;"
+        "display:flex;flex-direction:column;align-items:center;padding:20px 0 60px}"
+        # Barra de ferramentas (não imprime)
         ".toolbar{width:794px;background:#1a3a5c;color:#fff;padding:8px 14px;"
-        "display:flex;align-items:center;gap:10px;border-radius:6px 6px 0 0;"
+        "display:flex;align-items:center;gap:10px;border-radius:6px 6px 0 0;margin-bottom:0;"
         "font-size:12px;position:sticky;top:0;z-index:100}"
-        ".toolbar span{opacity:.8;font-size:11px}"
+        ".toolbar span{opacity:.75;font-size:11px}"
         ".btn-pdf{margin-left:auto;background:#1a6b3a;color:#fff;border:none;"
-        "padding:7px 20px;border-radius:4px;font-size:12px;font-weight:700;cursor:pointer}"
-        ".btn-pdf:hover{background:#145228}"
-        # Folha A4 — altura FIXA 1123px, display flex coluna para distribuir seções
-        ".banner{width:794px;height:1123px;background:#fff;overflow:hidden;"
-        "box-shadow:0 4px 24px rgba(0,0,0,.3);display:flex;flex-direction:column}"
-        # Header — flex:0 (tamanho fixo proporcional)
-        ".hdr{flex:0 0 auto;padding:18px 18px 14px;position:relative;min-height:160px;"
+        "padding:6px 18px;border-radius:4px;font-size:12px;font-weight:700;"
+        "cursor:pointer;letter-spacing:.3px}"
+        ".btn-pdf:hover{background:#155a30}"
+        # Banner A4
+        ".banner{width:794px;min-height:1123px;background:#fff;overflow:hidden;"
+        "box-shadow:0 4px 24px rgba(0,0,0,.25);position:relative}"
+        # Header
+        ".hdr{padding:22px 20px 18px;position:relative;min-height:175px;"
         "display:flex;flex-direction:column;justify-content:flex-end}"
-        # Logos: fundo branco único em caixa sem gap
-        ".hl{position:absolute;top:10px;right:10px;"
-        "display:flex;flex-direction:row;align-items:center;gap:0;"
-        "background:#fff;border-radius:6px;overflow:hidden;"
-        "box-shadow:0 2px 8px rgba(0,0,0,.25);padding:4px 6px}"
-        ".ht{font-size:38px;font-weight:900;color:#fff;line-height:1;letter-spacing:-1px;"
-        "text-shadow:0 2px 8px rgba(0,0,0,.6);max-width:65%;word-break:break-word}"
-        ".hs{font-size:16px;font-weight:700;color:#2ecc71;line-height:1.2;margin-top:3px;max-width:65%}"
-        ".hd{font-size:11.5px;color:rgba(255,255,255,.85);margin-top:5px;max-width:63%;line-height:1.38}"
+        ".hl{position:absolute;top:12px;right:12px;display:flex;"
+        "flex-direction:row;align-items:center;gap:8px}"
+        ".ht{font-size:40px;font-weight:900;color:#fff;line-height:1;"
+        "letter-spacing:-1px;text-shadow:0 2px 8px rgba(0,0,0,.55);"
+        "max-width:66%;word-break:break-word}"
+        ".hs{font-size:17px;font-weight:700;color:#2ecc71;line-height:1.2;"
+        "margin-top:4px;max-width:66%}"
+        ".hd{font-size:12px;color:rgba(255,255,255,.83);margin-top:6px;"
+        "max-width:64%;line-height:1.4}"
         # Meta bar
-        ".mb{flex:0 0 auto;display:flex;border-bottom:2px solid #e8e8e8}"
-        ".mi{flex:1;display:flex;align-items:center;gap:5px;padding:7px 10px;"
+        ".mb{display:flex;border-bottom:2px solid #e8e8e8}"
+        ".mi{flex:1;display:flex;align-items:center;gap:6px;padding:9px 11px;"
         "border-right:1px solid #e0e0e0}"
         ".mi:last-child{border-right:none}"
-        ".mic{font-size:15px;flex-shrink:0}"
-        ".ml{font-size:8px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.4px}"
-        ".mv{font-size:10px;color:#333;font-weight:600}"
+        ".mic{font-size:16px;flex-shrink:0}"
+        ".ml{font-size:8.5px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.4px}"
+        ".mv{font-size:10.5px;color:#333;font-weight:600}"
         # Ementa
-        ".eb{flex:0 0 auto;padding:8px 14px;background:#fafafa;"
-        "border-bottom:1px solid #e8e8e8;font-size:10.5px;color:#333;line-height:1.55}"
-        # Grid principal — flex:1 divide espaço restante igualmente com grid inferior
-        ".g2{flex:1;display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #ddd;min-height:0}"
-        ".cl{border-right:1px solid #ddd;display:flex;flex-direction:column}"
-        ".g2>div{display:flex;flex-direction:column}"
-        ".bh{flex:0 0 auto;display:flex;align-items:center;gap:5px;padding:6px 10px;"
-        "font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;"
+        ".eb{padding:10px 15px;background:#fafafa;border-bottom:1px solid #e8e8e8;"
+        "font-size:11.5px;color:#333;line-height:1.6}"
+        # Grid 2 colunas
+        ".g2{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #ddd}"
+        ".cl{border-right:1px solid #ddd}"
+        ".bh{display:flex;align-items:center;gap:6px;padding:8px 11px;font-size:10px;"
+        "font-weight:800;text-transform:uppercase;letter-spacing:.5px;"
         "border-bottom:1px solid rgba(0,0,0,.08)}"
         ".bh.vd{background:#1a6b3a;color:#fff}"
         ".bh.vm{background:#c0392b;color:#fff}"
         ".bh.es{background:#1a3a5c;color:#fff}"
         ".bh.pt{background:#1c2533;color:#fff}"
-        ".pl{flex:1;padding:6px 9px;overflow:hidden}"
-        ".il{flex:1;padding:6px 9px;overflow:hidden}"
-        ".pi{display:flex;align-items:flex-start;gap:5px;padding:3px 0;"
-        "font-size:9.5px;color:#2d2d2d;line-height:1.35;"
+        ".pl{padding:7px 10px}"
+        ".pi{display:flex;align-items:flex-start;gap:6px;padding:3.5px 0;"
+        "font-size:10px;color:#2d2d2d;line-height:1.38;"
         "border-bottom:1px solid #f2f2f2}"
         ".pi:last-child{border-bottom:none}"
-        ".ck{background:#1a6b3a;color:#fff;border-radius:2px;width:12px;height:12px;"
-        "min-width:12px;display:inline-flex;align-items:center;justify-content:center;"
-        "font-size:7px;font-weight:bold;margin-top:1px;flex-shrink:0}"
-        ".ci{display:flex;align-items:flex-start;gap:6px;padding:4px 0;"
+        ".ck{background:#1a6b3a;color:#fff;border-radius:2px;width:13px;height:13px;"
+        "min-width:13px;display:inline-flex;align-items:center;justify-content:center;"
+        "font-size:7.5px;font-weight:bold;margin-top:1px;flex-shrink:0}"
+        ".il{padding:7px 10px}"
+        ".ci{display:flex;align-items:flex-start;gap:7px;padding:5px 0;"
         "border-bottom:1px solid #f2f2f2}"
         ".ci:last-child{border-bottom:none}"
-        ".cico{background:#c0392b;color:#fff;border-radius:50%;width:20px;height:20px;"
-        "min-width:20px;display:flex;align-items:center;justify-content:center;"
-        "font-size:10px;margin-top:1px;flex-shrink:0}"
-        ".cb{font-size:9.5px;color:#2d2d2d;line-height:1.38}"
-        ".cb strong{display:block;font-size:10px;color:#1a1a1a;margin-bottom:1px}"
-        # Grid inferior — flex:1 igual ao principal
-        ".g2b{flex:1;display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #ddd;min-height:0}"
-        ".g2b .cl{border-right:1px solid #ddd;display:flex;flex-direction:column}"
-        ".g2b>div{display:flex;flex-direction:column}"
-        ".jt{flex:1;padding:7px 10px;font-size:9.5px;color:#333;line-height:1.5;overflow:hidden}"
-        + f".ob{{flex:0 0 auto;margin:8px 10px 6px;background:{ori_cor};color:#fff;border-radius:5px;"
-          f"padding:7px 10px;text-align:center;font-size:16px;font-weight:900;letter-spacing:.5px}}"
-        + ".ah{flex:0 0 auto;background:#1c2533;color:#ccc;font-size:7px;font-weight:700;"
-          "font-style:italic;text-transform:uppercase;letter-spacing:.8px;"
-          "padding:4px 10px;text-align:center}"
-        ".at{flex:1;padding:7px 10px;font-size:9.5px;color:#333;line-height:1.42;"
-        "display:flex;gap:5px;align-items:flex-start;overflow:hidden;"
-        "font-weight:700;font-style:italic}"
-        ".ai{font-size:14px;margin-top:1px;flex-shrink:0}"
+        ".cico{background:#c0392b;color:#fff;border-radius:50%;width:22px;height:22px;"
+        "min-width:22px;display:flex;align-items:center;justify-content:center;"
+        "font-size:11px;margin-top:1px;flex-shrink:0}"
+        ".cb{font-size:10px;color:#2d2d2d;line-height:1.4}"
+        ".cb strong{display:block;font-size:10.5px;color:#1a1a1a;margin-bottom:1px}"
+        # Grid inferior
+        ".g2b{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #ddd}"
+        ".g2b .cl{border-right:1px solid #ddd}"
+        ".jt{padding:8px 11px;font-size:10.5px;color:#333;line-height:1.55}"
+        + f".ob{{margin:9px 11px 7px;background:{ori_cor};color:#fff;border-radius:5px;"
+          f"padding:8px 11px;text-align:center;font-size:17px;font-weight:900;letter-spacing:.5px}}"
+        + ".ah{background:#1c2533;color:#aaa;font-size:7.5px;font-weight:700;"
+          "text-transform:uppercase;letter-spacing:1px;padding:4px 11px;text-align:center}"
+        ".at{padding:8px 11px;font-size:10px;color:#333;line-height:1.45;"
+        "display:flex;gap:6px;align-items:flex-start}"
+        ".ai{font-size:16px;margin-top:1px;flex-shrink:0}"
         # Na prática
-        ".pb{flex:0 0 auto;border-top:1px solid #ddd}"
-        ".pb .pl{flex:none;padding:5px 9px}"
-        ".pb .pi{padding:2.5px 0;font-size:9px}"
+        ".pb{border-top:1px solid #ddd}"
         # Rodapé
-        ".rod{flex:0 0 auto;background:#f5f5f5;border-top:1px solid #ddd;"
-        "padding:5px 14px;text-align:right;font-size:8px;color:#999}"
+        ".rod{background:#f5f5f5;border-top:1px solid #ddd;padding:6px 15px;"
+        "text-align:right;font-size:8.5px;color:#999}"
         # Edição inline
-        ".ed{outline:none;border-radius:2px;min-width:2px}"
-        ".ed:focus{background:rgba(26,107,58,.08);outline:1px dashed #1a6b3a}"
+        ".ed{outline:none;border-radius:2px;min-width:4px;display:inline}"
+        ".ed:focus{background:rgba(26,107,58,.07);outline:1px dashed #1a6b3a}"
         ".ed:hover:not(:focus){background:rgba(0,0,0,.03)}"
-        # Print — A4 exato, sem margens
+        # Print
         "@media print{"
-        ".toolbar{display:none!important}"
-        "body{background:#fff!important;padding:0!important}"
-        ".banner{box-shadow:none;width:794px!important;height:1123px!important}"
+        ".toolbar{display:none}"
+        "body{background:#fff;padding:0}"
+        ".banner{box-shadow:none;min-height:auto}"
         "-webkit-print-color-adjust:exact;print-color-adjust:exact"
         "}"
         "@page{size:A4 portrait;margin:0}"
@@ -4699,7 +4683,7 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
 </head>
 <body>
 
-<div class="toolbar">
+<div class="toolbar no-print">
   <span>✏️ Clique em qualquer texto para editar</span>
   <button class="btn-pdf" onclick="window.print()">🖨️ Gerar PDF</button>
 </div>
@@ -4765,7 +4749,7 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
     <div>
       <div class="bh pt"><span>🎯</span> ORIENTAÇÃO DA MINORIA</div>
       <div class="ob" contenteditable="true">{ori_icone} {orientacao}</div>
-      <div class="ah">ARGUMENTO-CHAVE — 30 SEGUNDOS DE PLENÁRIO</div>
+      <div class="ah">ARGUMENTO-CHAVE (30 SEGUNDOS DE PLENÁRIO)</div>
       <div class="at">
         <span class="ai">📣</span>
         <span contenteditable="true" class="ed">{_e(d.get("argumento_chave",""))}</span>
