@@ -453,7 +453,7 @@
                   </div>
                 </div>
 
-                <div class="mb-2">
+                <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
                   <button class="btn btn-outline-primary btn-gerar-analise" type="button"
                     data-ordem="{{ item.ordem }}"
                     data-projeto="{{ item.projeto }}"
@@ -464,6 +464,16 @@
                     onclick="gerarAnalise('{{ item.ordem }}', this)">
                     <img src="/static/logo_gemini.svg" alt="Gemini" style="width:16px;height:16px;vertical-align:middle;" class="me-2">
                     Gerar Análise
+                  </button>
+                  <button class="btn btn-outline-secondary btn-gerar-banner" type="button"
+                    data-ordem="{{ item.ordem }}"
+                    data-proposicao="{{ item.projeto | replace('"','') | replace("'",'') }}"
+                    data-ementa="{{ item.ementa | replace('"','') | replace("'",'') }}"
+                    data-autor="{{ item.autor | replace('"','') | replace("'",'') }}"
+                    data-relator="{{ item.relator | replace('"','') | replace("'",'') }}"
+                    data-id-principal="{{ item.id_principal }}"
+                    onclick="abrirModalBanner(this)">
+                    <i class="fas fa-image me-2"></i>Gerar Banner
                   </button>
                 </div>
                 <small class="text-muted">A análise será inserida automaticamente no campo de Resumo/Nota Técnica.</small>
@@ -3571,5 +3581,203 @@ async function exportarOrientacoesPDF() {
   };
   window._iconograficaCarregada = true;
 })();</script>
+
+<!-- ═══════════════════════════════════════════════════════
+     MODAL GERAR BANNER
+     ═══════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalGerarBanner" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#1a3a5c,#0d2137);">
+        <h5 class="modal-title text-white">
+          <i class="fas fa-image me-2"></i>Gerar Banner &mdash; <span id="banner-modal-titulo"></span>
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <div class="row mb-3">
+          <div class="col-md-4">
+            <label class="form-label fw-bold small">Orientação da Minoria</label>
+            <select class="form-select form-select-sm" id="banner-orientacao">
+              <option value="SIM">SIM</option>
+              <option value="NÃO">NÃO</option>
+              <option value="NEGOCIAÇÃO">NEGOCIAÇÃO</option>
+              <option value="LIBERADO">LIBERADO</option>
+              <option value="OBSTRUÇÃO">OBSTRUÇÃO</option>
+              <option value="ABSTENÇÃO">ABSTENÇÃO</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-bold small">Regime</label>
+            <input type="text" class="form-control form-control-sm" id="banner-regime" placeholder="Ex: Urgência">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-bold small">Comissões</label>
+            <input type="text" class="form-control form-control-sm" id="banner-comissoes" value="Plenário">
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold small">
+            <i class="fas fa-image me-1"></i>Imagem de fundo do cabeçalho (opcional)
+          </label>
+          <input type="file" class="form-control form-control-sm" id="banner-imagem"
+            accept="image/jpeg,image/png,image/webp">
+          <div class="form-text">Será usada como fundo do cabeçalho, como no modelo de banner.</div>
+        </div>
+
+        <div id="banner-img-preview" class="mb-3" style="display:none;">
+          <img id="banner-img-preview-src"
+            style="max-height:110px;border-radius:6px;border:1px solid #ddd;display:block;">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold small">Contexto adicional para a IA (opcional)</label>
+          <textarea class="form-control form-control-sm" id="banner-resumo-extra" rows="2"
+            placeholder="Ex: projeto aprovado em comissão com substitutivo, impacto fiscal estimado..."></textarea>
+        </div>
+
+        <div id="banner-resultado" style="display:none;">
+          <hr>
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <label class="fw-bold small mb-0">
+              <i class="fas fa-check-circle text-success me-1"></i>Banner gerado com sucesso
+            </label>
+            <button class="btn btn-success btn-sm" id="btn-banner-download">
+              <i class="fas fa-download me-1"></i>Baixar Banner (.html)
+            </button>
+          </div>
+          <div id="banner-iframe-wrapper"
+            style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#e8e8e8;position:relative;">
+            <iframe id="banner-iframe"
+              style="width:800px;height:900px;border:none;transform-origin:top left;display:block;"
+              sandbox="allow-same-origin allow-scripts"></iframe>
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-banner-gerar"
+          onclick="gerarBannerIA()">
+          <img src="/static/logo_gemini.svg" alt="Gemini"
+            style="width:15px;height:15px;vertical-align:middle;" class="me-1">
+          Gerar Banner com Gemini
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── BANNER: estado global ─────────────────────────────────────────────────
+let _bannerItemData = {};
+let _bannerHtmlAtual = '';
+
+function abrirModalBanner(btn) {
+  _bannerItemData = {
+    proposicao:  btn.dataset.proposicao  || '',
+    ementa:      btn.dataset.ementa      || '',
+    autor:       btn.dataset.autor       || '',
+    relator:     btn.dataset.relator     || '',
+    idPrincipal: btn.dataset.idPrincipal || '',
+    ordem:       btn.dataset.ordem       || '',
+  };
+
+  document.getElementById('banner-modal-titulo').textContent = _bannerItemData.proposicao;
+  document.getElementById('banner-regime').value             = '';
+  document.getElementById('banner-comissoes').value          = 'Plenário';
+  document.getElementById('banner-resumo-extra').value       = '';
+  document.getElementById('banner-imagem').value             = '';
+  document.getElementById('banner-img-preview').style.display = 'none';
+  document.getElementById('banner-resultado').style.display  = 'none';
+  _bannerHtmlAtual = '';
+
+  // Sincroniza orientação com o select da pauta se já estiver preenchido
+  const oriEl = document.querySelector('.orientacao[data-ordem="' + _bannerItemData.ordem + '"]');
+  if (oriEl && oriEl.value) {
+    document.getElementById('banner-orientacao').value = oriEl.value;
+  }
+
+  new bootstrap.Modal(document.getElementById('modalGerarBanner')).show();
+}
+
+// Preview da imagem no modal
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('banner-imagem')?.addEventListener('change', function () {
+    const file = this.files[0];
+    const prev = document.getElementById('banner-img-preview');
+    const img  = document.getElementById('banner-img-preview-src');
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = ev => { img.src = ev.target.result; prev.style.display = 'block'; };
+      reader.readAsDataURL(file);
+    } else {
+      prev.style.display = 'none';
+    }
+  });
+});
+
+async function gerarBannerIA() {
+  const btn = document.getElementById('btn-banner-gerar');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando com Gemini...';
+  document.getElementById('banner-resultado').style.display = 'none';
+
+  try {
+    const formData = new FormData();
+    formData.append('proposicao',   _bannerItemData.proposicao);
+    formData.append('ementa',       _bannerItemData.ementa);
+    formData.append('autor',        _bannerItemData.autor);
+    formData.append('relator',      _bannerItemData.relator);
+    formData.append('regime',       document.getElementById('banner-regime').value);
+    formData.append('comissoes',    document.getElementById('banner-comissoes').value);
+    formData.append('orientacao',   document.getElementById('banner-orientacao').value);
+    formData.append('resumo_extra', document.getElementById('banner-resumo-extra').value);
+
+    const imgFile = document.getElementById('banner-imagem').files[0];
+    if (imgFile) formData.append('imagem', imgFile);
+
+    const r = await fetch('/gerar_banner_proposicao', { method: 'POST', body: formData });
+    const j = await r.json();
+
+    if (!j.success) {
+      alert('Erro ao gerar banner:\n' + (j.error || 'Falha desconhecida'));
+      return;
+    }
+
+    _bannerHtmlAtual = j.html;
+
+    // Escala o iframe para caber no modal
+    const wrapper = document.getElementById('banner-iframe-wrapper');
+    const iframe  = document.getElementById('banner-iframe');
+    const modalW  = wrapper.offsetWidth || 700;
+    const scale   = Math.min(1, (modalW - 4) / 800);
+    iframe.style.transform = 'scale(' + scale + ')';
+    wrapper.style.height   = Math.round(900 * scale) + 'px';
+
+    iframe.srcdoc = j.html;
+    document.getElementById('banner-resultado').style.display = 'block';
+
+    // Botão download
+    document.getElementById('btn-banner-download').onclick = () => {
+      const nome = (_bannerItemData.proposicao || 'banner')
+        .replace(/[^a-zA-Z0-9]/g, '_').toLowerCase() + '.html';
+      const blob = new Blob([_bannerHtmlAtual], { type: 'text/html;charset=utf-8' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = nome; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    };
+
+  } catch (err) {
+    alert('Erro de conexão: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<img src="/static/logo_gemini.svg" alt="Gemini" style="width:15px;height:15px;vertical-align:middle;" class="me-1"> Gerar Banner com Gemini';
+  }
+}
+</script>
 </body>
 </html>
