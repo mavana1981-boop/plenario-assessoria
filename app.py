@@ -4478,7 +4478,23 @@ def gerar_banner_proposicao():
         raw = raw.strip()
 
         dados = json.loads(raw)
-        html_banner = _montar_html_banner(dados, imagem_b64, imagem_mime)
+
+        # Lê logos reais do disco como base64
+        import base64 as _b64
+        def _logo_b64(filename, mime='image/png'):
+            try:
+                path = os.path.join(app.static_folder, filename)
+                with open(path, 'rb') as f:
+                    return f"data:{mime};base64,{_b64.b64encode(f.read()).decode()}"
+            except Exception:
+                return None
+
+        logo_min_src = _logo_b64('logo_minoria.png')
+        logo_opo_src = _logo_b64('logo_oposicao.png')
+
+        html_banner = _montar_html_banner(dados, imagem_b64, imagem_mime,
+                                          logo_min_src=logo_min_src,
+                                          logo_opo_src=logo_opo_src)
         return jsonify({'success': True, 'html': html_banner})
 
     except json.JSONDecodeError as e:
@@ -4489,7 +4505,8 @@ def gerar_banner_proposicao():
         return jsonify({'success': False, 'error': str(e)})
 
 
-def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg'):
+def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
+                        logo_min_src=None, logo_opo_src=None):
     """Gera HTML completo do banner no modelo PDL 570/2026."""
     from datetime import date as _date
 
@@ -4538,23 +4555,26 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg'):
         for x in d.get('na_pratica', [])[:5]
     )
 
-    logo_min = (
-        '<svg width="34" height="34" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg">'
-        '<rect width="34" height="34" rx="4" fill="#0d2137"/>'
-        '<path d="M5 28V13L17 6L29 13V28H5Z" fill="none" stroke="#2ecc71" stroke-width="1.5"/>'
-        '<rect x="12" y="19" width="10" height="9" fill="#2ecc71" opacity=".2"/>'
-        '<line x1="17" y1="13" x2="17" y2="19" stroke="#2ecc71" stroke-width="2"/></svg>'
-    )
-    logo_opo = (
-        '<svg width="88" height="34" viewBox="0 0 88 34" xmlns="http://www.w3.org/2000/svg">'
-        '<rect width="88" height="34" rx="4" fill="#0d2137"/>'
-        '<text x="44" y="12" text-anchor="middle" font-family="Arial" font-size="6" '
-        'font-weight="bold" fill="#2ecc71">LIDERANÇA DA</text>'
-        '<text x="44" y="22" text-anchor="middle" font-family="Arial" font-size="7" '
-        'font-weight="bold" fill="white">OPOSIÇÃO</text>'
-        '<text x="44" y="30" text-anchor="middle" font-family="Arial" font-size="5" '
-        'fill="#aaa">NA CÂMARA DOS DEPUTADOS</text></svg>'
-    )
+    # Logos: usa imagem real (base64) se disponível, senão SVG fallback
+    if logo_min_src:
+        logo_min = f'<img src="{logo_min_src}" style="height:44px;object-fit:contain;" alt="Minoria">'
+    else:
+        logo_min = (
+            '<svg width="34" height="34" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg">'
+            '<rect width="34" height="34" rx="4" fill="#0d2137"/>'
+            '<path d="M5 28V13L17 6L29 13V28H5Z" fill="none" stroke="#2ecc71" stroke-width="1.5"/>'
+            '<line x1="17" y1="13" x2="17" y2="19" stroke="#2ecc71" stroke-width="2"/></svg>'
+        )
+
+    if logo_opo_src:
+        logo_opo = f'<img src="{logo_opo_src}" style="height:44px;object-fit:contain;" alt="Oposição">'
+    else:
+        logo_opo = (
+            '<svg width="88" height="34" viewBox="0 0 88 34" xmlns="http://www.w3.org/2000/svg">'
+            '<rect width="88" height="34" rx="4" fill="#0d2137"/>'
+            '<text x="44" y="22" text-anchor="middle" font-family="Arial" font-size="7" '
+            'font-weight="bold" fill="white">OPOSIÇÃO</text></svg>'
+        )
 
     hoje = _date.today().strftime('%d/%m/%Y')
 
@@ -4641,8 +4661,7 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg'):
         '<div class="banner">'
         f'<div class="hdr" style="{header_bg}">'
         '<div class="hl">'
-        f'<div class="lb">{logo_min}'
-        '<div class="lt"><span>MINORIA</span>NA CÂMARA</div></div>'
+        f'<div class="lb">{logo_min}</div>'
         f'<div class="lb">{logo_opo}</div>'
         '</div>'
         f'<div class="ht">{_e(d.get("titulo", ""))}</div>'
