@@ -3634,8 +3634,12 @@ async function exportarOrientacoesPDF() {
 
         <div class="mb-3">
           <label class="form-label fw-bold small">Contexto adicional para a IA (opcional)</label>
+          <div id="banner-aviso-nota" class="alert alert-warning py-2 px-3 mb-2" style="font-size:0.8rem;display:none;">
+            <i class="fas fa-exclamation-triangle me-1"></i>
+            <strong>Nota técnica vazia.</strong> Abra o item e preencha a nota antes de gerar o banner — a IA usa exclusivamente esse texto.
+          </div>
           <textarea class="form-control form-control-sm" id="banner-resumo-extra" rows="2"
-            placeholder="Ex: projeto aprovado em comissão com substitutivo, impacto fiscal estimado..."></textarea>
+            placeholder="Comentários adicionais para orientar a IA..."></textarea>
         </div>
 
         <div id="banner-resultado" style="display:none;">
@@ -3676,13 +3680,19 @@ let _bannerItemData = {};
 let _bannerHtmlAtual = '';
 
 function abrirModalBanner(btn) {
+  const ordem = btn.dataset.ordem || '';
+  // Pega nota técnica do Quill (texto puro, sem HTML)
+  const quill = quillInstances[ordem];
+  const notaTecnica = quill ? quill.getText().trim() : '';
+
   _bannerItemData = {
-    proposicao:  btn.dataset.proposicao  || '',
-    ementa:      btn.dataset.ementa      || '',
-    autor:       btn.dataset.autor       || '',
-    relator:     btn.dataset.relator     || '',
-    idPrincipal: btn.dataset.idPrincipal || '',
-    ordem:       btn.dataset.ordem       || '',
+    proposicao:   btn.dataset.proposicao  || '',
+    ementa:       btn.dataset.ementa      || '',
+    autor:        btn.dataset.autor       || '',
+    relator:      btn.dataset.relator     || '',
+    idPrincipal:  btn.dataset.idPrincipal || '',
+    ordem:        ordem,
+    notaTecnica:  notaTecnica,
   };
 
   document.getElementById('banner-modal-titulo').textContent = _bannerItemData.proposicao;
@@ -3699,6 +3709,10 @@ function abrirModalBanner(btn) {
   if (oriEl && oriEl.value) {
     document.getElementById('banner-orientacao').value = oriEl.value;
   }
+
+  // Avisa se não há nota técnica
+  const aviso = document.getElementById('banner-aviso-nota');
+  if (aviso) aviso.style.display = notaTecnica ? 'none' : 'block';
 
   new bootstrap.Modal(document.getElementById('modalGerarBanner')).show();
 }
@@ -3727,14 +3741,15 @@ async function gerarBannerIA() {
 
   try {
     const formData = new FormData();
-    formData.append('proposicao',   _bannerItemData.proposicao);
-    formData.append('ementa',       _bannerItemData.ementa);
-    formData.append('autor',        _bannerItemData.autor);
-    formData.append('relator',      _bannerItemData.relator);
-    formData.append('regime',       document.getElementById('banner-regime').value);
-    formData.append('comissoes',    document.getElementById('banner-comissoes').value);
-    formData.append('orientacao',   document.getElementById('banner-orientacao').value);
-    formData.append('resumo_extra', document.getElementById('banner-resumo-extra').value);
+    formData.append('proposicao',    _bannerItemData.proposicao);
+    formData.append('ementa',        _bannerItemData.ementa);
+    formData.append('autor',         _bannerItemData.autor);
+    formData.append('relator',       _bannerItemData.relator);
+    formData.append('regime',        document.getElementById('banner-regime').value);
+    formData.append('comissoes',     document.getElementById('banner-comissoes').value);
+    formData.append('orientacao',    document.getElementById('banner-orientacao').value);
+    formData.append('nota_tecnica',  _bannerItemData.notaTecnica || '');
+    formData.append('resumo_extra',  document.getElementById('banner-resumo-extra').value);
 
     const imgFile = document.getElementById('banner-imagem').files[0];
     if (imgFile) formData.append('imagem', imgFile);
