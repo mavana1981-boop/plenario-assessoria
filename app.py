@@ -4548,17 +4548,17 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
     def _e(txt):
         return str(txt or '').strip().replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;')
 
-    # Logos: mix-blend-mode:multiply remove fundo branco; 80x80px bem visíveis
-    logo_style = "width:80px;height:80px;object-fit:contain;mix-blend-mode:multiply;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.4)) brightness(1.05);"
+    # Logos: fundo branco compartilhado, sem gap entre eles, mesmo tamanho
+    logo_style = "width:80px;height:80px;object-fit:contain;display:block;"
     if logo_min_src:
         logo_min = f'<img src="{logo_min_src}" style="{logo_style}" alt="Minoria">'
     else:
-        logo_min = '<svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><rect width="80" height="80" rx="6" fill="#0d2137"/><path d="M12 64V30L40 14L68 30V64H12Z" fill="none" stroke="#2ecc71" stroke-width="3"/><line x1="40" y1="30" x2="40" y2="44" stroke="#2ecc71" stroke-width="4"/></svg>'
+        logo_min = '<svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><rect width="80" height="80" fill="white"/><path d="M12 64V30L40 14L68 30V64H12Z" fill="none" stroke="#1a6b3a" stroke-width="3"/></svg>'
 
     if logo_opo_src:
         logo_opo = f'<img src="{logo_opo_src}" style="{logo_style}" alt="Oposição">'
     else:
-        logo_opo = '<svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><rect width="80" height="80" rx="6" fill="#0d2137"/><text x="40" y="44" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold" fill="white">OPOSIÇÃO</text></svg>'
+        logo_opo = '<svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><rect width="80" height="80" fill="white"/><text x="40" y="44" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold" fill="#1a3a5c">OPOSIÇÃO</text></svg>'
 
     hoje = _date.today().strftime('%d/%m/%Y')
 
@@ -4588,98 +4588,102 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
         for x in d.get('na_pratica',[])[:5]
     )
 
-    # CSS — A4 = 210mm × 297mm ≈ 794px × 1123px a 96dpi
+    # CSS — A4 exato: 794px × 1123px. Tudo Arial. Layout flex para ocupar folha inteira.
     css = (
-        "*{box-sizing:border-box;margin:0;padding:0}"
-        "body{font-family:Arial,sans-serif;background:#ccc;"
-        "display:flex;flex-direction:column;align-items:center;padding:20px 0 60px}"
-        # Barra de ferramentas (não imprime)
+        "*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}"
+        "body{background:#888;display:flex;flex-direction:column;align-items:center;padding:20px 0 60px}"
+        # Barra toolbar (não imprime)
         ".toolbar{width:794px;background:#1a3a5c;color:#fff;padding:8px 14px;"
-        "display:flex;align-items:center;gap:10px;border-radius:6px 6px 0 0;margin-bottom:0;"
+        "display:flex;align-items:center;gap:10px;border-radius:6px 6px 0 0;"
         "font-size:12px;position:sticky;top:0;z-index:100}"
-        ".toolbar span{opacity:.75;font-size:11px}"
+        ".toolbar span{opacity:.8;font-size:11px}"
         ".btn-pdf{margin-left:auto;background:#1a6b3a;color:#fff;border:none;"
-        "padding:6px 18px;border-radius:4px;font-size:12px;font-weight:700;"
-        "cursor:pointer;letter-spacing:.3px}"
-        ".btn-pdf:hover{background:#155a30}"
-        # Banner A4
-        ".banner{width:794px;min-height:1123px;background:#fff;overflow:hidden;"
-        "box-shadow:0 4px 24px rgba(0,0,0,.25);position:relative}"
-        # Header
-        ".hdr{padding:22px 20px 18px;position:relative;min-height:175px;"
+        "padding:7px 20px;border-radius:4px;font-size:12px;font-weight:700;cursor:pointer}"
+        ".btn-pdf:hover{background:#145228}"
+        # Folha A4 — altura FIXA 1123px, display flex coluna para distribuir seções
+        ".banner{width:794px;height:1123px;background:#fff;overflow:hidden;"
+        "box-shadow:0 4px 24px rgba(0,0,0,.3);display:flex;flex-direction:column}"
+        # Header — flex:0 (tamanho fixo proporcional)
+        ".hdr{flex:0 0 auto;padding:18px 18px 14px;position:relative;min-height:160px;"
         "display:flex;flex-direction:column;justify-content:flex-end}"
-        ".hl{position:absolute;top:12px;right:12px;display:flex;"
-        "flex-direction:row;align-items:center;gap:8px}"
-        ".ht{font-size:40px;font-weight:900;color:#fff;line-height:1;"
-        "letter-spacing:-1px;text-shadow:0 2px 8px rgba(0,0,0,.55);"
-        "max-width:66%;word-break:break-word}"
-        ".hs{font-size:17px;font-weight:700;color:#2ecc71;line-height:1.2;"
-        "margin-top:4px;max-width:66%}"
-        ".hd{font-size:12px;color:rgba(255,255,255,.83);margin-top:6px;"
-        "max-width:64%;line-height:1.4}"
+        # Logos: fundo branco único em caixa sem gap
+        ".hl{position:absolute;top:10px;right:10px;"
+        "display:flex;flex-direction:row;align-items:center;gap:0;"
+        "background:#fff;border-radius:6px;overflow:hidden;"
+        "box-shadow:0 2px 8px rgba(0,0,0,.25);padding:4px 6px}"
+        ".ht{font-size:38px;font-weight:900;color:#fff;line-height:1;letter-spacing:-1px;"
+        "text-shadow:0 2px 8px rgba(0,0,0,.6);max-width:65%;word-break:break-word}"
+        ".hs{font-size:16px;font-weight:700;color:#2ecc71;line-height:1.2;margin-top:3px;max-width:65%}"
+        ".hd{font-size:11.5px;color:rgba(255,255,255,.85);margin-top:5px;max-width:63%;line-height:1.38}"
         # Meta bar
-        ".mb{display:flex;border-bottom:2px solid #e8e8e8}"
-        ".mi{flex:1;display:flex;align-items:center;gap:6px;padding:9px 11px;"
+        ".mb{flex:0 0 auto;display:flex;border-bottom:2px solid #e8e8e8}"
+        ".mi{flex:1;display:flex;align-items:center;gap:5px;padding:7px 10px;"
         "border-right:1px solid #e0e0e0}"
         ".mi:last-child{border-right:none}"
-        ".mic{font-size:16px;flex-shrink:0}"
-        ".ml{font-size:8.5px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.4px}"
-        ".mv{font-size:10.5px;color:#333;font-weight:600}"
+        ".mic{font-size:15px;flex-shrink:0}"
+        ".ml{font-size:8px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.4px}"
+        ".mv{font-size:10px;color:#333;font-weight:600}"
         # Ementa
-        ".eb{padding:10px 15px;background:#fafafa;border-bottom:1px solid #e8e8e8;"
-        "font-size:11.5px;color:#333;line-height:1.6}"
-        # Grid 2 colunas
-        ".g2{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #ddd}"
-        ".cl{border-right:1px solid #ddd}"
-        ".bh{display:flex;align-items:center;gap:6px;padding:8px 11px;font-size:10px;"
-        "font-weight:800;text-transform:uppercase;letter-spacing:.5px;"
+        ".eb{flex:0 0 auto;padding:8px 14px;background:#fafafa;"
+        "border-bottom:1px solid #e8e8e8;font-size:10.5px;color:#333;line-height:1.55}"
+        # Grid principal — flex:1 divide espaço restante igualmente com grid inferior
+        ".g2{flex:1;display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #ddd;min-height:0}"
+        ".cl{border-right:1px solid #ddd;display:flex;flex-direction:column}"
+        ".g2>div{display:flex;flex-direction:column}"
+        ".bh{flex:0 0 auto;display:flex;align-items:center;gap:5px;padding:6px 10px;"
+        "font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;"
         "border-bottom:1px solid rgba(0,0,0,.08)}"
         ".bh.vd{background:#1a6b3a;color:#fff}"
         ".bh.vm{background:#c0392b;color:#fff}"
         ".bh.es{background:#1a3a5c;color:#fff}"
         ".bh.pt{background:#1c2533;color:#fff}"
-        ".pl{padding:7px 10px}"
-        ".pi{display:flex;align-items:flex-start;gap:6px;padding:3.5px 0;"
-        "font-size:10px;color:#2d2d2d;line-height:1.38;"
+        ".pl{flex:1;padding:6px 9px;overflow:hidden}"
+        ".il{flex:1;padding:6px 9px;overflow:hidden}"
+        ".pi{display:flex;align-items:flex-start;gap:5px;padding:3px 0;"
+        "font-size:9.5px;color:#2d2d2d;line-height:1.35;"
         "border-bottom:1px solid #f2f2f2}"
         ".pi:last-child{border-bottom:none}"
-        ".ck{background:#1a6b3a;color:#fff;border-radius:2px;width:13px;height:13px;"
-        "min-width:13px;display:inline-flex;align-items:center;justify-content:center;"
-        "font-size:7.5px;font-weight:bold;margin-top:1px;flex-shrink:0}"
-        ".il{padding:7px 10px}"
-        ".ci{display:flex;align-items:flex-start;gap:7px;padding:5px 0;"
+        ".ck{background:#1a6b3a;color:#fff;border-radius:2px;width:12px;height:12px;"
+        "min-width:12px;display:inline-flex;align-items:center;justify-content:center;"
+        "font-size:7px;font-weight:bold;margin-top:1px;flex-shrink:0}"
+        ".ci{display:flex;align-items:flex-start;gap:6px;padding:4px 0;"
         "border-bottom:1px solid #f2f2f2}"
         ".ci:last-child{border-bottom:none}"
-        ".cico{background:#c0392b;color:#fff;border-radius:50%;width:22px;height:22px;"
-        "min-width:22px;display:flex;align-items:center;justify-content:center;"
-        "font-size:11px;margin-top:1px;flex-shrink:0}"
-        ".cb{font-size:10px;color:#2d2d2d;line-height:1.4}"
-        ".cb strong{display:block;font-size:10.5px;color:#1a1a1a;margin-bottom:1px}"
-        # Grid inferior
-        ".g2b{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #ddd}"
-        ".g2b .cl{border-right:1px solid #ddd}"
-        ".jt{padding:8px 11px;font-size:10.5px;color:#333;line-height:1.55}"
-        + f".ob{{margin:9px 11px 7px;background:{ori_cor};color:#fff;border-radius:5px;"
-          f"padding:8px 11px;text-align:center;font-size:17px;font-weight:900;letter-spacing:.5px}}"
-        + ".ah{background:#1c2533;color:#aaa;font-size:7.5px;font-weight:700;"
-          "text-transform:uppercase;letter-spacing:1px;padding:4px 11px;text-align:center}"
-        ".at{padding:8px 11px;font-size:10px;color:#333;line-height:1.45;"
-        "display:flex;gap:6px;align-items:flex-start}"
-        ".ai{font-size:16px;margin-top:1px;flex-shrink:0}"
+        ".cico{background:#c0392b;color:#fff;border-radius:50%;width:20px;height:20px;"
+        "min-width:20px;display:flex;align-items:center;justify-content:center;"
+        "font-size:10px;margin-top:1px;flex-shrink:0}"
+        ".cb{font-size:9.5px;color:#2d2d2d;line-height:1.38}"
+        ".cb strong{display:block;font-size:10px;color:#1a1a1a;margin-bottom:1px}"
+        # Grid inferior — flex:1 igual ao principal
+        ".g2b{flex:1;display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #ddd;min-height:0}"
+        ".g2b .cl{border-right:1px solid #ddd;display:flex;flex-direction:column}"
+        ".g2b>div{display:flex;flex-direction:column}"
+        ".jt{flex:1;padding:7px 10px;font-size:9.5px;color:#333;line-height:1.5;overflow:hidden}"
+        + f".ob{{flex:0 0 auto;margin:8px 10px 6px;background:{ori_cor};color:#fff;border-radius:5px;"
+          f"padding:7px 10px;text-align:center;font-size:16px;font-weight:900;letter-spacing:.5px}}"
+        + ".ah{flex:0 0 auto;background:#1c2533;color:#ccc;font-size:7px;font-weight:700;"
+          "font-style:italic;text-transform:uppercase;letter-spacing:.8px;"
+          "padding:4px 10px;text-align:center}"
+        ".at{flex:1;padding:7px 10px;font-size:9.5px;color:#333;line-height:1.42;"
+        "display:flex;gap:5px;align-items:flex-start;overflow:hidden;"
+        "font-weight:700;font-style:italic}"
+        ".ai{font-size:14px;margin-top:1px;flex-shrink:0}"
         # Na prática
-        ".pb{border-top:1px solid #ddd}"
+        ".pb{flex:0 0 auto;border-top:1px solid #ddd}"
+        ".pb .pl{flex:none;padding:5px 9px}"
+        ".pb .pi{padding:2.5px 0;font-size:9px}"
         # Rodapé
-        ".rod{background:#f5f5f5;border-top:1px solid #ddd;padding:6px 15px;"
-        "text-align:right;font-size:8.5px;color:#999}"
+        ".rod{flex:0 0 auto;background:#f5f5f5;border-top:1px solid #ddd;"
+        "padding:5px 14px;text-align:right;font-size:8px;color:#999}"
         # Edição inline
-        ".ed{outline:none;border-radius:2px;min-width:4px;display:inline}"
-        ".ed:focus{background:rgba(26,107,58,.07);outline:1px dashed #1a6b3a}"
+        ".ed{outline:none;border-radius:2px;min-width:2px}"
+        ".ed:focus{background:rgba(26,107,58,.08);outline:1px dashed #1a6b3a}"
         ".ed:hover:not(:focus){background:rgba(0,0,0,.03)}"
-        # Print
+        # Print — A4 exato, sem margens
         "@media print{"
-        ".toolbar{display:none}"
-        "body{background:#fff;padding:0}"
-        ".banner{box-shadow:none;min-height:auto}"
+        ".toolbar{display:none!important}"
+        "body{background:#fff!important;padding:0!important}"
+        ".banner{box-shadow:none;width:794px!important;height:1123px!important}"
         "-webkit-print-color-adjust:exact;print-color-adjust:exact"
         "}"
         "@page{size:A4 portrait;margin:0}"
@@ -4695,7 +4699,7 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
 </head>
 <body>
 
-<div class="toolbar no-print">
+<div class="toolbar">
   <span>✏️ Clique em qualquer texto para editar</span>
   <button class="btn-pdf" onclick="window.print()">🖨️ Gerar PDF</button>
 </div>
@@ -4761,7 +4765,7 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
     <div>
       <div class="bh pt"><span>🎯</span> ORIENTAÇÃO DA MINORIA</div>
       <div class="ob" contenteditable="true">{ori_icone} {orientacao}</div>
-      <div class="ah">ARGUMENTO-CHAVE (30 SEGUNDOS DE PLENÁRIO)</div>
+      <div class="ah">ARGUMENTO-CHAVE — 30 SEGUNDOS DE PLENÁRIO</div>
       <div class="at">
         <span class="ai">📣</span>
         <span contenteditable="true" class="ed">{_e(d.get("argumento_chave",""))}</span>
