@@ -4467,30 +4467,9 @@ def gerar_banner_proposicao():
             "}"
         )
 
-        gemini_key = os.environ.get('GEMINI_API_KEY', '')
-        if not gemini_key:
-            return jsonify({'success': False, 'error': 'GEMINI_API_KEY não configurada'})
-
-        if imagem_b64:
-            # Com imagem: monta multipart via REST usando o mesmo modelo do projeto
-            parts = [
-                {'text': prompt},
-                {'inline_data': {'mime_type': imagem_mime, 'data': imagem_b64}}
-            ]
-            url_g = (
-                f'https://generativelanguage.googleapis.com/v1beta/models/'
-                f'{GEMINI_MODEL}:generateContent?key={gemini_key}'
-            )
-            resp_g = requests.post(url_g,
-                headers={'Content-Type': 'application/json'},
-                json={'contents': [{'parts': parts}],
-                      'generationConfig': {'maxOutputTokens': 2000, 'temperature': 0.3}},
-                timeout=30)
-            resp_g.raise_for_status()
-            raw = resp_g.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-        else:
-            # Sem imagem: reutiliza gemini_post que já funciona no projeto
-            raw = gemini_post(gemini_key, prompt, max_tokens=2000, temperatura=0.3)
+        # Usa ia_chain (Groq → Cloudflare → Gemini) — mesma cadeia das outras rotas
+        raw, fonte = ia_chain(prompt, max_tokens=2000, temperatura=0.3, contexto='banner')
+        logger.info(f'Banner gerado via {fonte}')
 
         # Limpa marcadores de código que o modelo às vezes insere
         raw = re.sub(r'^```json\s*', '', raw, flags=re.MULTILINE)
