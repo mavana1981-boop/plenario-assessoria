@@ -3644,8 +3644,8 @@ async function exportarOrientacoesPDF() {
             <label class="fw-bold small mb-0">
               <i class="fas fa-check-circle text-success me-1"></i>Banner gerado com sucesso
             </label>
-            <button class="btn btn-success btn-sm" id="btn-banner-download">
-              <i class="fas fa-download me-1"></i>Baixar Banner (.html)
+            <button class="btn btn-success btn-sm" id="btn-banner-pdf" onclick="imprimirBanner()">
+              <i class="fas fa-file-pdf me-1"></i>Gerar PDF
             </button>
           </div>
           <div id="banner-iframe-wrapper"
@@ -3760,23 +3760,28 @@ async function gerarBannerIA() {
     iframe.srcdoc = j.html;
     document.getElementById('banner-resultado').style.display = 'block';
 
-    // Botão download
-    document.getElementById('btn-banner-download').onclick = () => {
-      const nome = (_bannerItemData.proposicao || 'banner')
-        .replace(/[^a-zA-Z0-9]/g, '_').toLowerCase() + '.html';
-      const blob = new Blob([_bannerHtmlAtual], { type: 'text/html;charset=utf-8' });
-      const url  = URL.createObjectURL(blob);
-      const a    = document.createElement('a');
-      a.href = url; a.download = nome; a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-    };
-
   } catch (err) {
     alert('Erro de conexão: ' + err.message);
   } finally {
     btn.disabled = false;
     btn.innerHTML = '<img src="/static/logo_gemini.svg" alt="Gemini" style="width:15px;height:15px;vertical-align:middle;" class="me-1"> Gerar Banner com Gemini';
   }
+}
+
+function imprimirBanner() {
+  if (!_bannerHtmlAtual) return;
+  const blob = new Blob([_bannerHtmlAtual], { type: 'text/html;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const popup = window.open(url, '_blank', 'width=900,height=750,scrollbars=yes,resizable=yes');
+  if (!popup) {
+    alert('Permita pop-ups para gerar o PDF.');
+    URL.revokeObjectURL(url);
+    return;
+  }
+  popup.addEventListener('load', () => {
+    setTimeout(() => { popup.print(); }, 400);
+  });
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 </script>
 </body>
