@@ -4413,6 +4413,7 @@ def gerar_banner_proposicao():
         regime       = request.form.get('regime', '').strip()
         comissoes    = request.form.get('comissoes', 'Plenário').strip()
         orientacao   = request.form.get('orientacao', 'SIM').strip().upper()
+        nota_tecnica = request.form.get('nota_tecnica', '').strip()
         resumo_extra = request.form.get('resumo_extra', '').strip()
 
         imagem_b64  = None
@@ -4424,39 +4425,53 @@ def gerar_banner_proposicao():
                 imagem_b64  = _b64.b64encode(img_bytes).decode('utf-8')
                 imagem_mime = img_file.content_type or 'image/jpeg'
 
+        # Fonte principal: nota técnica preenchida pelo assessor
+        # Fallback: ementa (se nota vazia)
+        fonte_conteudo = nota_tecnica if nota_tecnica else ementa
+        instrucao_fonte = (
+            "A nota técnica abaixo foi elaborada pelo assessor parlamentar e é a ÚNICA fonte "
+            "de conteúdo que você deve usar. NÃO invente, NÃO complemente com conhecimento "
+            "externo, NÃO use a ementa como substituto. Extraia exclusivamente o que está "
+            "escrito na nota técnica. Se algum campo não puder ser preenchido com base na nota, "
+            "deixe uma frase curta e genérica — nunca fabrique informação."
+            if nota_tecnica else
+            "Use a ementa abaixo como base. Seja fiel ao que está escrito."
+        )
+
         prompt = (
             "Você é especialista em comunicação legislativa brasileira da Câmara dos Deputados.\n"
-            "Analise os dados desta proposição e retorne um JSON estruturado para um banner infográfico parlamentar.\n\n"
-            "DADOS:\n"
+            f"{instrucao_fonte}\n\n"
+            "METADADOS (use apenas para preencher os campos de identificação):\n"
             f"Proposição: {proposicao}\n"
-            f"Ementa: {ementa}\n"
             f"Autor: {autor}\n"
             f"Relator: {relator or 'A definir'}\n"
             f"Regime: {regime or 'Ordinário'}\n"
             f"Comissões: {comissoes}\n"
-            f"Orientação da Minoria: {orientacao}\n"
-            f"Contexto adicional: {resumo_extra or 'Nenhum'}\n\n"
-            "RETORNE APENAS JSON VÁLIDO (sem markdown, sem ```json, sem explicações):\n"
+            f"Orientação da Minoria: {orientacao}\n\n"
+            f"{'NOTA TÉCNICA DO ASSESSOR' if nota_tecnica else 'EMENTA'}:\n"
+            f"{fonte_conteudo}\n\n"
+            + (f"COMENTÁRIOS ADICIONAIS DO USUÁRIO:\n{resumo_extra}\n\n" if resumo_extra else "")
+            + "RETORNE APENAS JSON VÁLIDO (sem markdown, sem ```json, sem explicações):\n"
             "{\n"
             '  "titulo": "sigla e número exatos da proposição (ex: PDL 570/2026)",\n'
             '  "subtitulo": "nome popular do projeto em até 3 linhas curtas",\n'
             '  "descricao_curta": "uma frase direta sobre o que o projeto faz",\n'
-            '  "ementa_resumida": "2 a 3 frases claras sem juridiquês",\n'
+            '  "ementa_resumida": "2 a 3 frases claras sem juridiquês, extraídas da nota",\n'
             '  "o_que_preve": [\n'
-            '    "Benefício ou mudança concreta 1 — máx 12 palavras",\n'
+            '    "Ponto positivo 1 extraído da nota — máx 12 palavras",\n'
             '    "Item 2", "Item 3", "Item 4", "Item 5", "Item 6", "Item 7", "Item 8"\n'
             '  ],\n'
             '  "criticas": [\n'
-            '    {"titulo": "Título curto (máx 5 palavras)", "texto": "Explicação em 2 frases objetivas"},\n'
+            '    {"titulo": "Ponto negativo/risco da nota (máx 5 palavras)", "texto": "Explicação extraída da nota"},\n'
             '    {"titulo": "Título 2", "texto": "Explicação 2"},\n'
             '    {"titulo": "Título 3", "texto": "Explicação 3"},\n'
             '    {"titulo": "Título 4", "texto": "Explicação 4"},\n'
             '    {"titulo": "Título 5", "texto": "Explicação 5"}\n'
             '  ],\n'
-            '  "justificativa_oficial": "O que o governo/autor argumenta a favor. 3 a 5 frases.",\n'
-            '  "argumento_chave": "Argumento da Minoria para 30 segundos de plenário. 3 frases assertivas.",\n'
+            '  "justificativa_oficial": "Argumentos a favor mencionados na nota. 3 a 5 frases.",\n'
+            '  "argumento_chave": "Posição da Minoria extraída da nota, para 30s de plenário. 3 frases.",\n'
             '  "na_pratica": [\n'
-            '    "Efeito prático 1 para o cidadão",\n'
+            '    "Efeito prático 1 extraído da nota",\n'
             '    "Efeito prático 2", "Efeito prático 3", "Efeito prático 4", "Efeito prático 5"\n'
             '  ],\n'
             f'  "orientacao": "{orientacao}",\n'
@@ -4533,17 +4548,17 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
     def _e(txt):
         return str(txt or '').strip().replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;')
 
-    # Logos: mix-blend-mode:multiply remove fundo branco; mesmo tamanho 52x52px
-    logo_style = "width:52px;height:52px;object-fit:contain;mix-blend-mode:multiply;filter:brightness(1.05);"
+    # Logos: mix-blend-mode:multiply remove fundo branco; 80x80px bem visíveis
+    logo_style = "width:80px;height:80px;object-fit:contain;mix-blend-mode:multiply;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.4)) brightness(1.05);"
     if logo_min_src:
         logo_min = f'<img src="{logo_min_src}" style="{logo_style}" alt="Minoria">'
     else:
-        logo_min = '<svg width="52" height="52" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg"><rect width="52" height="52" rx="4" fill="#0d2137"/><path d="M8 42V20L26 9L44 20V42H8Z" fill="none" stroke="#2ecc71" stroke-width="2"/><line x1="26" y1="20" x2="26" y2="29" stroke="#2ecc71" stroke-width="3"/></svg>'
+        logo_min = '<svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><rect width="80" height="80" rx="6" fill="#0d2137"/><path d="M12 64V30L40 14L68 30V64H12Z" fill="none" stroke="#2ecc71" stroke-width="3"/><line x1="40" y1="30" x2="40" y2="44" stroke="#2ecc71" stroke-width="4"/></svg>'
 
     if logo_opo_src:
         logo_opo = f'<img src="{logo_opo_src}" style="{logo_style}" alt="Oposição">'
     else:
-        logo_opo = '<svg width="52" height="52" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg"><rect width="52" height="52" rx="4" fill="#0d2137"/><text x="26" y="28" text-anchor="middle" font-family="Arial" font-size="8" font-weight="bold" fill="white">OPOSIÇÃO</text></svg>'
+        logo_opo = '<svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><rect width="80" height="80" rx="6" fill="#0d2137"/><text x="40" y="44" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold" fill="white">OPOSIÇÃO</text></svg>'
 
     hoje = _date.today().strftime('%d/%m/%Y')
 
