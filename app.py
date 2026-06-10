@@ -4536,17 +4536,17 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
     def _e(txt):
         return str(txt or '').strip().replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;')
 
-    # Logos: mix-blend-mode:multiply remove fundo branco; mesmo tamanho 52x52px
-    logo_style = "width:52px;height:52px;object-fit:contain;mix-blend-mode:multiply;filter:brightness(1.05);"
+    # Logos: 80px, fundo branco único compartilhado, sem gap
+    logo_style = "width:80px;height:80px;object-fit:contain;display:block;"
     if logo_min_src:
         logo_min = f'<img src="{logo_min_src}" style="{logo_style}" alt="Minoria">'
     else:
-        logo_min = '<svg width="52" height="52" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg"><rect width="52" height="52" rx="4" fill="#0d2137"/><path d="M8 42V20L26 9L44 20V42H8Z" fill="none" stroke="#2ecc71" stroke-width="2"/><line x1="26" y1="20" x2="26" y2="29" stroke="#2ecc71" stroke-width="3"/></svg>'
+        logo_min = '<svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><rect width="80" height="80" fill="white"/><path d="M12 64V30L40 14L68 30V64H12Z" fill="none" stroke="#1a6b3a" stroke-width="3"/></svg>'
 
     if logo_opo_src:
         logo_opo = f'<img src="{logo_opo_src}" style="{logo_style}" alt="Oposição">'
     else:
-        logo_opo = '<svg width="52" height="52" viewBox="0 0 52 52" xmlns="http://www.w3.org/2000/svg"><rect width="52" height="52" rx="4" fill="#0d2137"/><text x="26" y="28" text-anchor="middle" font-family="Arial" font-size="8" font-weight="bold" fill="white">OPOSIÇÃO</text></svg>'
+        logo_opo = '<svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg"><rect width="80" height="80" fill="white"/><text x="40" y="44" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold" fill="#1a3a5c">OPOSIÇÃO</text></svg>'
 
     hoje = _date.today().strftime('%d/%m/%Y')
 
@@ -4576,10 +4576,10 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
         for x in d.get('na_pratica',[])[:5]
     )
 
-    # CSS — A4 = 210mm × 297mm ≈ 794px × 1123px a 96dpi
+    # CSS — A4 exato: 794px × 1123px. Tudo Arial. Layout flex.
     css = (
-        "*{box-sizing:border-box;margin:0;padding:0}"
-        "body{font-family:Arial,sans-serif;background:#ccc;"
+        "*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}"
+        "body{background:#ccc;"
         "display:flex;flex-direction:column;align-items:center;padding:20px 0 60px}"
         # Barra de ferramentas (não imprime)
         ".toolbar{width:794px;background:#1a3a5c;color:#fff;padding:8px 14px;"
@@ -4596,8 +4596,10 @@ def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg',
         # Header
         ".hdr{padding:22px 20px 18px;position:relative;min-height:175px;"
         "display:flex;flex-direction:column;justify-content:flex-end}"
-        ".hl{position:absolute;top:12px;right:12px;display:flex;"
-        "flex-direction:row;align-items:center;gap:8px}"
+        ".hl{position:absolute;top:10px;right:10px;"
+        "display:flex;flex-direction:row;align-items:center;gap:0;"
+        "background:#fff;border-radius:6px;overflow:hidden;"
+        "box-shadow:0 2px 8px rgba(0,0,0,.25);padding:4px 6px}"
         ".ht{font-size:40px;font-weight:900;color:#fff;line-height:1;"
         "letter-spacing:-1px;text-shadow:0 2px 8px rgba(0,0,0,.55);"
         "max-width:66%;word-break:break-word}"
