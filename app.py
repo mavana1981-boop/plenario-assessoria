@@ -4401,6 +4401,290 @@ Responda APENAS com a frase descritiva, sem introdução, sem aspas."""
 
     return jsonify({'complemento': ementa})
 
+@app.route('/gerar_banner_proposicao', methods=['POST'])
+@login_required
+def gerar_banner_proposicao():
+    """
+    Recebe dados de uma proposição + imagem opcional (multipart/form-data).
+    Chama o Gemini via REST (mesmo padrão do gemini_post) para gerar JSON estruturado.
+    Retorna HTML completo do banner para download/visualização.
+    """
+    import base64 as _b64
+    try:
+        proposicao   = request.form.get('proposicao', '').strip()
+        ementa       = request.form.get('ementa', '').strip()
+        autor        = request.form.get('autor', '').strip()
+        relator      = request.form.get('relator', '').strip()
+        regime       = request.form.get('regime', '').strip()
+        comissoes    = request.form.get('comissoes', 'Plenário').strip()
+        orientacao   = request.form.get('orientacao', 'SIM').strip().upper()
+        resumo_extra = request.form.get('resumo_extra', '').strip()
+
+        imagem_b64  = None
+        imagem_mime = 'image/jpeg'
+        if 'imagem' in request.files:
+            img_file = request.files['imagem']
+            if img_file and img_file.filename:
+                img_bytes   = img_file.read()
+                imagem_b64  = _b64.b64encode(img_bytes).decode('utf-8')
+                imagem_mime = img_file.content_type or 'image/jpeg'
+
+        prompt = f"""Você é especialista em comunicação legislativa brasileira da Câmara dos Deputados.
+Analise os dados desta proposição e retorne um JSON estruturado para um banner infográfico parlamentar.
+
+DADOS:
+Proposição: {proposicao}
+Ementa: {ementa}
+Autor: {autor}
+Relator: {relator or 'A definir'}
+Regime: {regime or 'Ordinário'}
+Comissões: {comissoes}
+Orientação da Minoria: {orientacao}
+Contexto adicional: {resumo_extra or 'Nenhum'}
+
+RETORNE APENAS JSON VÁLIDO (sem markdown, sem ```json, sem explicações):
+{{
+  "titulo": "sigla e número exatos da proposição (ex: PDL 570/2026)",
+  "subtitulo": "nome popular do projeto em até 3 linhas curtas",
+  "descricao_curta": "uma frase direta sobre o que o projeto faz",
+  "ementa_resumida": "2 a 3 frases claras sem juridiquês",
+  "o_que_preve": [
+    "Benefício ou mudança concreta 1 — máx 12 palavras",
+    "Item 2", "Item 3", "Item 4", "Item 5", "Item 6", "Item 7", "Item 8"
+  ],
+  "criticas": [
+    {{"titulo": "Título curto (máx 5 palavras)", "texto": "Explicação em 2 frases objetivas"}},
+    {{"titulo": "Título 2", "texto": "Explicação 2"}},
+    {{"titulo": "Título 3", "texto": "Explicação 3"}},
+    {{"titulo": "Título 4", "texto": "Explicação 4"}},
+    {{"titulo": "Título 5", "texto": "Explicação 5"}}
+  ],
+  "justificativa_oficial": "O que o governo/autor argumenta a favor. 3 a 5 frases.",
+  "argumento_chave": "Argumento da Minoria para 30 segundos de plenário. 3 frases assertivas.",
+  "na_pratica": [
+    "Efeito prático 1 para o cidadão",
+    "Efeito prático 2", "Efeito prático 3", "Efeito prático 4", "Efeito prático 5"
+  ],
+  "orientacao": "{orientacao}",
+  "autor": "{autor}",
+  "relator": "{relator or 'A definir'}",
+  "regime": "{regime or 'Ordinário'}",
+  "comissoes": "{comissoes}"
+}}"""
+
+        gemini_key = os.environ.get('GEMINI_API_KEY', '')
+        if not gemini_key:
+            return jsonify({{'success': False, 'error': 'GEMINI_API_KEY não configurada'}})
+
+        # Monta payload: texto + imagem opcional
+        parts = [{{"text": prompt}}]
+        if imagem_b64:
+            parts.append({{"inline_data": {{"mime_type": imagem_mime, "data": imagem_b64}}}})
+
+        url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={{gemini_key}}"
+        payload = {{
+            "contents": [{{"parts": parts}}],
+            "generationConfig": {{"maxOutputTokens": 2000, "temperature": 0.3}}
+        }}
+        r = requests.post(url_gemini,
+                          headers={{"Content-Type": "application/json"}},
+                          json=payload, timeout=30)
+        r.raise_for_status()
+        raw = r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+
+        # Limpa marcadores de código
+        raw = re.sub(r'^```json\s*', '', raw, flags=re.MULTILINE)
+        raw = re.sub(r'^```\s*',    '', raw, flags=re.MULTILINE)
+        raw = re.sub(r'\s*```$',   '', raw, flags=re.MULTILINE)
+        raw = raw.strip()
+
+        dados = json.loads(raw)
+        html_banner = _montar_html_banner(dados, imagem_b64, imagem_mime)
+        return jsonify({{'success': True, 'html': html_banner}})
+
+    except json.JSONDecodeError as e:
+        logger.error(f'Banner JSON error: {{e}}')
+        return jsonify({{'success': False, 'error': f'Erro ao processar resposta da IA: {{str(e)}}'}})
+    except Exception as e:
+        logger.error(f'Banner error: {{e}}')
+        return jsonify({{'success': False, 'error': str(e)}})
+
+
+
+def _montar_html_banner(d, imagem_b64=None, imagem_mime='image/jpeg'):
+    """Gera HTML completo do banner no modelo PDL 570/2026."""
+    from datetime import date as _date
+
+    orientacao = d.get('orientacao', 'SIM').upper()
+    if orientacao in ('SIM', 'NEGOCIACAO', 'NEGOCIAÇÃO'):
+        ori_cor, ori_icone = '#1a6b3a', '✅'
+    elif orientacao in ('NAO', 'NÃO', 'OBSTRUCAO', 'OBSTRUÇÃO', 'ABSTENCAO', 'ABSTENÇÃO'):
+        ori_cor, ori_icone = '#c0392b', '❌'
+    elif orientacao == 'LIBERADO':
+        ori_cor, ori_icone = '#b8860b', '🔓'
+    else:
+        ori_cor, ori_icone = '#1a6b3a', '✅'
+
+    if imagem_b64:
+        img_data  = f"data:{imagem_mime};base64,{imagem_b64}"
+        header_bg = (
+            f"background:linear-gradient(to right,"
+            f"rgba(13,33,55,0.90) 38%,rgba(13,33,55,0.30) 100%),"
+            f"url('{img_data}') center/cover no-repeat;"
+        )
+    else:
+        header_bg = "background:linear-gradient(135deg,#0d2137 0%,#1a3a5c 50%,#0d2137 100%);"
+
+    def _e(txt, maxlen=None):
+        txt = str(txt or '').strip()
+        if maxlen and len(txt) > maxlen:
+            txt = txt[:maxlen] + '…'
+        return (txt.replace('&','&amp;').replace('<','&lt;')
+                   .replace('>','&gt;').replace('"','&quot;'))
+
+    preve_html = ''.join([
+        '<div class="pi"><span class="ck">✓</span><span>' + _e(x, 130) + '</span></div>'
+        for x in d.get('o_que_preve', [])[:8]
+    ])
+
+    ic = ['💲','📉','🏛️','👥','⚠️']
+    criticas_html = ''.join([
+        '<div class="ci"><div class="cico">' + ic[i % 5] + '</div>'
+        '<div class="cb"><strong>' + _e(c.get('titulo',''), 60) + '</strong>'
+        '<span>' + _e(c.get('texto',''), 220) + '</span></div></div>'
+        for i, c in enumerate(d.get('criticas', [])[:5])
+    ])
+
+    pratica_html = ''.join([
+        '<div class="pi"><span class="ck">✓</span><span>' + _e(x, 150) + '</span></div>'
+        for x in d.get('na_pratica', [])[:5]
+    ])
+
+    logo_min = (
+        '<svg width="34" height="34" viewBox="0 0 34 34" xmlns="http://www.w3.org/2000/svg">'
+        '<rect width="34" height="34" rx="4" fill="#0d2137"/>'
+        '<path d="M5 28V13L17 6L29 13V28H5Z" fill="none" stroke="#2ecc71" stroke-width="1.5"/>'
+        '<rect x="12" y="19" width="10" height="9" fill="#2ecc71" opacity=".2"/>'
+        '<line x1="17" y1="13" x2="17" y2="19" stroke="#2ecc71" stroke-width="2"/></svg>'
+    )
+    logo_opo = (
+        '<svg width="88" height="34" viewBox="0 0 88 34" xmlns="http://www.w3.org/2000/svg">'
+        '<rect width="88" height="34" rx="4" fill="#0d2137"/>'
+        '<text x="44" y="12" text-anchor="middle" font-family="Arial" font-size="6" font-weight="bold" fill="#2ecc71">LIDERANÇA DA</text>'
+        '<text x="44" y="22" text-anchor="middle" font-family="Arial" font-size="7" font-weight="bold" fill="white">OPOSIÇÃO</text>'
+        '<text x="44" y="30" text-anchor="middle" font-family="Arial" font-size="5" fill="#aaa">NA CÂMARA DOS DEPUTADOS</text></svg>'
+    )
+
+    hoje = _date.today().strftime('%d/%m/%Y')
+
+    # CSS sem f-string (usa format) para evitar conflito com chaves CSS
+    css = (
+        "*{box-sizing:border-box;margin:0;padding:0}"
+        "body{font-family:Arial,sans-serif;background:#e0e0e0;display:flex;justify-content:center;padding:24px;min-height:100vh}"
+        ".banner{width:800px;background:#fff;border-radius:4px;overflow:hidden;box-shadow:0 4px 28px rgba(0,0,0,.2)}"
+        ".hdr{padding:26px 22px 20px;position:relative;min-height:190px;display:flex;flex-direction:column;justify-content:flex-end}"
+        ".hl{position:absolute;top:14px;right:14px;display:flex;flex-direction:column;align-items:flex-end;gap:5px}"
+        ".lb{display:flex;align-items:center;gap:5px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.22);border-radius:6px;padding:4px 8px}"
+        ".lt{font-family:Arial;font-size:10px;font-weight:bold;color:#fff;line-height:1.2;text-align:right}"
+        ".lt span{color:#2ecc71;display:block}"
+        ".ht{font-size:43px;font-weight:900;color:#fff;line-height:1;letter-spacing:-1px;text-shadow:0 2px 10px rgba(0,0,0,.5);max-width:68%;word-break:break-word}"
+        ".hs{font-size:19px;font-weight:700;color:#2ecc71;line-height:1.2;margin-top:5px;max-width:68%}"
+        ".hd{font-size:12.5px;color:rgba(255,255,255,.82);margin-top:7px;max-width:65%;line-height:1.45}"
+        ".mb{display:flex;border-bottom:2px solid #e8e8e8}"
+        ".mi{flex:1;display:flex;align-items:center;gap:7px;padding:11px 13px;border-right:1px solid #e0e0e0}"
+        ".mi:last-child{border-right:none}"
+        ".mic{font-size:18px}"
+        ".ml{font-size:9px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:.5px}"
+        ".mv{font-size:11px;color:#333;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:125px}"
+        ".eb{padding:12px 17px;background:#fafafa;border-bottom:1px solid #e8e8e8;font-size:12px;color:#333;line-height:1.65}"
+        ".g2{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #ddd}"
+        ".cl{border-right:1px solid #ddd}"
+        ".bh{display:flex;align-items:center;gap:7px;padding:9px 12px;font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid rgba(0,0,0,.08)}"
+        ".bh.vd{background:#1a6b3a;color:#fff}"
+        ".bh.vm{background:#c0392b;color:#fff}"
+        ".bh.es{background:#1a3a5c;color:#fff}"
+        ".bh.pt{background:#1c2533;color:#fff}"
+        ".pl{padding:8px 11px}"
+        ".pi{display:flex;align-items:flex-start;gap:7px;padding:4px 0;font-size:10.5px;color:#2d2d2d;line-height:1.4;border-bottom:1px solid #f2f2f2}"
+        ".pi:last-child{border-bottom:none}"
+        ".ck{background:#1a6b3a;color:#fff;border-radius:3px;width:14px;height:14px;min-width:14px;display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:bold;margin-top:1px;flex-shrink:0}"
+        ".il{padding:8px 11px}"
+        ".ci{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid #f2f2f2}"
+        ".ci:last-child{border-bottom:none}"
+        ".cico{background:#c0392b;color:#fff;border-radius:50%;width:25px;height:25px;min-width:25px;display:flex;align-items:center;justify-content:center;font-size:12px;margin-top:1px;flex-shrink:0}"
+        ".cb{font-size:10.5px;color:#2d2d2d;line-height:1.45}"
+        ".cb strong{display:block;font-size:11px;color:#1a1a1a;margin-bottom:1px}"
+        ".g2b{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #ddd}"
+        ".g2b .cl{border-right:1px solid #ddd}"
+        ".jt{padding:9px 13px;font-size:11px;color:#333;line-height:1.6}"
+        f".ob{{margin:11px 13px 8px;background:{ori_cor};color:#fff;border-radius:6px;padding:9px 13px;text-align:center;font-size:19px;font-weight:900;letter-spacing:1px}}"
+        ".ah{background:#1c2533;color:#aaa;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:5px 13px;text-align:center}"
+        ".at{padding:9px 13px;font-size:10.5px;color:#333;line-height:1.5;display:flex;gap:7px;align-items:flex-start}"
+        ".ai{font-size:18px;margin-top:1px}"
+        ".pb{border-top:1px solid #ddd}"
+        ".rod{background:#f5f5f5;border-top:1px solid #ddd;padding:7px 17px;text-align:right;font-size:9px;color:#999}"
+        ".bp{position:fixed;bottom:20px;right:20px;background:#1a6b3a;color:#fff;border:none;padding:10px 20px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.2)}"
+        "@media print{.bp{display:none}body{background:#fff;padding:0}}"
+    )
+
+    return (
+        '<!DOCTYPE html>'
+        '<html lang="pt-BR"><head><meta charset="UTF-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1.0">'
+        f'<title>Banner — {_e(d.get("titulo",""))}</title>'
+        f'<style>{css}</style></head><body>'
+        '<div class="banner">'
+        f'<div class="hdr" style="{header_bg}">'
+        f'<div class="hl">'
+        f'<div class="lb">{logo_min}<div class="lt"><span>MINORIA</span>NA CÂMARA</div></div>'
+        f'<div class="lb">{logo_opo}</div>'
+        '</div>'
+        f'<div class="ht">{_e(d.get("titulo",""))}</div>'
+        f'<div class="hs">{_e(d.get("subtitulo",""))}</div>'
+        f'<div class="hd">{_e(d.get("descricao_curta",""))}</div>'
+        '</div>'
+        '<div class="mb">'
+        f'<div class="mi"><div class="mic">👤</div><div><div class="ml">Autor</div><div class="mv" title="{_e(d.get("autor",""))}">{_e(d.get("autor","—"),30)}</div></div></div>'
+        f'<div class="mi"><div class="mic">⚖️</div><div><div class="ml">Regime</div><div class="mv">{_e(d.get("regime","—"),24)}</div></div></div>'
+        f'<div class="mi"><div class="mic">👥</div><div><div class="ml">Comissões</div><div class="mv">{_e(d.get("comissoes","—"),22)}</div></div></div>'
+        f'<div class="mi"><div class="mic">📋</div><div><div class="ml">Relator</div><div class="mv" title="{_e(d.get("relator",""))}">{_e(d.get("relator","A definir"),30)}</div></div></div>'
+        '</div>'
+        f'<div class="eb">{_e(d.get("ementa_resumida",""))}</div>'
+        '<div class="g2">'
+        '<div class="cl">'
+        '<div class="bh vd"><span>✅</span> O QUE O PROJETO PREVÊ</div>'
+        f'<div class="pl">{preve_html}</div>'
+        '</div>'
+        '<div>'
+        '<div class="bh vm"><span>❌</span> CRÍTICAS</div>'
+        f'<div class="il">{criticas_html}</div>'
+        '</div>'
+        '</div>'
+        '<div class="g2b">'
+        '<div class="cl">'
+        '<div class="bh es"><span>🛡️</span> JUSTIFICATIVA OFICIAL</div>'
+        f'<div class="jt">{_e(d.get("justificativa_oficial",""))}</div>'
+        '</div>'
+        '<div>'
+        '<div class="bh pt"><span>🎯</span> ORIENTAÇÃO DA MINORIA</div>'
+        f'<div class="ob">{ori_icone} {orientacao}</div>'
+        '<div class="ah">ARGUMENTO-CHAVE (30 SEGUNDOS DE PLENÁRIO)</div>'
+        f'<div class="at"><span class="ai">📣</span><span>{_e(d.get("argumento_chave",""))}</span></div>'
+        '</div>'
+        '</div>'
+        '<div class="pb">'
+        '<div class="bh vd"><span>🏆</span> NA PRÁTICA</div>'
+        f'<div class="pl">{pratica_html}</div>'
+        '</div>'
+        f'<div class="rod">Publicado em: {hoje} &nbsp;|&nbsp; Liderança da Minoria — Câmara dos Deputados</div>'
+        '</div>'
+        '<button class="bp" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button>'
+        '</body></html>'
+    )
+
+
+
+
 @app.route('/salvar_orientacoes', methods=['POST'])
 @login_required
 def salvar_orientacoes():
