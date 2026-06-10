@@ -4471,25 +4471,26 @@ def gerar_banner_proposicao():
         if not gemini_key:
             return jsonify({'success': False, 'error': 'GEMINI_API_KEY não configurada'})
 
-        parts = [{'text': prompt}]
         if imagem_b64:
-            parts.append({'inline_data': {'mime_type': imagem_mime, 'data': imagem_b64}})
-
-        url_gemini = (
-            'https://generativelanguage.googleapis.com/v1beta/models/'
-            f'gemini-2.0-flash:generateContent?key={gemini_key}'
-        )
-        payload = {
-            'contents': [{'parts': parts}],
-            'generationConfig': {'maxOutputTokens': 2000, 'temperature': 0.3}
-        }
-        r = requests.post(url_gemini,
-                          headers={'Content-Type': 'application/json'},
-                          json=payload, timeout=30)
-        r.raise_for_status()
-
-        resp_json = r.json()
-        raw = resp_json['candidates'][0]['content']['parts'][0]['text'].strip()
+            # Com imagem: monta multipart via REST usando o mesmo modelo do projeto
+            parts = [
+                {'text': prompt},
+                {'inline_data': {'mime_type': imagem_mime, 'data': imagem_b64}}
+            ]
+            url_g = (
+                f'https://generativelanguage.googleapis.com/v1beta/models/'
+                f'{GEMINI_MODEL}:generateContent?key={gemini_key}'
+            )
+            resp_g = requests.post(url_g,
+                headers={'Content-Type': 'application/json'},
+                json={'contents': [{'parts': parts}],
+                      'generationConfig': {'maxOutputTokens': 2000, 'temperature': 0.3}},
+                timeout=30)
+            resp_g.raise_for_status()
+            raw = resp_g.json()['candidates'][0]['content']['parts'][0]['text'].strip()
+        else:
+            # Sem imagem: reutiliza gemini_post que já funciona no projeto
+            raw = gemini_post(gemini_key, prompt, max_tokens=2000, temperatura=0.3)
 
         # Limpa marcadores de código que o modelo às vezes insere
         raw = re.sub(r'^```json\s*', '', raw, flags=re.MULTILINE)
