@@ -1378,6 +1378,246 @@ def login():
         conn.close()
     return render_template('login.html', usuarios=usuarios)
 
+@app.route('/gerar_banner_proposicao', methods=['POST'])
+@login_required
+def gerar_banner_proposicao():
+    """Gera banner HTML de proposição com IA (Gemini/Groq/Cloudflare)."""
+    import base64
+
+    proposicao   = request.form.get('proposicao', '')
+    ementa       = request.form.get('ementa', '')
+    autor        = request.form.get('autor', '')
+    relator      = request.form.get('relator', '')
+    regime       = request.form.get('regime', '')
+    comissoes    = request.form.get('comissoes', 'Plenário')
+    orientacao   = request.form.get('orientacao', '')
+    nota_tecnica = request.form.get('nota_tecnica', '')
+    resumo_extra = request.form.get('resumo_extra', '')
+
+    # Processa imagem de fundo (opcional)
+    imagem_b64 = ''
+    imagem_mime = ''
+    if 'imagem' in request.files:
+        f = request.files['imagem']
+        if f and f.filename:
+            dados = f.read()
+            ext = f.filename.rsplit('.', 1)[-1].lower()
+            mime_map = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'webp': 'image/webp'}
+            imagem_mime = mime_map.get(ext, 'image/jpeg')
+            imagem_b64 = base64.b64encode(dados).decode('utf-8')
+
+    # Cores por orientação
+    CORES_ORI = {
+        'SIM':        {'fundo': '#1A6B3A', 'texto': '#ffffff', 'icone': '✅'},
+        'NÃO':        {'fundo': '#8B0000', 'texto': '#ffffff', 'icone': '❌'},
+        'NEGOCIAÇÃO': {'fundo': '#B8860B', 'texto': '#ffffff', 'icone': '🤝'},
+        'LIBERADO':   {'fundo': '#0D2B5E', 'texto': '#ffffff', 'icone': '🔓'},
+        'OBSTRUÇÃO':  {'fundo': '#8B0000', 'texto': '#ffffff', 'icone': '🚫'},
+        'ABSTENÇÃO':  {'fundo': '#555555', 'texto': '#ffffff', 'icone': '➖'},
+    }
+    cfg_ori = CORES_ORI.get(orientacao.upper(), {'fundo': '#0D2B5E', 'texto': '#ffffff', 'icone': '📋'})
+
+    # Gera resumo com IA
+    contexto_nota = ''
+    if nota_tecnica and len(nota_tecnica.strip()) > 50:
+        contexto_nota = f"\n\nNOTA TÉCNICA:\n{nota_tecnica[:3000]}"
+    if resumo_extra:
+        contexto_nota += f"\n\nCONTEXTO ADICIONAL:\n{resumo_extra}"
+
+    prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
+Gere um resumo executivo para um banner de orientação de bancada.
+
+PROPOSIÇÃO: {proposicao}
+EMENTA: {ementa}
+AUTOR: {autor}
+RELATOR: {relator}
+REGIME: {regime or 'Ordinário'}
+COMISSÃO/LOCAL: {comissoes}
+ORIENTAÇÃO DA MINORIA: {orientacao}
+{contexto_nota}
+
+Gere APENAS um JSON válido com estes campos (sem markdown, sem ```json):
+{{
+  "titulo_curto": "(sigla e número da proposição, máx 25 chars)",
+  "subtitulo": "(tipo e ano, ex: Projeto de Lei — 2025)",
+  "resumo_executivo": "(3-4 frases diretas explicando o que é e por que importa, máx 200 palavras)",
+  "impacto": "(1 frase sobre o impacto prático, máx 60 palavras)",
+  "justificativa_orientacao": "(1-2 frases justificando a orientação da Minoria, máx 80 palavras)"
+}}"""
+
+    try:
+        texto_ia, fonte = ia_chain(prompt, max_tokens=600, temperatura=0.3, contexto="gerar_banner")
+        texto_ia = re.sub(r'```(?:json)?|```', '', texto_ia).strip()
+        dados_ia = json.loads(texto_ia)
+    except json.JSONDecodeError:
+        # Fallback: usa dados brutos
+        dados_ia = {
+            'titulo_curto':            proposicao[:25],
+            'subtitulo':               'Proposição Legislativa',
+            'resumo_executivo':        ementa[:400],
+            'impacto':                 '',
+            'justificativa_orientacao': '',
+        }
+    except Exception as e:
+        logger.error(f"gerar_banner_proposicao: IA falhou: {e}")
+        return jsonify({'success': False, 'error': f'Serviço de IA indisponível: {e}'}), 503
+
+    # Imagem de fundo do cabeçalho
+    img_style = ''
+    if imagem_b64:
+        img_style = f'background-image:url("data:{imagem_mime};base64,{imagem_b64}");background-size:cover;background-position:center;'
+
+    # Lê logos para embutir no HTML
+    def _logo_b64(filename):
+        try:
+            path = os.path.join(app.root_path, 'static', filename)
+            with open(path, 'rb') as fh:
+                return 'data:image/png;base64,' + base64.b64encode(fh.read()).decode('utf-8')
+        except Exception:
+            return ''
+
+    logo_min = _logo_b64('logo_minoria.png')
+    logo_opo = _logo_b64('logo_oposicao.png')
+
+    html = f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Banner — {proposicao}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700;900&family=Barlow+Condensed:wght@700;900&display=swap');
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ background: #f0f0f0; display: flex; justify-content: center; padding: 20px; font-family: Barlow, Arial, sans-serif; }}
+  .banner {{ width: 794px; background: #fff; box-shadow: 0 4px 24px rgba(0,0,0,.18); }}
+
+  /* CABEÇALHO */
+  .cabecalho {{
+    {img_style}
+    background-color: #0D2B5E;
+    padding: 22px 28px 18px;
+    position: relative;
+    overflow: hidden;
+  }}
+  .cabecalho::before {{
+    content: '';
+    position: absolute; inset: 0;
+    background: {'rgba(13,43,94,0.72)' if imagem_b64 else 'rgba(13,43,94,0)'};
+  }}
+  .cab-inner {{ position: relative; display: flex; align-items: center; gap: 18px; }}
+  .logos {{ display: flex; gap: 6px; align-items: center; flex-shrink: 0; }}
+  .logos img {{ height: 52px; object-fit: contain; }}
+  .cab-texto {{ flex: 1; }}
+  .cab-titulo {{ font-family: "Barlow Condensed", sans-serif; font-size: 28px; font-weight: 900; color: #fff; line-height: 1; letter-spacing: .5px; }}
+  .cab-subtitulo {{ font-size: 13px; color: rgba(255,255,255,.80); margin-top: 4px; font-weight: 600; letter-spacing: .3px; }}
+  .cab-meta {{ font-size: 11px; color: rgba(255,255,255,.65); margin-top: 6px; }}
+
+  /* BARRA ORIENTAÇÃO */
+  .barra-ori {{
+    background: {cfg_ori['fundo']};
+    color: {cfg_ori['texto']};
+    padding: 10px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }}
+  .ori-label {{ font-size: 11px; font-weight: 700; letter-spacing: 1.5px; opacity: .85; text-transform: uppercase; }}
+  .ori-valor {{ font-family: "Barlow Condensed", sans-serif; font-size: 26px; font-weight: 900; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }}
+
+  /* CONTEÚDO */
+  .conteudo {{ padding: 24px 28px; }}
+  .sec-titulo {{ font-size: 10px; font-weight: 800; letter-spacing: 2px; color: #0D2B5E; text-transform: uppercase; margin-bottom: 8px; }}
+  .resumo {{ font-size: 14px; color: #222; line-height: 1.6; margin-bottom: 18px; }}
+  .impacto-box {{
+    background: #f4f8ff;
+    border-left: 4px solid #0D2B5E;
+    padding: 10px 14px;
+    border-radius: 0 6px 6px 0;
+    margin-bottom: 18px;
+  }}
+  .impacto-txt {{ font-size: 13px; color: #1a3a6b; font-weight: 600; line-height: 1.5; }}
+  .justif-box {{
+    background: {cfg_ori['fundo']}18;
+    border: 1px solid {cfg_ori['fundo']}44;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 18px;
+  }}
+  .justif-txt {{ font-size: 13px; color: #333; line-height: 1.5; }}
+  .meta-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 6px; }}
+  .meta-item {{ background: #f8f8f8; border-radius: 6px; padding: 8px 12px; }}
+  .meta-label {{ font-size: 9px; font-weight: 700; letter-spacing: 1.5px; color: #888; text-transform: uppercase; }}
+  .meta-valor {{ font-size: 12px; color: #222; font-weight: 600; margin-top: 2px; line-height: 1.3; }}
+
+  /* RODAPÉ */
+  .rodape {{ height: 6px; background: linear-gradient(90deg, #1A6B3A, #0D2B5E); }}
+
+  /* PRINT */
+  @media print {{
+    body {{ background: #fff; padding: 0; }}
+    .banner {{ box-shadow: none; width: 100%; }}
+    .no-print {{ display: none !important; }}
+    @page {{ size: A4 portrait; margin: 1cm; }}
+  }}
+</style>
+</head>
+<body>
+<div class="banner">
+
+  <div class="cabecalho">
+    <div class="cab-inner">
+      <div class="logos">
+        {'<img src="' + logo_min + '" alt="Minoria">' if logo_min else ''}
+        {'<img src="' + logo_opo + '" alt="Oposição">' if logo_opo else ''}
+      </div>
+      <div class="cab-texto">
+        <div class="cab-titulo">{dados_ia.get('titulo_curto', proposicao)}</div>
+        <div class="cab-subtitulo">{dados_ia.get('subtitulo', '')}</div>
+        <div class="cab-meta">
+          {'Regime: ' + regime + ' &nbsp;|&nbsp; ' if regime else ''}Local: {comissoes}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="barra-ori">
+    <div>
+      <div class="ori-label">Orientação da Minoria</div>
+      <div class="ori-valor">{cfg_ori['icone']} {orientacao or '—'}</div>
+    </div>
+    <div style="font-size:32px;opacity:.3;">{cfg_ori['icone']}</div>
+  </div>
+
+  <div class="conteudo">
+    <div class="sec-titulo">Resumo Executivo</div>
+    <div class="resumo">{dados_ia.get('resumo_executivo', ementa)}</div>
+
+    {'<div class="impacto-box"><div class="sec-titulo" style="margin-bottom:4px;">Impacto</div><div class="impacto-txt">' + dados_ia.get('impacto','') + '</div></div>' if dados_ia.get('impacto') else ''}
+
+    {'<div class="justif-box"><div class="sec-titulo" style="margin-bottom:4px;">Justificativa da Orientação</div><div class="justif-txt">' + dados_ia.get('justificativa_orientacao','') + '</div></div>' if dados_ia.get('justificativa_orientacao') else ''}
+
+    <div class="meta-grid">
+      <div class="meta-item">
+        <div class="meta-label">Autor</div>
+        <div class="meta-valor">{autor[:80] or '—'}</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Relator</div>
+        <div class="meta-valor">{relator[:80] or '—'}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rodape"></div>
+</div>
+
+<div class="no-print" style="margin-top:16px;text-align:center;">
+  <button onclick="window.print()" style="background:#0D2B5E;color:#fff;border:none;padding:8px 22px;border-radius:4px;cursor:pointer;font-size:13px;">🖨️ Imprimir / Salvar PDF</button>
+</div>
+</body>
+</html>"""
+
+    return jsonify({'success': True, 'html': html, 'fonte': fonte if 'fonte' in dir() else 'ia'})
+
 @app.route('/logout')
 @login_required
 def logout():
