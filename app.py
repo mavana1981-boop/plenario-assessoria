@@ -1378,7 +1378,18 @@ def login():
         conn.close()
     return render_template('login.html', usuarios=usuarios)
 
-PLP 337/2017 * - *OPOSIÇÃO ORIENTA: LIBERA ( MUDANCA DE ORIENTAÇÃO )
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('login'))
+
+@app.route('/selecionar-data', methods=['GET', 'POST'])
+@login_required
+def selecionar_data():
+    data = request.form.get('data', now_brasilia().strftime('%Y-%m-%d'))
+    eventos = fetch_eventos_por_data(data)
+    return render_template('selecionar_data.html', data_selecionada=data, eventos=eventos, user_role=current_user.role)
 
 @app.route('/pauta/<int:evento_id>/view')
 @login_required
