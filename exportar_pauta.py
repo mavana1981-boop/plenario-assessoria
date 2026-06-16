@@ -9,7 +9,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
     BaseDocTemplate, PageTemplate, Frame,
-    Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
+    Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether, Image
 )
 from reportlab.pdfgen import canvas as pdfcanvas
 from reportlab.pdfbase.pdfmetrics import stringWidth
@@ -35,13 +35,14 @@ def _data_ptbr(dt_str):
 def _html_para_texto(html):
     """Converte HTML do Quill em texto puro, preservando quebras de linha."""
     s = str(html or "")
+    # Remove imagens antes de processar texto
+    s = re.sub(r'<img[^>]*>', '', s, flags=re.IGNORECASE)
     s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
     s = re.sub(r"</p>",      "\n", s, flags=re.IGNORECASE)
     s = re.sub(r"</li>",     "\n", s, flags=re.IGNORECASE)
     s = re.sub(r"<li[^>]*>", "• ", s, flags=re.IGNORECASE)
     s = re.sub(r"<[^>]+>",   "",   s)
     s = _html_mod.unescape(s)
-    # Remove linhas em branco consecutivas
     linhas = []
     anterior_vazia = False
     for linha in s.split("\n"):
@@ -51,6 +52,58 @@ def _html_para_texto(html):
         linhas.append(linha.strip())
         anterior_vazia = vazia
     return "\n".join(linhas).strip()
+
+
+def _html_para_elementos(html, doc_width):
+    """Converte HTML do Quill em lista de (tipo, conteudo):
+    ('texto', str) ou ('imagem', BytesIO).
+    Preserva a ordem original de texto e imagens."""
+    import base64
+
+    elementos = []
+    s = str(html or "")
+
+    # Divide o HTML em segmentos: texto ou <img ...>
+    # Usa regex para encontrar tags <img> e preservar posição
+    partes = re.split(r'(<img[^>]*>)', s, flags=re.IGNORECASE)
+
+    for parte in partes:
+        if not parte:
+            continue
+
+        # É uma imagem?
+        if re.match(r'<img', parte, re.IGNORECASE):
+            m_src = re.search(r'src=["\']([^"\']+)["\']', parte, re.IGNORECASE)
+            if m_src:
+                src = m_src.group(1)
+                # Imagem base64 (Quill salva assim)
+                m_b64 = re.match(r'data:image/(\w+);base64,(.+)', src)
+                if m_b64:
+                    try:
+                        img_bytes = base64.b64decode(m_b64.group(2))
+                        elementos.append(('imagem', BytesIO(img_bytes)))
+                    except Exception:
+                        pass
+                elif src.startswith('http'):
+                    # Imagem por URL — baixa
+                    try:
+                        r = requests.get(src, timeout=8)
+                        if r.ok:
+                            elementos.append(('imagem', BytesIO(r.content)))
+                    except Exception:
+                        pass
+        else:
+            # Bloco de texto — converte para texto puro
+            t = re.sub(r"<br\s*/?>", "\n", parte, flags=re.IGNORECASE)
+            t = re.sub(r"</p>",      "\n", t,     flags=re.IGNORECASE)
+            t = re.sub(r"</li>",     "\n", t,     flags=re.IGNORECASE)
+            t = re.sub(r"<li[^>]*>", "• ", t,     flags=re.IGNORECASE)
+            t = re.sub(r"<[^>]+>",   "",   t)
+            t = _html_mod.unescape(t).strip()
+            if t:
+                elementos.append(('texto', t))
+
+    return elementos
 
 def _get_evento(evento_id):
     try:
@@ -476,29 +529,52 @@ def exportar_pauta(evento_id):
                 story.append(Spacer(1, 5))
                 story.append(Paragraph("Nota Técnica", sBold))
 
-                texto = _html_para_texto(resumo)
+                elementos = _html_para_elementos(resumo, doc.width)
                 paras_nota = []
-                for idx_l, linha in enumerate(texto.split("\n")):
-                    linha = linha.strip()
-                    if not linha:
-                        paras_nota.append(Spacer(1, 3))
-                        continue
 
-                    emoji_sec = next((e for e in SECOES if linha.startswith(e)), None)
-
-                    if emoji_sec:
-                        paras_nota.append(Paragraph(_sax.escape(linha), sSecao[emoji_sec]))
-                    elif "Análise baseada em" in linha or "baseada em:" in linha.lower():
-                        paras_nota.append(Paragraph(
-                            f'<font color="#CC0000"><i>{_sax.escape(linha)}</i></font>',
-                            ParagraphStyle(f"sNtB_{idx_l}", parent=SS["Normal"],
-                                fontSize=9, leading=12, fontName="Helvetica-Oblique",
-                                textColor=colors.HexColor("#CC0000"))))
+                for tipo_el, conteudo_el in elementos:
+                    if tipo_el == 'imagem':
+                        try:
+                            img_reader = ImageReader(conteudo_el)
+                            iw, ih = img_reader.getSize()
+                            # Limita largura ao quadro, mantém proporção
+                            max_w = doc.width - 20  # margem do quadro
+                            if iw > max_w:
+                                ih = ih * max_w / iw
+                                iw = max_w
+                            # Limita altura máxima a 10cm
+                            max_h = 10 * cm
+                            if ih > max_h:
+                                iw = iw * max_h / ih
+                                ih = max_h
+                            paras_nota.append(Spacer(1, 4))
+                            paras_nota.append(Image(conteudo_el, width=iw, height=ih))
+                            paras_nota.append(Spacer(1, 4))
+                        except Exception as e:
+                            current_app.logger.warning(f"Erro ao inserir imagem na nota: {e}")
                     else:
-                        paras_nota.append(Paragraph(_sax.escape(linha),
-                            ParagraphStyle(f"sNtU_{idx_l}", parent=SS["Normal"],
-                                fontSize=9.5, leading=13.5, wordWrap="CJK",
-                                textColor=colors.black, fontName="Helvetica")))
+                        # Texto — processa linha por linha
+                        for idx_l, linha in enumerate(conteudo_el.split("\n")):
+                            linha = linha.strip()
+                            if not linha:
+                                paras_nota.append(Spacer(1, 3))
+                                continue
+
+                            emoji_sec = next((e for e in SECOES if linha.startswith(e)), None)
+
+                            if emoji_sec:
+                                paras_nota.append(Paragraph(_sax.escape(linha), sSecao[emoji_sec]))
+                            elif "Análise baseada em" in linha or "baseada em:" in linha.lower():
+                                paras_nota.append(Paragraph(
+                                    f'<font color="#CC0000"><i>{_sax.escape(linha)}</i></font>',
+                                    ParagraphStyle(f"sNtB_{idx_l}", parent=SS["Normal"],
+                                        fontSize=9, leading=12, fontName="Helvetica-Oblique",
+                                        textColor=colors.HexColor("#CC0000"))))
+                            else:
+                                paras_nota.append(Paragraph(_sax.escape(linha),
+                                    ParagraphStyle(f"sNtU_{idx_l}", parent=SS["Normal"],
+                                        fontSize=9.5, leading=13.5, wordWrap="CJK",
+                                        textColor=colors.black, fontName="Helvetica")))
 
                 if paras_nota:
                     rows_final = []
@@ -506,21 +582,38 @@ def exportar_pauta(evento_id):
                         if isinstance(p, Spacer):
                             rows_final.append([Paragraph("", ParagraphStyle(f"sNtSp_{id(p)}",
                                 parent=SS["Normal"], fontSize=4))])
+                        elif isinstance(p, Image):
+                            # Imagem vai direto no story, fora da tabela
+                            # (tabelas não quebram imagens entre páginas)
+                            if rows_final:
+                                tbl_temp = Table(rows_final, colWidths=[doc.width])
+                                tbl_temp.setStyle(TableStyle([
+                                    ("BACKGROUND",    (0,0),(-1,-1), colors.HexColor("#F5F5F5")),
+                                    ("BOX",           (0,0),(-1,-1), 0.5, colors.HexColor("#CCCCCC")),
+                                    ("LEFTPADDING",   (0,0),(-1,-1), 10),
+                                    ("RIGHTPADDING",  (0,0),(-1,-1), 10),
+                                    ("TOPPADDING",    (0,0),(-1,-1), 3),
+                                    ("BOTTOMPADDING", (0,0),(-1,-1), 3),
+                                ]))
+                                story.append(tbl_temp)
+                                rows_final = []
+                            story.append(p)
                         else:
                             rows_final.append([p])
 
-                    tbl_nota = Table(rows_final, colWidths=[doc.width])
-                    tbl_nota.setStyle(TableStyle([
-                        ("BACKGROUND",    (0,0),(-1,-1), colors.HexColor("#F5F5F5")),
-                        ("BOX",           (0,0),(-1,-1), 0.5, colors.HexColor("#CCCCCC")),
-                        ("LEFTPADDING",   (0,0),(-1,-1), 10),
-                        ("RIGHTPADDING",  (0,0),(-1,-1), 10),
-                        ("TOPPADDING",    (0,0),(-1,-1), 3),
-                        ("BOTTOMPADDING", (0,0),(-1,-1), 3),
-                        ("TOPPADDING",    (0,0),(-1,0),  8),
-                        ("BOTTOMPADDING", (0,-1),(-1,-1),8),
-                    ]))
-                    story.append(tbl_nota)
+                    if rows_final:
+                        tbl_nota = Table(rows_final, colWidths=[doc.width])
+                        tbl_nota.setStyle(TableStyle([
+                            ("BACKGROUND",    (0,0),(-1,-1), colors.HexColor("#F5F5F5")),
+                            ("BOX",           (0,0),(-1,-1), 0.5, colors.HexColor("#CCCCCC")),
+                            ("LEFTPADDING",   (0,0),(-1,-1), 10),
+                            ("RIGHTPADDING",  (0,0),(-1,-1), 10),
+                            ("TOPPADDING",    (0,0),(-1,-1), 3),
+                            ("BOTTOMPADDING", (0,0),(-1,-1), 3),
+                            ("TOPPADDING",    (0,0),(-1,0),  8),
+                            ("BOTTOMPADDING", (0,-1),(-1,-1),8),
+                        ]))
+                        story.append(tbl_nota)
 
             story.append(Spacer(1, 16))
 
