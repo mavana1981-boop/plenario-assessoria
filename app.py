@@ -2118,4 +2118,4 @@ def analisar_ia():
         for txt in [ementa, projeto]:
             m_pl = re.search(r'\b(PL|PEC|PLP|MPV|PDL|PLC)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', txt, re.IGNORECASE)
             if m_pl: break
-            m_pl = re
+            m_pl = re 
