@@ -1942,10 +1942,15 @@
       // Pega o último número da descrição
       const todosNumsDesc = descricao.match(/\d+/g) || [];
       const todosNumsTit  = numero.match(/\d+/g) || [];
-      // Prefere último número da descrição; fallback último do título
-      const numEmenda = todosNumsDesc.length > 0
-        ? todosNumsDesc[todosNumsDesc.length - 1]
-        : (todosNumsTit.length > 0 ? todosNumsTit[todosNumsTit.length - 1] : '');
+      // Filtra anos (>= 2000) — pega número da emenda, não o ano da proposição
+      const candidatosDesc = todosNumsDesc.filter(n => parseInt(n) < 2000 && parseInt(n) > 0);
+      const candidatosTit  = todosNumsTit.filter(n => parseInt(n) < 2000 && parseInt(n) > 0);
+      // Prefere último candidato da descrição; fallback título; fallback qualquer número
+      const numEmenda = candidatosDesc.length > 0
+        ? candidatosDesc[candidatosDesc.length - 1]
+        : candidatosTit.length > 0
+          ? candidatosTit[candidatosTit.length - 1]
+          : (todosNumsDesc.length > 0 ? todosNumsDesc[0] : '');
 
       let urlEmenda = '';
       try {
