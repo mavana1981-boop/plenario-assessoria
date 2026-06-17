@@ -12,7 +12,9 @@ from datetime import datetime, timedelta, timezone
 TZ_BRASILIA = timezone(timedelta(hours=-3))
 
 # ── Helper Gemini com retry automático ──────────────────────────────────────
-GEMINI_MODEL = "gemini-2.0-flash"  # Limites maiores que o lite
+# gemini-2.0-flash descontinuado (404). Usa gemini-1.5-flash (estável) com
+# fallback para gemini-1.5-flash-latest se o primeiro falhar.
+GEMINI_MODEL = "gemini-1.5-flash"
 
 # Dict temporário: texto bruto do PDF por chave REQSN
 _texto_pdf_por_chave = {}
@@ -74,7 +76,7 @@ def cloudflare_post(prompt, max_tokens=1500, temperatura=0.3):
         headers={"Authorization": f"Bearer {cf_token}", "Content-Type": "application/json"},
         json={"messages": [{"role": "user", "content": prompt}],
               "max_tokens": max_tokens, "temperature": temperatura},
-        timeout=15
+        timeout=25
     )
     r.raise_for_status()
     return r.json()['result']['response']
@@ -3442,10 +3444,15 @@ def analisar_destaque():
 
         # Se não veio do frontend, tenta extrair da descrição
         if not num_emenda_desc:
-            m_num_emd = re.search(r'(\d+)\s*$', descricao.strip())
-            if not m_num_emd:
-                m_num_emd = re.search(r'(?:EMD|Emenda)\s*(?:[^\d]*)(\d+)', descricao, re.IGNORECASE)
-            num_emenda_desc = m_num_emd.group(1) if m_num_emd else ''
+            # Estratégia 1: número explícito de emenda (ex: "Emenda nº 3", "EMD 42")
+            m_num_emd = re.search(r'(?:EMD|Emenda)\s*(?:n[º°.\s]*)?(\d+)(?!\s*/\s*\d{4})(?!\d)', descricao, re.IGNORECASE)
+            if m_num_emd:
+                num_emenda_desc = m_num_emd.group(1)
+            else:
+                # Estratégia 2: último número que NÃO seja um ano (< 2000)
+                todos_nums = re.findall(r'\d+', descricao)
+                candidatos = [n for n in todos_nums if int(n) < 2000 and int(n) > 0]
+                num_emenda_desc = candidatos[-1] if candidatos else (todos_nums[0] if todos_nums else '')
 
         logger.info(f"Analisando emenda nº '{num_emenda_desc}' (frontend enviou: '{num_emenda_sel}') | descrição: {descricao}")
 
@@ -4189,7 +4196,7 @@ Proposição: {resumo[:300]}"""
 
     for key, url, body_fn in [
         (gemini_key,
-         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gemini_key}",
+         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}",
          lambda: {"contents":[{"parts":[{"text":prompt_kw}]}],"generationConfig":{"maxOutputTokens":20,"temperature":0.1}}),
         (groq_key,
          "https://api.groq.com/openai/v1/chat/completions",
