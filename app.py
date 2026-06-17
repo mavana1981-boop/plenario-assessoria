@@ -4868,5 +4868,83 @@ body{{background:#e8e8e8;display:flex;flex-direction:column;align-items:center;p
 
     return jsonify({'success': True, 'html': html, 'fonte': fonte})
 
+
+
+@app.route('/exportar_banner_png', methods=['POST'])
+@login_required
+def exportar_banner_png():
+    """Converte HTML do banner em PNG via Playwright headless."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return jsonify({'error': 'Playwright não instalado no servidor.'}), 500
+
+    data = request.get_json()
+    html = data.get('html', '')
+    if not html:
+        return jsonify({'error': 'HTML não fornecido.'}), 400
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
+            page = browser.new_page(viewport={'width': 850, 'height': 1200})
+            page.set_content(html, wait_until='networkidle')
+            # Aguarda fontes do Google carregarem
+            page.wait_for_timeout(1500)
+            # Captura só o elemento .banner
+            banner = page.query_selector('.banner')
+            if banner:
+                png_bytes = banner.screenshot(type='png')
+            else:
+                png_bytes = page.screenshot(type='png', full_page=True)
+            browser.close()
+
+        resp = make_response(png_bytes)
+        resp.headers['Content-Type'] = 'image/png'
+        resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.png"'
+        return resp
+
+    except Exception as e:
+        logger.error(f'exportar_banner_png: {e}')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/exportar_banner_pdf', methods=['POST'])
+@login_required
+def exportar_banner_pdf():
+    """Converte HTML do banner em PDF via Playwright headless."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return jsonify({'error': 'Playwright não instalado no servidor.'}), 500
+
+    data = request.get_json()
+    html = data.get('html', '')
+    if not html:
+        return jsonify({'error': 'HTML não fornecido.'}), 400
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
+            page = browser.new_page(viewport={'width': 850, 'height': 1200})
+            page.set_content(html, wait_until='networkidle')
+            page.wait_for_timeout(1500)
+            pdf_bytes = page.pdf(
+                format='A4',
+                print_background=True,
+                margin={'top': '0.5cm', 'bottom': '0.5cm',
+                        'left': '0.5cm', 'right': '0.5cm'}
+            )
+            browser.close()
+
+        resp = make_response(pdf_bytes)
+        resp.headers['Content-Type'] = 'application/pdf'
+        resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.pdf"'
+        return resp
+
+    except Exception as e:
+        logger.error(f'exportar_banner_pdf: {e}')
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
