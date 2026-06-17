@@ -1308,8 +1308,56 @@ def fetch_pauta(evento_id, force_reload=False):
                         logger.warning(f"REQSN '{cod_pdf}' sem match na API — inserido com dados do PDF na posição {len(itens)}")
 
                 else:
-                    # Item do PDF não encontrado na API — ignora
-                    logger.warning(f"PDF item '{cod_pdf}' não na API — ignorado")
+                    # Item do PDF não encontrado no itens_raw.
+                    # Pode estar "Em Análise" ou "Em Votação" — API de pauta
+                    # remove esses itens da lista normal.
+                    # Busca diretamente na API de proposições por código.
+                    m_cod2 = re.match(r'^([A-Z]+)(\d+)/(\d{4})$', cod_pdf)
+                    if m_cod2:
+                        sig2, num2, ano2 = m_cod2.group(1), m_cod2.group(2), m_cod2.group(3)
+                        try:
+                            r2 = requests.get(
+                                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
+                                f"?siglaTipo={sig2}&numero={num2}&ano={ano2}&itens=1",
+                                headers={'Accept': 'application/json'}, timeout=8
+                            )
+                            dados2 = r2.json().get('dados', []) if r2.ok else []
+                            if dados2:
+                                it2  = dados2[0]
+                                id_p = str(it2.get('id', ''))
+                                if id_p and id_p not in vistos_ids:
+                                    vistos_ids.add(id_p)
+                                    key2 = f"PROP_{id_p}"
+                                    cod2_str = f"{sig2} {num2}/{ano2}"
+                                    status2  = it2.get('statusProposicao', {}) or {}
+                                    sit2 = (status2.get('descricaoSituacao', '')
+                                            or it2.get('situacao', 'N/D'))
+                                    itens.append({
+                                        'ordem':            str(len(itens) + 1),
+                                        'id_principal':     id_p,
+                                        'projeto':          extrair_ref_pl(cod2_str, it2.get('ementa','')),
+                                        'projeto_original': cod2_str,
+                                        'ementa':           it2.get('ementa', ''),
+                                        'autor':            it2.get('autores', 'N/D'),
+                                        'relator':          it2.get('relator', 'Não atribuído'),
+                                        'situacao':         sit2 or 'N/D',
+                                        'secao':            'N/D',
+                                        'resumo_materia':   notas.get(key2, {}).get('resumo_materia', ''),
+                                        'orientacao':       notas.get(key2, {}).get('orientacao', ''),
+                                        'resumo_parecer':   notas.get(key2, {}).get('resumo_parecer', ''),
+                                        'saved_by':         notas.get(key2, {}).get('saved_by', ''),
+                                        'saved_at':         notas.get(key2, {}).get('saved_at', ''),
+                                        'destaques_emendas': []
+                                    })
+                                    logger.info(f"PDF item '{cod_pdf}' recuperado via API direta (possivelmente Em Análise): sit={sit2}")
+                                else:
+                                    logger.warning(f"PDF item '{cod_pdf}' já visto — ignorado")
+                            else:
+                                logger.warning(f"PDF item '{cod_pdf}' não encontrado nem na API direta")
+                        except Exception as e2:
+                            logger.warning(f"PDF item '{cod_pdf}' erro API direta: {e2}")
+                    else:
+                        logger.warning(f"PDF item '{cod_pdf}' sem padrão reconhecível — ignorado")
 
             # Itens da API não encontrados no PDF — insere na posição correta
             # A posição é inferida pela sequência relativa na API
@@ -3377,9 +3425,12 @@ def analisar_destaque():
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     groq_key   = os.environ.get('GROQ_API_KEY', '')
 
-    # ── Destaque de emenda: busca e analisa o texto da emenda diretamente ──
+    # ── Classifica tipo de destaque ────────────────────────────────────────
     descricao_upper = descricao.upper()
-    eh_emenda = any(p in descricao_upper for p in ['EMENDA', 'EMD', 'SUBEMENDA'])
+    # "Votação em separado" = destaque de texto do relator, NUNCA emenda
+    eh_separado = 'EM SEPARADO' in descricao_upper or 'VOTACAO EM SEPARADO' in descricao_upper
+    # Emenda: só se contiver EMENDA/EMD/SUBEMENDA E NÃO for "em separado"
+    eh_emenda = (not eh_separado) and any(p in descricao_upper for p in ['EMENDA', 'EMD', 'SUBEMENDA'])
 
     # ── Destaque de emenda: usa URL passada diretamente pelo frontend ──
     url_emenda_sel = data.get('url_emenda', '')  # URL específica da emenda selecionada
@@ -3550,12 +3601,30 @@ Não use ### ou ** fora do HTML. Não repita análise de outras emendas."""
 
         texto_truncado = texto_relevante if texto_relevante else texto_doc[:12000]
 
+    # Ajusta regra do prompt conforme tipo de destaque
+    if eh_separado:
+        regra_destaque = (
+            "REGRA FUNDAMENTAL — DESTAQUE DE VOTAÇÃO EM SEPARADO:\n"
+            "Este destaque isola um trecho do texto do relator para votação independente.\n"
+            "Voto SIM = MANTÉM o trecho do relator (aprovado como está)\n"
+            "Voto NÃO = SUPRIME ou ALTERA o trecho do relator\n"
+            "IMPORTANTE: NÃO mencione emenda. Explique o conteúdo do trecho destacado."
+        )
+    else:
+        regra_destaque = (
+            "REGRA FUNDAMENTAL — DESTAQUE DE TEXTO:\n"
+            "Voto SIM = MANTÉM o texto do relator\n"
+            "Voto NÃO = ALTERA o texto do relator"
+        )
+
     prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
 
 **Proposição:** {projeto}
 **Destaque:** {numero}
 **Descrição do Destaque:** {descricao}{nota_refs}
 **Documento analisado:** {tipo_doc}
+
+{regra_destaque}
 
 TEXTO COMPLETO DO DOCUMENTO:
 {texto_truncado if texto_truncado else '(texto não disponível)'}
