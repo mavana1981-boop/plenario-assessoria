@@ -3649,10 +3649,10 @@ async function exportarOrientacoesPDF() {
               <i class="fas fa-check-circle text-success me-1"></i>Banner gerado com sucesso
             </label>
             <div class="d-flex gap-2 flex-wrap">
-              <button class="btn btn-outline-primary btn-sm" onclick="exportarBannerPNG()">
+              <button class="btn btn-outline-primary btn-sm" onclick="exportarBannerPNG(this)">
                 <i class="fas fa-image me-1"></i>Baixar PNG
               </button>
-              <button class="btn btn-success btn-sm" onclick="exportarBannerPDF()">
+              <button class="btn btn-success btn-sm" onclick="exportarBannerPDF(this)">
                 <i class="fas fa-file-pdf me-1"></i>Baixar PDF
               </button>
               <button class="btn btn-outline-secondary btn-sm" onclick="abrirBannerPopup()">
@@ -3664,7 +3664,7 @@ async function exportarOrientacoesPDF() {
             style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#e8e8e8;position:relative;">
             <iframe id="banner-iframe"
               style="width:800px;height:900px;border:none;transform-origin:top left;display:block;"
-              sandbox="allow-same-origin allow-scripts"></iframe>
+              sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation-by-user-activation"></iframe>
           </div>
         </div>
 
@@ -3789,7 +3789,13 @@ async function gerarBannerIA() {
     iframe.style.transform = 'scale(' + scale + ')';
     wrapper.style.height   = Math.round(900 * scale) + 'px';
 
-    iframe.srcdoc = j.html;
+    try {
+      iframe.srcdoc = j.html;
+    } catch(iframeErr) {
+      // fallback: usa blob URL
+      const blob = new Blob([j.html], {type:'text/html;charset=utf-8'});
+      iframe.src = URL.createObjectURL(blob);
+    }
     document.getElementById('banner-resultado').style.display = 'block';
 
   } catch (err) {
@@ -3801,9 +3807,9 @@ async function gerarBannerIA() {
 }
 
 // ── Exporta banner como PNG via Playwright (servidor) ────────────────────
-async function exportarBannerPNG() {
+async function exportarBannerPNG(btn) {
   if (!_bannerHtmlAtual) return;
-  const btn = event.currentTarget;
+  btn = btn || event?.currentTarget || document.querySelector('[onclick*="exportarBannerPNG"]');
   const orig = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando PNG...';
@@ -3834,9 +3840,9 @@ async function exportarBannerPNG() {
 }
 
 // ── Exporta banner como PDF via Playwright (servidor) ────────────────────
-async function exportarBannerPDF() {
+async function exportarBannerPDF(btn) {
   if (!_bannerHtmlAtual) return;
-  const btn = event.currentTarget;
+  btn = btn || event?.currentTarget || document.querySelector('[onclick*="exportarBannerPDF"]');
   const orig = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando PDF...';
