@@ -3755,6 +3755,15 @@ async function gerarBannerIA() {
     if (imgFile) formData.append('imagem', imgFile);
 
     const r = await fetch('/gerar_banner_proposicao', { method: 'POST', body: formData });
+
+    // Valida que a resposta é JSON antes de parsear
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const txt = await r.text();
+      alert('Erro do servidor (HTTP ' + r.status + '):\n' + txt.substring(0, 300));
+      return;
+    }
+
     const j = await r.json();
 
     if (!j.success) {
