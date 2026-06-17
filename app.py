@@ -14,6 +14,9 @@ TZ_BRASILIA = timezone(timedelta(hours=-3))
 # ── Helper Gemini com retry automático ──────────────────────────────────────
 GEMINI_MODEL = "gemini-2.0-flash"  # Limites maiores que o lite
 
+# Dict temporário: texto bruto do PDF por chave REQSN
+_texto_pdf_por_chave = {}
+
 def gemini_post(key, prompt, max_tokens=1500, temperatura=0.3, tentativas=3):
     """Chama a API Gemini com retry automático em caso de rate limit (429)."""
     import time
@@ -577,6 +580,9 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
         from bs4 import BeautifulSoup
         import pdfplumber
 
+        global _texto_pdf_por_chave
+        _texto_pdf_por_chave = {}
+
         # Passo 1: Busca o PDF de pauta na página do evento
         url_evento = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
         r = requests.get(url_evento, headers={
@@ -827,11 +833,34 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                     chave = f"REQSN_{sigla_pl}{num_pl}/{ano_pl}"
                     logger.info(f"  Item {num} (REQ s/nº → {sigla_pl} {num_pl}/{ano_pl}): chave={chave}")
                 else:
-                    chave = f"REQSN{req_sn_count}"
-                    logger.info(f"  Item {num} (REQ s/nº): chave={chave}")
+                    # Tenta PDL, PEC, MPV, PRC
+                    m_pdl = re.search(
+                        r'(Projeto\s+de\s+Decreto\s+Legislativo'
+                        r'|Proposta\s+de\s+Emenda\s+[A\u00c0]\s+Constitui[c\u00e7][a\u00e3]o'
+                        r'|Medida\s+Provis[o\u00f3]ria'
+                        r'|Projeto\s+de\s+Resolu[c\u00e7][a\u00e3]o)'
+                        r'\s+n[\u00ba\u00b0.]?\s*([\d.]+),?\s*de\s+(\d{4})',
+                        bloco_req, re.IGNORECASE
+                    )
+                    if m_pdl:
+                        t2 = m_pdl.group(1).upper()
+                        n2 = m_pdl.group(2).replace('.','')
+                        a2 = m_pdl.group(3)
+                        if 'DECRETO' in t2:   sg = 'PDL'
+                        elif 'EMENDA' in t2:  sg = 'PEC'
+                        elif 'MEDIDA' in t2:  sg = 'MPV'
+                        elif 'RESOLU' in t2:  sg = 'PRC'
+                        else:                 sg = 'PDL'
+                        chave = f"REQSN_{sg}{n2}/{a2}"
+                        logger.info(f"  Item {num} (REQ s/nº → {sg} {n2}/{a2}): chave={chave}")
+                    else:
+                        chave = f"REQSN{req_sn_count}"
+                        logger.info(f"  Item {num} (REQ s/nº sem ref): chave={chave}")
                 req_sn_count += 1
                 ordem[chave] = num
                 posicoes_usadas_final[num] = chave
+                # Salva bloco bruto para uso no placeholder
+                _texto_pdf_por_chave[chave] = bloco_req
 
         # Preenche gaps de posição usando cabeçalhos de PL/PLP/PEC no texto
         # Ex: "PROJETO DE LEI Nº 5.868, DE 2025" aparece entre pos 18 e 20 → pos 19
@@ -1160,13 +1189,12 @@ def fetch_pauta(evento_id, force_reload=False):
                         'destaques_emendas': []
                     })
                 elif cod_pdf.startswith('REQSN'):
-                    # REQ s/nº sem match na API.
-                    # Tenta resolver o PL/PDL/PLP/PEC referenciado na chave.
-                    # Suporta: REQSN_PL717/2024, REQSN_PLP221/2024, REQSN_PDL717/2024, REQSN0, etc.
+                    # REQ s/nº sem match direto na API.
+                    # Tenta resolver o PL/PDL/PLP/PEC/MPV referenciado na chave.
                     resolvido = False
                     m_ref = re.search(r'REQSN_([A-Z]+)(\d+)/(\d{4})', cod_pdf)
                     if m_ref:
-                        sigla_ref = m_ref.group(1)   # PL, PLP, PDL, PEC, MPV...
+                        sigla_ref = m_ref.group(1)
                         num_ref   = m_ref.group(2)
                         ano_ref   = m_ref.group(3)
                         try:
@@ -1203,21 +1231,70 @@ def fetch_pauta(evento_id, force_reload=False):
                                     logger.info(f"REQSN resolvido via API: {cod_pdf} → {sigla_ref} {num_ref}/{ano_ref} id={id_pl}")
                                     resolvido = True
                         except Exception as e:
-                            logger.warning(f"Erro buscar {sigla_ref} {num_ref}/{ano_ref} para REQSN {cod_pdf}: {e}")
+                            logger.warning(f"Erro ao resolver REQSN {cod_pdf} via API: {e}")
 
                     if not resolvido:
-                        # Insere placeholder para preservar a posição do PDF
-                        # Usa cod_pdf como id fictício para evitar colisão
+                        # Usa dados extraídos do próprio texto do PDF
                         id_ficticio = f"REQSN_{cod_pdf}_{len(itens)}"
                         key = f"PROP_{id_ficticio}"
-                        projeto_req = cod_pdf.replace('REQSN_','REQ s/nº ao ').replace('REQSN','REQ s/nº')
+                        bloco_pdf = _texto_pdf_por_chave.get(cod_pdf, '')
+
+                        # Título da proposição
+                        projeto_req = 'REQ s/nº'
+                        ementa_req  = ''
+                        autor_req   = 'Líderes'
+
+                        if bloco_pdf:
+                            # Título: extrai a proposição referenciada do bloco
+                            m_ref2 = re.search(
+                                r'(Projeto\s+de\s+(?:Lei(?:\s+Complementar)?|Decreto\s+Legislativo|Resolu[cç][aã]o)'
+                                r'|Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o'
+                                r'|Medida\s+Provis[oó]ria)'
+                                r'\s+(?:n[º°.]?\s*)?([\d.]+),?\s*de\s+(\d{4})',
+                                bloco_pdf, re.IGNORECASE
+                            )
+                            if m_ref2:
+                                tp = m_ref2.group(1).upper()
+                                if 'COMPLEMENTAR' in tp: sg2 = 'PLP'
+                                elif 'DECRETO' in tp:    sg2 = 'PDL'
+                                elif 'EMENDA' in tp:     sg2 = 'PEC'
+                                elif 'MEDIDA' in tp:     sg2 = 'MPV'
+                                elif 'RESOLU' in tp:     sg2 = 'PRC'
+                                else:                    sg2 = 'PL'
+                                n2 = m_ref2.group(2).replace('.','')
+                                a2 = m_ref2.group(3)
+                                projeto_req = f"REQ s/nº ao {sg2} {n2}/{a2}"
+                            else:
+                                # Usa primeira linha do bloco como título
+                                primeira = [l.strip() for l in bloco_pdf.split('\n') if l.strip()]
+                                if primeira:
+                                    projeto_req = f"REQ s/nº — {primeira[0][:80]}"
+
+                            # Ementa: texto após "que requer" ou bloco completo
+                            m_em = re.search(
+                                r'que\s+requer[^,]*,\s*(.{10,400}?)(?:\.\s|$)',
+                                bloco_pdf, re.IGNORECASE | re.DOTALL
+                            )
+                            if m_em:
+                                ementa_req = re.sub(r'\s+', ' ', m_em.group(1)).strip()[:400]
+                            else:
+                                ementa_req = re.sub(r'\s+', ' ', bloco_pdf).strip()[:400]
+
+                            # Autor: "dos Srs.", "da Sra." etc.
+                            m_aut = re.search(
+                                r'd[oa]s?\s+(?:Srs?\.|Sras?\.)\s+(.{5,120}?)(?:,\s+que|\.\s|$)',
+                                bloco_pdf, re.IGNORECASE
+                            )
+                            if m_aut:
+                                autor_req = re.sub(r'\s+', ' ', m_aut.group(1)).strip()
+
                         itens.append({
                             'ordem':            str(len(itens) + 1),
                             'id_principal':     id_ficticio,
                             'projeto':          projeto_req,
                             'projeto_original': projeto_req,
-                            'ementa':           '(dados não disponíveis na API da Câmara)',
-                            'autor':            'Líderes',
+                            'ementa':           ementa_req or '(ver PDF da pauta)',
+                            'autor':            autor_req,
                             'relator':          'Não atribuído',
                             'situacao':         'N/D',
                             'secao':            'N/D',
@@ -1228,56 +1305,11 @@ def fetch_pauta(evento_id, force_reload=False):
                             'saved_at':         notas.get(key, {}).get('saved_at', ''),
                             'destaques_emendas': []
                         })
-                        logger.warning(f"REQSN '{cod_pdf}' sem match na API — inserido como placeholder na posição {len(itens)}")
+                        logger.warning(f"REQSN '{cod_pdf}' sem match na API — inserido com dados do PDF na posição {len(itens)}")
 
                 else:
-                    # Item do PDF com código reconhecível mas sem match na API.
-                    # Tenta busca direta por sigla+número+ano antes de ignorar.
-                    m_cod = re.match(r'^([A-Z]+)(\d+)/(\d{4})$', cod_pdf)
-                    if m_cod:
-                        sigla_try = m_cod.group(1)
-                        num_try   = m_cod.group(2)
-                        ano_try   = m_cod.group(3)
-                        try:
-                            r_try = requests.get(
-                                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
-                                f"?siglaTipo={sigla_try}&numero={num_try}&ano={ano_try}&itens=1",
-                                headers={'Accept': 'application/json'}, timeout=8
-                            )
-                            dados_try = r_try.json().get('dados', []) if r_try.ok else []
-                            if dados_try:
-                                item_try = dados_try[0]
-                                id_p = str(item_try.get('id', ''))
-                                if id_p and id_p not in vistos_ids:
-                                    vistos_ids.add(id_p)
-                                    key = f"PROP_{id_p}"
-                                    codigo_str = f"{sigla_try} {num_try}/{ano_try}"
-                                    itens.append({
-                                        'ordem':            str(len(itens) + 1),
-                                        'id_principal':     id_p,
-                                        'projeto':          extrair_ref_pl(codigo_str, item_try.get('ementa','')),
-                                        'projeto_original': codigo_str,
-                                        'ementa':           item_try.get('ementa', ''),
-                                        'autor':            item_try.get('autores', 'N/D'),
-                                        'relator':          item_try.get('relator', 'Não atribuído'),
-                                        'situacao':         item_try.get('situacao', 'N/D'),
-                                        'secao':            'N/D',
-                                        'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
-                                        'orientacao':       notas.get(key, {}).get('orientacao', ''),
-                                        'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
-                                        'saved_by':         notas.get(key, {}).get('saved_by', ''),
-                                        'saved_at':         notas.get(key, {}).get('saved_at', ''),
-                                        'destaques_emendas': []
-                                    })
-                                    logger.info(f"PDF item '{cod_pdf}' resolvido via busca direta na API: id={id_p}")
-                                else:
-                                    logger.warning(f"PDF item '{cod_pdf}' resolvido mas id já visto")
-                            else:
-                                logger.warning(f"PDF item '{cod_pdf}' não encontrado na API direta — ignorado")
-                        except Exception as e:
-                            logger.warning(f"PDF item '{cod_pdf}' erro na API direta: {e}")
-                    else:
-                        logger.warning(f"PDF item '{cod_pdf}' sem padrão reconhecível — ignorado")
+                    # Item do PDF não encontrado na API — ignora
+                    logger.warning(f"PDF item '{cod_pdf}' não na API — ignorado")
 
             # Itens da API não encontrados no PDF — insere na posição correta
             # A posição é inferida pela sequência relativa na API
