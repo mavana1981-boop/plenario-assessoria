@@ -1159,11 +1159,14 @@ def fetch_pauta(evento_id, force_reload=False):
                         'saved_at':         notas.get(key, {}).get('saved_at', ''),
                         'destaques_emendas': []
                     })
-                elif cod_pdf.startswith('REQSN_'):
-                    # REQ s/n sem match na API — busca o PL referenciado diretamente
-                    m_ref = re.search(r'REQSN_((?:PL|PLP)(\d+)/(\d{4}))', cod_pdf)
+                elif cod_pdf.startswith('REQSN'):
+                    # REQ s/nº sem match na API.
+                    # Tenta resolver o PL/PDL/PLP/PEC referenciado na chave.
+                    # Suporta: REQSN_PL717/2024, REQSN_PLP221/2024, REQSN_PDL717/2024, REQSN0, etc.
+                    resolvido = False
+                    m_ref = re.search(r'REQSN_([A-Z]+)(\d+)/(\d{4})', cod_pdf)
                     if m_ref:
-                        sigla_ref = 'PLP' if 'PLP' in m_ref.group(1) else 'PL'
+                        sigla_ref = m_ref.group(1)   # PL, PLP, PDL, PEC, MPV...
                         num_ref   = m_ref.group(2)
                         ano_ref   = m_ref.group(3)
                         try:
@@ -1174,38 +1177,107 @@ def fetch_pauta(evento_id, force_reload=False):
                             )
                             dados_pl = r_pl.json().get('dados', []) if r_pl.ok else []
                             if dados_pl:
-                                pl = dados_pl[0]
+                                pl    = dados_pl[0]
                                 id_pl = str(pl.get('id', ''))
-                                if id_pl in vistos_ids:
-                                    continue
-                                vistos_ids.add(id_pl)
-                                key = f"PROP_{id_pl}"
-                                projeto_req = f"REQ s/nº ao {sigla_ref} {num_ref}/{ano_ref}"
-                                itens.append({
-                                    'ordem':            str(len(itens) + 1),
-                                    'id_principal':     id_pl,
-                                    'projeto':          projeto_req,
-                                    'projeto_original': projeto_req,
-                                    'ementa':           pl.get('ementa', ''),
-                                    'autor':            'Líderes',
-                                    'relator':          'Não atribuído',
-                                    'situacao':         pl.get('statusProposicao', {}).get('descricaoSituacao', 'N/D') if isinstance(pl.get('statusProposicao'), dict) else 'N/D',
-                                    'secao':            'N/D',
-                                    'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
-                                    'orientacao':       notas.get(key, {}).get('orientacao', ''),
-                                    'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
-                                    'saved_by':         notas.get(key, {}).get('saved_by', ''),
-                                    'saved_at':         notas.get(key, {}).get('saved_at', ''),
-                                    'destaques_emendas': []
-                                })
-                                logger.info(f"REQSN resolvido via API: {cod_pdf} → {sigla_ref} {num_ref}/{ano_ref} id={id_pl}")
-                            else:
-                                logger.warning(f"REQSN: PL {num_ref}/{ano_ref} não encontrado na API")
+                                if id_pl and id_pl not in vistos_ids:
+                                    vistos_ids.add(id_pl)
+                                    key = f"PROP_{id_pl}"
+                                    projeto_req = f"REQ s/nº ao {sigla_ref} {num_ref}/{ano_ref}"
+                                    itens.append({
+                                        'ordem':            str(len(itens) + 1),
+                                        'id_principal':     id_pl,
+                                        'projeto':          projeto_req,
+                                        'projeto_original': projeto_req,
+                                        'ementa':           pl.get('ementa', ''),
+                                        'autor':            'Líderes',
+                                        'relator':          'Não atribuído',
+                                        'situacao':         pl.get('statusProposicao', {}).get('descricaoSituacao', 'N/D') if isinstance(pl.get('statusProposicao'), dict) else 'N/D',
+                                        'secao':            'N/D',
+                                        'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
+                                        'orientacao':       notas.get(key, {}).get('orientacao', ''),
+                                        'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
+                                        'saved_by':         notas.get(key, {}).get('saved_by', ''),
+                                        'saved_at':         notas.get(key, {}).get('saved_at', ''),
+                                        'destaques_emendas': []
+                                    })
+                                    logger.info(f"REQSN resolvido via API: {cod_pdf} → {sigla_ref} {num_ref}/{ano_ref} id={id_pl}")
+                                    resolvido = True
                         except Exception as e:
-                            logger.warning(f"Erro buscar PL para REQSN {cod_pdf}: {e}")
+                            logger.warning(f"Erro buscar {sigla_ref} {num_ref}/{ano_ref} para REQSN {cod_pdf}: {e}")
+
+                    if not resolvido:
+                        # Insere placeholder para preservar a posição do PDF
+                        # Usa cod_pdf como id fictício para evitar colisão
+                        id_ficticio = f"REQSN_{cod_pdf}_{len(itens)}"
+                        key = f"PROP_{id_ficticio}"
+                        projeto_req = cod_pdf.replace('REQSN_','REQ s/nº ao ').replace('REQSN','REQ s/nº')
+                        itens.append({
+                            'ordem':            str(len(itens) + 1),
+                            'id_principal':     id_ficticio,
+                            'projeto':          projeto_req,
+                            'projeto_original': projeto_req,
+                            'ementa':           '(dados não disponíveis na API da Câmara)',
+                            'autor':            'Líderes',
+                            'relator':          'Não atribuído',
+                            'situacao':         'N/D',
+                            'secao':            'N/D',
+                            'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
+                            'orientacao':       notas.get(key, {}).get('orientacao', ''),
+                            'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
+                            'saved_by':         notas.get(key, {}).get('saved_by', ''),
+                            'saved_at':         notas.get(key, {}).get('saved_at', ''),
+                            'destaques_emendas': []
+                        })
+                        logger.warning(f"REQSN '{cod_pdf}' sem match na API — inserido como placeholder na posição {len(itens)}")
+
                 else:
-                    # Item do PDF não encontrado na API — ignora
-                    logger.warning(f"PDF item '{cod_pdf}' não na API — ignorado")
+                    # Item do PDF com código reconhecível mas sem match na API.
+                    # Tenta busca direta por sigla+número+ano antes de ignorar.
+                    m_cod = re.match(r'^([A-Z]+)(\d+)/(\d{4})$', cod_pdf)
+                    if m_cod:
+                        sigla_try = m_cod.group(1)
+                        num_try   = m_cod.group(2)
+                        ano_try   = m_cod.group(3)
+                        try:
+                            r_try = requests.get(
+                                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
+                                f"?siglaTipo={sigla_try}&numero={num_try}&ano={ano_try}&itens=1",
+                                headers={'Accept': 'application/json'}, timeout=8
+                            )
+                            dados_try = r_try.json().get('dados', []) if r_try.ok else []
+                            if dados_try:
+                                item_try = dados_try[0]
+                                id_p = str(item_try.get('id', ''))
+                                if id_p and id_p not in vistos_ids:
+                                    vistos_ids.add(id_p)
+                                    key = f"PROP_{id_p}"
+                                    codigo_str = f"{sigla_try} {num_try}/{ano_try}"
+                                    itens.append({
+                                        'ordem':            str(len(itens) + 1),
+                                        'id_principal':     id_p,
+                                        'projeto':          extrair_ref_pl(codigo_str, item_try.get('ementa','')),
+                                        'projeto_original': codigo_str,
+                                        'ementa':           item_try.get('ementa', ''),
+                                        'autor':            item_try.get('autores', 'N/D'),
+                                        'relator':          item_try.get('relator', 'Não atribuído'),
+                                        'situacao':         item_try.get('situacao', 'N/D'),
+                                        'secao':            'N/D',
+                                        'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
+                                        'orientacao':       notas.get(key, {}).get('orientacao', ''),
+                                        'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
+                                        'saved_by':         notas.get(key, {}).get('saved_by', ''),
+                                        'saved_at':         notas.get(key, {}).get('saved_at', ''),
+                                        'destaques_emendas': []
+                                    })
+                                    logger.info(f"PDF item '{cod_pdf}' resolvido via busca direta na API: id={id_p}")
+                                else:
+                                    logger.warning(f"PDF item '{cod_pdf}' resolvido mas id já visto")
+                            else:
+                                logger.warning(f"PDF item '{cod_pdf}' não encontrado na API direta — ignorado")
+                        except Exception as e:
+                            logger.warning(f"PDF item '{cod_pdf}' erro na API direta: {e}")
+                    else:
+                        logger.warning(f"PDF item '{cod_pdf}' sem padrão reconhecível — ignorado")
 
             # Itens da API não encontrados no PDF — insere na posição correta
             # A posição é inferida pela sequência relativa na API
@@ -4579,372 +4651,6 @@ def diagnostico():
     finally:
         conn.close()
     return jsonify(resultado)
-
-
-@app.route('/gerar_banner_proposicao', methods=['POST'])
-@login_required
-def gerar_banner_proposicao():
-    """
-    Gera banner HTML de orientação de bancada.
-    Layout: cabeçalho escuro com foto de fundo, logos Oposição+Liderança no canto
-    superior direito, meta (autor/regime/comissões/relator), resumo executivo,
-    grade O que prevê | Críticas, grade Justificativa | Orientação, Na prática.
-    """
-    import base64 as _b64
-
-    proposicao   = request.form.get('proposicao', '')
-    ementa       = request.form.get('ementa', '')
-    autor        = request.form.get('autor', '')
-    relator      = request.form.get('relator', '')
-    regime       = request.form.get('regime', 'Ordinário')
-    comissoes    = request.form.get('comissoes', 'Plenário')
-    orientacao   = request.form.get('orientacao', 'SIM')
-    nota_tecnica = request.form.get('nota_tecnica', '')
-    resumo_extra = request.form.get('resumo_extra', '')
-
-    # ── Imagem de fundo (opcional) ───────────────────────────────────────────
-    imagem_css = ''
-    if 'imagem' in request.files:
-        f = request.files['imagem']
-        if f and f.filename:
-            raw  = f.read()
-            ext  = f.filename.rsplit('.', 1)[-1].lower()
-            mime = {'jpg':'image/jpeg','jpeg':'image/jpeg',
-                    'png':'image/png','webp':'image/webp'}.get(ext, 'image/jpeg')
-            b64  = _b64.b64encode(raw).decode('utf-8')
-            imagem_css = (
-                f'background-image:url("data:{mime};base64,{b64}");'
-                f'background-size:cover;background-position:center top;'
-            )
-
-    # ── Logos embutidos ──────────────────────────────────────────────────────
-    def _logo(nome):
-        try:
-            with open(os.path.join(app.root_path, 'static', nome), 'rb') as fh:
-                return 'data:image/png;base64,' + _b64.b64encode(fh.read()).decode('utf-8')
-        except Exception:
-            return ''
-
-    logo_opo = _logo('logo_oposicao.png')
-    logo_min = _logo('logo_minoria.png')
-
-    logos_html = ''
-    if logo_opo:
-        logos_html += f'<img src="{logo_opo}" alt="Oposição" style="height:44px;object-fit:contain;filter:drop-shadow(0 1px 3px rgba(0,0,0,.5));">'
-    if logo_min:
-        logos_html += f'<img src="{logo_min}" alt="Liderança" style="height:44px;object-fit:contain;filter:drop-shadow(0 1px 3px rgba(0,0,0,.5));">'
-
-    # ── Cores por orientação ─────────────────────────────────────────────────
-    ORI = {
-        'SIM':        {'cor':'#1A6B3A','ico':'✅','txt':'#fff'},
-        'NÃO':        {'cor':'#8B0000','ico':'❌','txt':'#fff'},
-        'NEGOCIAÇÃO': {'cor':'#B8860B','ico':'🤝','txt':'#fff'},
-        'LIBERADO':   {'cor':'#0D2B5E','ico':'🔓','txt':'#fff'},
-        'OBSTRUÇÃO':  {'cor':'#8B0000','ico':'🚫','txt':'#fff'},
-        'ABSTENÇÃO':  {'cor':'#555555','ico':'➖','txt':'#fff'},
-    }
-    cfg = ORI.get(orientacao.upper(), {'cor':'#0D2B5E','ico':'📋','txt':'#fff'})
-
-    # ── Prompt IA ────────────────────────────────────────────────────────────
-    ctx = ''
-    if nota_tecnica and len(nota_tecnica.strip()) > 40:
-        ctx += f'\n\nNOTA TÉCNICA:\n{nota_tecnica[:4000]}'
-    if resumo_extra:
-        ctx += f'\n\nCONTEXTO ADICIONAL:\n{resumo_extra}'
-
-    prompt = (
-        'Você é um assessor legislativo sênior da Câmara dos Deputados, trabalhando para a Minoria/Oposição.\n\n'
-        f'PROPOSIÇÃO : {proposicao}\nEMENTA      : {ementa}\nAUTOR       : {autor}\n'
-        f'RELATOR     : {relator}\nREGIME      : {regime or "Ordinário"}\n'
-        f'COMISSÕES   : {comissoes}\nORIENTAÇÃO  : {orientacao}{ctx}\n\n'
-        'Gere APENAS um JSON válido, sem markdown, sem ```json, sem comentários:\n\n'
-        '{\n'
-        '  "titulo_curto"          : "(sigla + número + ano, ex: PLP 114/2026, máx 20 chars)",\n'
-        '  "subtitulo"             : "(frase de impacto curta, máx 8 palavras)",\n'
-        '  "descricao_curta"       : "(1 frase simples do que o projeto faz, máx 120 chars)",\n'
-        '  "resumo_executivo"      : "(3-4 frases claras para parlamentares, máx 220 palavras)",\n'
-        '  "o_que_preve"           : ["item 1","item 2","item 3","item 4","item 5","item 6"],\n'
-        '  "criticas"              : [\n'
-        '    {"titulo":"Crítica 1","detalhe":"explicação curta"},\n'
-        '    {"titulo":"Crítica 2","detalhe":"explicação curta"},\n'
-        '    {"titulo":"Crítica 3","detalhe":"explicação curta"}\n'
-        '  ],\n'
-        '  "justificativa_oficial" : "(2-4 frases sobre a justificativa formal, máx 120 palavras)",\n'
-        '  "argumento_chave"       : "(argumento de 30 segundos para o plenário, máx 60 palavras)",\n'
-        '  "na_pratica"            : ["efeito 1","efeito 2","efeito 3","efeito 4","efeito 5"]\n'
-        '}\n\nResponda APENAS com o JSON.'
-    )
-
-    fonte = 'ia'
-    try:
-        texto_ia, fonte = ia_chain(prompt, max_tokens=1200, temperatura=0.3,
-                                   contexto='gerar_banner')
-        texto_ia = re.sub(r'```(?:json)?|```', '', texto_ia).strip()
-        d = json.loads(texto_ia)
-    except json.JSONDecodeError as e:
-        logger.warning(f'gerar_banner_proposicao: JSON inválido: {e}')
-        d = {
-            'titulo_curto'         : proposicao[:20],
-            'subtitulo'            : ementa[:60],
-            'descricao_curta'      : ementa[:120],
-            'resumo_executivo'     : ementa,
-            'o_que_preve'          : ['Consulte a ementa completa'],
-            'criticas'             : [{'titulo':'Análise pendente',
-                                       'detalhe':'Gere novamente para obter análise completa'}],
-            'justificativa_oficial': 'Não disponível.',
-            'argumento_chave'      : '',
-            'na_pratica'           : ['Consulte a nota técnica'],
-        }
-    except Exception as e:
-        logger.error(f'gerar_banner_proposicao: IA falhou: {e}')
-        return jsonify({'success': False, 'error': f'Serviço de IA indisponível: {e}'}), 503
-
-    # ── Helpers HTML ─────────────────────────────────────────────────────────
-    def _e(s):
-        return (str(s or '').replace('&','&amp;').replace('<','&lt;')
-                .replace('>','&gt;').replace('"','&quot;'))
-
-    def _check(itens, cor='#1A6B3A'):
-        return '\n'.join(
-            f'<div class="li"><span class="ck" style="color:{cor};">✔</span>'
-            f'<span>{_e(it)}</span></div>'
-            for it in (itens or [])
-        )
-
-    def _criticas(itens):
-        icos = ['💰','📋','🏛️','⚠️','🔴','📉']
-        out = []
-        for i, it in enumerate(itens or []):
-            ico = icos[i % len(icos)]
-            tit = _e(it.get('titulo','')  if isinstance(it, dict) else str(it))
-            det = _e(it.get('detalhe','') if isinstance(it, dict) else '')
-            out.append(
-                f'<div class="ci"><span class="ci-ico">{ico}</span>'
-                f'<div><div class="ci-tit">{tit}</div>'
-                f'<div class="ci-det">{det}</div></div></div>'
-            )
-        return '\n'.join(out)
-
-    overlay = 'rgba(10,28,60,0.62)' if imagem_css else 'rgba(10,28,60,0)'
-
-    arg_html = ''
-    if d.get('argumento_chave'):
-        arg_html = (
-            '<div class="arg-hdr">Argumento-chave (30 segundos de plenário)</div>'
-            f'<div class="arg-bod"><span class="arg-ico">💡</span>'
-            f'<span>{_e(d["argumento_chave"])}</span></div>'
-        )
-
-    html = f'''<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<title>Banner — {_e(proposicao)}</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,600;0,700;0,900;1,400&family=Barlow+Condensed:wght@700;900&display=swap');
-*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0;}}
-body{{background:#e8e8e8;display:flex;flex-direction:column;align-items:center;padding:20px;font-family:Barlow,Arial,sans-serif;}}
-.banner{{width:794px;background:#fff;box-shadow:0 4px 28px rgba(0,0,0,.22);font-size:13px;color:#1a1a1a;}}
-/* CABEÇALHO */
-.cab{{ {imagem_css} background-color:#0D2B5E;position:relative;overflow:hidden;}}
-.cab-ov{{background:{overlay};padding:22px 28px 0;}}
-.cab-top{{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:8px;}}
-.cab-tit{{font-family:"Barlow Condensed",sans-serif;font-size:46px;font-weight:900;color:#fff;line-height:1;letter-spacing:.5px;}}
-.cab-logos{{display:flex;gap:6px;align-items:center;flex-shrink:0;background:rgba(255,255,255,0.12);border-radius:6px;padding:6px 10px;margin-top:4px;}}
-.cab-sub{{font-size:16px;font-weight:700;color:#4ade80;margin-bottom:5px;}}
-.cab-desc{{font-size:12.5px;color:rgba(255,255,255,.80);line-height:1.5;margin-bottom:14px;}}
-/* META BAR */
-.meta{{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid rgba(255,255,255,.15);}}
-.mc{{padding:9px 12px;border-right:1px solid rgba(255,255,255,.12);}}
-.mc:last-child{{border-right:none;}}
-.ml{{font-size:9px;font-weight:800;letter-spacing:1.8px;color:rgba(255,255,255,.55);text-transform:uppercase;margin-bottom:3px;}}
-.mv{{font-size:12px;font-weight:700;color:#fff;line-height:1.3;}}
-.mi{{margin-right:4px;opacity:.75;}}
-/* RESUMO */
-.res{{padding:18px 28px 14px;border-bottom:1px solid #eee;font-size:13.5px;color:#222;line-height:1.65;}}
-/* GRADE */
-.grade{{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid #e0e0e0;}}
-.ce{{border-right:1px solid #e0e0e0;}}
-.sh{{display:flex;align-items:center;gap:8px;padding:9px 16px;font-size:10.5px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;}}
-.sh.g{{background:#1A6B3A;color:#fff;}}
-.sh.r{{background:#8B0000;color:#fff;}}
-.sh.b{{background:#0D2B5E;color:#fff;}}
-.sh.o{{background:{cfg['cor']};color:{cfg['txt']};}}
-.sb{{padding:12px 16px;min-height:120px;}}
-/* LISTAS */
-.li{{display:flex;align-items:flex-start;gap:7px;margin-bottom:7px;font-size:12.5px;color:#222;line-height:1.4;}}
-.ck{{font-size:13px;flex-shrink:0;margin-top:1px;}}
-/* CRÍTICAS */
-.ci{{display:flex;align-items:flex-start;gap:9px;margin-bottom:10px;}}
-.ci-ico{{font-size:20px;flex-shrink:0;margin-top:1px;}}
-.ci-tit{{font-size:13px;font-weight:700;color:#222;margin-bottom:2px;}}
-.ci-det{{font-size:11.5px;color:#555;line-height:1.4;}}
-/* ORIENTAÇÃO */
-.ori-box{{border:2px solid {cfg['cor']};border-radius:4px;margin:10px 16px 8px;overflow:hidden;}}
-.ori-val{{background:{cfg['cor']};color:{cfg['txt']};font-family:"Barlow Condensed",sans-serif;font-size:32px;font-weight:900;letter-spacing:1px;text-align:center;padding:14px 10px;}}
-.arg-hdr{{background:#1a1a1a;color:rgba(255,255,255,.70);font-size:8.5px;font-weight:800;letter-spacing:2px;text-transform:uppercase;text-align:center;padding:5px;}}
-.arg-bod{{background:#f9f9f9;padding:10px 14px;font-size:12.5px;color:#333;line-height:1.55;display:flex;gap:8px;align-items:flex-start;}}
-.arg-ico{{font-size:18px;flex-shrink:0;}}
-/* NA PRÁTICA */
-.np{{border-top:1px solid #e0e0e0;}}
-.rod{{height:6px;background:linear-gradient(90deg,#1A6B3A 0%,#0D2B5E 100%);}}
-@media print{{
-  body{{background:#fff;padding:0;}}
-  .banner{{box-shadow:none;width:100%;}}
-  .np-btn{{display:none!important;}}
-  @page{{size:A4 portrait;margin:0.5cm;}}
-}}
-</style>
-</head>
-<body>
-<div class="banner">
-
-  <div class="cab">
-    <div class="cab-ov">
-      <div class="cab-top">
-        <div class="cab-tit">{_e(d.get('titulo_curto', proposicao))}</div>
-        <div class="cab-logos">{logos_html}</div>
-      </div>
-      <div class="cab-sub">{_e(d.get('subtitulo', ''))}</div>
-      <div class="cab-desc">{_e(d.get('descricao_curta', ementa[:120]))}</div>
-      <div class="meta">
-        <div class="mc"><div class="ml">Autor</div><div class="mv"><span class="mi">👤</span>{_e(autor[:60] or '—')}</div></div>
-        <div class="mc"><div class="ml">Regime</div><div class="mv"><span class="mi">⚖️</span>{_e(regime or 'Ordinário')}</div></div>
-        <div class="mc"><div class="ml">Comissões</div><div class="mv"><span class="mi">👥</span>{_e(comissoes or 'Plenário')}</div></div>
-        <div class="mc"><div class="ml">Relator</div><div class="mv"><span class="mi">📋</span>{_e(relator[:60] or '—')}</div></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="res">{_e(d.get('resumo_executivo', ementa))}</div>
-
-  <div class="grade">
-    <div class="ce">
-      <div class="sh g"><span>✔</span> O que o projeto prevê</div>
-      <div class="sb">{_check(d.get('o_que_preve', []))}</div>
-    </div>
-    <div>
-      <div class="sh r"><span>✖</span> Críticas</div>
-      <div class="sb">{_criticas(d.get('criticas', []))}</div>
-    </div>
-  </div>
-
-  <div class="grade">
-    <div class="ce">
-      <div class="sh b"><span>ℹ</span> Justificativa oficial</div>
-      <div class="sb" style="font-size:12.5px;color:#333;line-height:1.6;">{_e(d.get('justificativa_oficial', ''))}</div>
-    </div>
-    <div>
-      <div class="sh o"><span>🏅</span> Orientação</div>
-      <div class="sb" style="padding:10px 16px;">
-        <div class="ori-box">
-          <div class="ori-val">{cfg['ico']} {_e(orientacao)}</div>
-          {arg_html}
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="np">
-    <div class="sh g" style="border-top:1px solid #e0e0e0;"><span>🏆</span> Na prática</div>
-    <div class="sb">{_check(d.get('na_pratica', []))}</div>
-  </div>
-
-  <div class="rod"></div>
-</div>
-
-<div class="np-btn" style="margin-top:16px;text-align:center;display:flex;gap:10px;justify-content:center;">
-  <button onclick="window.print()"
-    style="background:#0D2B5E;color:#fff;border:none;padding:9px 24px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:700;">
-    🖨️ Imprimir / Salvar PDF
-  </button>
-  <button onclick="window.close()"
-    style="background:#555;color:#fff;border:none;padding:9px 18px;border-radius:4px;cursor:pointer;font-size:13px;">
-    ✕ Fechar
-  </button>
-</div>
-</body>
-</html>'''
-
-    return jsonify({'success': True, 'html': html, 'fonte': fonte})
-
-
-
-@app.route('/exportar_banner_png', methods=['POST'])
-@login_required
-def exportar_banner_png():
-    """Converte HTML do banner em PNG via Playwright headless."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return jsonify({'error': 'Playwright não instalado no servidor.'}), 500
-
-    data = request.get_json()
-    html = data.get('html', '')
-    if not html:
-        return jsonify({'error': 'HTML não fornecido.'}), 400
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
-            page = browser.new_page(viewport={'width': 850, 'height': 1200})
-            page.set_content(html, wait_until='networkidle')
-            # Aguarda fontes do Google carregarem
-            page.wait_for_timeout(1500)
-            # Captura só o elemento .banner
-            banner = page.query_selector('.banner')
-            if banner:
-                png_bytes = banner.screenshot(type='png')
-            else:
-                png_bytes = page.screenshot(type='png', full_page=True)
-            browser.close()
-
-        resp = make_response(png_bytes)
-        resp.headers['Content-Type'] = 'image/png'
-        resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.png"'
-        return resp
-
-    except Exception as e:
-        logger.error(f'exportar_banner_png: {e}')
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/exportar_banner_pdf', methods=['POST'])
-@login_required
-def exportar_banner_pdf():
-    """Converte HTML do banner em PDF via Playwright headless."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return jsonify({'error': 'Playwright não instalado no servidor.'}), 500
-
-    data = request.get_json()
-    html = data.get('html', '')
-    if not html:
-        return jsonify({'error': 'HTML não fornecido.'}), 400
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
-            page = browser.new_page(viewport={'width': 850, 'height': 1200})
-            page.set_content(html, wait_until='networkidle')
-            page.wait_for_timeout(1500)
-            pdf_bytes = page.pdf(
-                format='A4',
-                print_background=True,
-                margin={'top': '0.5cm', 'bottom': '0.5cm',
-                        'left': '0.5cm', 'right': '0.5cm'}
-            )
-            browser.close()
-
-        resp = make_response(pdf_bytes)
-        resp.headers['Content-Type'] = 'application/pdf'
-        resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.pdf"'
-        return resp
-
-    except Exception as e:
-        logger.error(f'exportar_banner_pdf: {e}')
-        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
