@@ -3663,8 +3663,7 @@ async function exportarOrientacoesPDF() {
           <div id="banner-iframe-wrapper"
             style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#e8e8e8;position:relative;">
             <iframe id="banner-iframe"
-              style="width:800px;height:900px;border:none;transform-origin:top left;display:block;"
-              sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-top-navigation-by-user-activation"></iframe>
+              style="width:800px;height:900px;border:none;transform-origin:top left;display:block;"></iframe>
           </div>
         </div>
 
@@ -3789,13 +3788,11 @@ async function gerarBannerIA() {
     iframe.style.transform = 'scale(' + scale + ')';
     wrapper.style.height   = Math.round(900 * scale) + 'px';
 
-    try {
-      iframe.srcdoc = j.html;
-    } catch(iframeErr) {
-      // fallback: usa blob URL
-      const blob = new Blob([j.html], {type:'text/html;charset=utf-8'});
-      iframe.src = URL.createObjectURL(blob);
-    }
+    // Usa blob URL — mais confiável que srcdoc para HTML com fontes externas
+    if (window._bannerBlobUrl) URL.revokeObjectURL(window._bannerBlobUrl);
+    const blob = new Blob([j.html], {type: 'text/html;charset=utf-8'});
+    window._bannerBlobUrl = URL.createObjectURL(blob);
+    iframe.src = window._bannerBlobUrl;
     document.getElementById('banner-resultado').style.display = 'block';
 
   } catch (err) {
