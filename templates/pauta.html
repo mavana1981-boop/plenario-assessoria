@@ -3644,13 +3644,21 @@ async function exportarOrientacoesPDF() {
 
         <div id="banner-resultado" style="display:none;">
           <hr>
-          <div class="d-flex align-items-center justify-content-between mb-2">
+          <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
             <label class="fw-bold small mb-0">
               <i class="fas fa-check-circle text-success me-1"></i>Banner gerado com sucesso
             </label>
-            <button class="btn btn-success btn-sm" id="btn-banner-pdf" onclick="imprimirBanner()">
-              <i class="fas fa-file-pdf me-1"></i>Gerar PDF
-            </button>
+            <div class="d-flex gap-2 flex-wrap">
+              <button class="btn btn-outline-primary btn-sm" onclick="exportarBannerPNG()">
+                <i class="fas fa-image me-1"></i>Baixar PNG
+              </button>
+              <button class="btn btn-success btn-sm" onclick="exportarBannerPDF()">
+                <i class="fas fa-file-pdf me-1"></i>Baixar PDF
+              </button>
+              <button class="btn btn-outline-secondary btn-sm" onclick="abrirBannerPopup()">
+                <i class="fas fa-external-link-alt me-1"></i>Abrir / Imprimir
+              </button>
+            </div>
           </div>
           <div id="banner-iframe-wrapper"
             style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#e8e8e8;position:relative;">
@@ -3792,21 +3800,88 @@ async function gerarBannerIA() {
   }
 }
 
-function imprimirBanner() {
+// ── Exporta banner como PNG via Playwright (servidor) ────────────────────
+async function exportarBannerPNG() {
+  if (!_bannerHtmlAtual) return;
+  const btn = event.currentTarget;
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando PNG...';
+  try {
+    const r = await fetch('/exportar_banner_png', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html: _bannerHtmlAtual })
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      alert('Erro ao gerar PNG: ' + (j.error || 'Falha no servidor'));
+      return;
+    }
+    const blob = await r.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'banner_plenario.png';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch(e) {
+    alert('Erro: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+
+// ── Exporta banner como PDF via Playwright (servidor) ────────────────────
+async function exportarBannerPDF() {
+  if (!_bannerHtmlAtual) return;
+  const btn = event.currentTarget;
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando PDF...';
+  try {
+    const r = await fetch('/exportar_banner_pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html: _bannerHtmlAtual })
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      alert('Erro ao gerar PDF: ' + (j.error || 'Falha no servidor'));
+      return;
+    }
+    const blob = await r.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'banner_plenario.pdf';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch(e) {
+    alert('Erro: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+
+// ── Abre banner em popup para imprimir manualmente ───────────────────────
+function abrirBannerPopup() {
   if (!_bannerHtmlAtual) return;
   const blob = new Blob([_bannerHtmlAtual], { type: 'text/html;charset=utf-8' });
   const url  = URL.createObjectURL(blob);
-  const popup = window.open(url, '_blank', 'width=900,height=750,scrollbars=yes,resizable=yes');
+  const popup = window.open(url, '_blank', 'width=920,height=820,scrollbars=yes,resizable=yes');
   if (!popup) {
-    alert('Permita pop-ups para gerar o PDF.');
+    alert('Permita pop-ups para abrir o banner.');
     URL.revokeObjectURL(url);
     return;
   }
-  popup.addEventListener('load', () => {
-    setTimeout(() => { popup.print(); }, 400);
-  });
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
+
+// mantido por compatibilidade
+function imprimirBanner() { abrirBannerPopup(); }
 </script>
 </body>
 </html>
