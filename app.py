@@ -4074,7 +4074,7 @@ def buscar_imagem_item():
     if gemini_key and not keywords:
         try:
             r = requests.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + gemini_key,
+                "https://generativelanguage.googleapis.com/v1beta/models/" + detectar_modelo_gemini(gemini_key) + ":generateContent?key=" + gemini_key,
                 headers={"Content-Type": "application/json"},
                 json={"contents": [{"parts": [{"text": prompt_kw}]}],
                       "generationConfig": {"maxOutputTokens": 20, "temperature": 0.1}},
@@ -4645,6 +4645,419 @@ def diagnostico():
     finally:
         conn.close()
     return jsonify(resultado)
+
+
+@app.route('/gerar_banner_proposicao', methods=['POST'])
+@login_required
+def gerar_banner_proposicao():
+    """Gera banner HTML de orientacao de bancada — design refinado."""
+    import base64 as _b64
+
+    proposicao   = request.form.get('proposicao', '')
+    ementa       = request.form.get('ementa', '')
+    autor        = request.form.get('autor', '')
+    relator      = request.form.get('relator', '')
+    regime       = request.form.get('regime', 'Ordinario')
+    comissoes    = request.form.get('comissoes', 'Plenario')
+    orientacao   = request.form.get('orientacao', 'SIM')
+    nota_tecnica = request.form.get('nota_tecnica', '')
+    resumo_extra = request.form.get('resumo_extra', '')
+
+    imagem_css = ''
+    if 'imagem' in request.files:
+        f = request.files['imagem']
+        if f and f.filename:
+            raw  = f.read()
+            ext  = f.filename.rsplit('.', 1)[-1].lower()
+            mime = {'jpg':'image/jpeg','jpeg':'image/jpeg','png':'image/png','webp':'image/webp'}.get(ext,'image/jpeg')
+            b64  = _b64.b64encode(raw).decode('utf-8')
+            imagem_css = 'background-image:url("data:' + mime + ';base64,' + b64 + '");background-size:cover;background-position:center top;'
+
+    def _logo(nome):
+        try:
+            with open(os.path.join(app.root_path, 'static', nome), 'rb') as fh:
+                return 'data:image/png;base64,' + _b64.b64encode(fh.read()).decode('utf-8')
+        except Exception:
+            return ''
+
+    logo_opo = _logo('logo_oposicao.png')
+    logo_min = _logo('logo_minoria.png')
+    logos_html = ''
+    if logo_opo:
+        logos_html += '<img src="' + logo_opo + '" alt="Oposicao" style="height:38px;object-fit:contain;">'
+    if logo_min:
+        logos_html += '<img src="' + logo_min + '" alt="Lideranca" style="height:38px;object-fit:contain;">'
+
+    ORI = {
+        'SIM':        {'cor':'#1B6B3A','txt':'#fff','label':'SIM'},
+        'NAO':        {'cor':'#C9111E','txt':'#fff','label':'NAO'},
+        'NÃO':        {'cor':'#C9111E','txt':'#fff','label':'NAO'},
+        'NEGOCIACAO': {'cor':'#92600A','txt':'#fff','label':'NEGOCIACAO'},
+        'NEGOCIAÇÃO': {'cor':'#92600A','txt':'#fff','label':'NEGOCIACAO'},
+        'LIBERADO':   {'cor':'#0B1F3A','txt':'#fff','label':'LIBERADO'},
+        'OBSTRUCAO':  {'cor':'#C9111E','txt':'#fff','label':'OBSTRUCAO'},
+        'OBSTRUÇÃO':  {'cor':'#C9111E','txt':'#fff','label':'OBSTRUCAO'},
+        'ABSTENCAO':  {'cor':'#475569','txt':'#fff','label':'ABSTENCAO'},
+        'ABSTENÇÃO':  {'cor':'#475569','txt':'#fff','label':'ABSTENCAO'},
+    }
+    cfg = ORI.get(orientacao.upper(), {'cor':'#0B1F3A','txt':'#fff','label':orientacao.upper()})
+    ORI_COR   = cfg['cor']
+    ORI_TXT   = cfg['txt']
+    ORI_LABEL = cfg['label']
+
+    ctx = ''
+    if nota_tecnica and len(nota_tecnica.strip()) > 40:
+        ctx += '\n\nNOTA TECNICA:\n' + nota_tecnica[:4000]
+    if resumo_extra:
+        ctx += '\n\nCONTEXTO ADICIONAL:\n' + resumo_extra
+
+    prompt = (
+        'Voce e um assessor legislativo senior da Camara dos Deputados, trabalhando para a Minoria/Oposicao.\n\n'
+        'PROPOSICAO: ' + proposicao + '\nEMENTA: ' + ementa + '\nAUTOR: ' + autor + '\n'
+        'RELATOR: ' + relator + '\nREGIME: ' + regime + '\nCOMISSOES: ' + comissoes + '\nORIENTACAO: ' + orientacao + ctx + '\n\n'
+        'Gere APENAS um JSON valido, sem markdown:\n'
+        '{\n'
+        '  "titulo_curto": "(sigla+numero+ano, ex: PLP 114/2026, max 18 chars)",\n'
+        '  "subtitulo": "(frase impacto, max 7 palavras)",\n'
+        '  "descricao_curta": "(1 frase do que faz, max 110 chars)",\n'
+        '  "resumo_executivo": "(3-4 frases claras, max 180 palavras)",\n'
+        '  "o_que_preve": ["item 1","item 2","item 3","item 4","item 5","item 6"],\n'
+        '  "criticas": [\n'
+        '    {"titulo":"Critica 1","detalhe":"explicacao curta"},\n'
+        '    {"titulo":"Critica 2","detalhe":"explicacao curta"},\n'
+        '    {"titulo":"Critica 3","detalhe":"explicacao curta"}\n'
+        '  ],\n'
+        '  "justificativa_oficial": "(2-3 frases, max 90 palavras)",\n'
+        '  "argumento_chave": "(30 segundos de plenario, max 55 palavras)",\n'
+        '  "na_pratica": ["efeito 1","efeito 2","efeito 3","efeito 4","efeito 5"]\n'
+        '}\nResponda APENAS com o JSON.'
+    )
+
+    # Tenta cadeia completa: Groq → Cloudflare → todos os modelos Gemini em sequência
+    fonte = 'ia'
+    texto_ia = None
+
+    # 1. Groq
+    groq_key = os.environ.get('GROQ_API_KEY', '')
+    if groq_key:
+        try:
+            texto_ia = groq_post(prompt, max_tokens=1200, temperatura=0.3)
+            fonte = 'groq'
+            logger.info('gerar_banner: Groq OK')
+        except Exception as e:
+            logger.warning('gerar_banner: Groq falhou — ' + str(e))
+
+    # 2. Cloudflare
+    if not texto_ia:
+        try:
+            texto_ia = cloudflare_post(prompt, max_tokens=1200, temperatura=0.3)
+            fonte = 'cloudflare'
+            logger.info('gerar_banner: Cloudflare OK')
+        except Exception as e:
+            logger.warning('gerar_banner: Cloudflare falhou — ' + str(e))
+
+    # 3. Gemini — tenta TODOS os modelos da lista de preferência em sequência
+    if not texto_ia:
+        gemini_key = os.environ.get('GEMINI_API_KEY', '')
+        if gemini_key:
+            for modelo_gem in GEMINI_PREFERENCIA:
+                try:
+                    url_gem = ('https://generativelanguage.googleapis.com/v1beta/models/'
+                               + modelo_gem + ':generateContent?key=' + gemini_key)
+                    payload_gem = {
+                        'contents': [{'parts': [{'text': prompt}]}],
+                        'generationConfig': {'maxOutputTokens': 1200, 'temperature': 0.3}
+                    }
+                    r_gem = requests.post(url_gem,
+                                          headers={'Content-Type': 'application/json'},
+                                          json=payload_gem, timeout=20)
+                    if r_gem.status_code == 404:
+                        logger.warning('gerar_banner: Gemini ' + modelo_gem + ' — 404, tentando próximo')
+                        continue
+                    if r_gem.status_code == 429:
+                        logger.warning('gerar_banner: Gemini ' + modelo_gem + ' — 429, tentando próximo')
+                        continue
+                    r_gem.raise_for_status()
+                    texto_ia = r_gem.json()['candidates'][0]['content']['parts'][0]['text']
+                    fonte = 'gemini/' + modelo_gem
+                    logger.info('gerar_banner: Gemini OK com modelo ' + modelo_gem)
+                    break
+                except Exception as e:
+                    logger.warning('gerar_banner: Gemini ' + modelo_gem + ' falhou — ' + str(e))
+                    continue
+
+    if not texto_ia:
+        logger.error('gerar_banner: todos os provedores falharam')
+        return jsonify({'success': False, 'error': 'Servico de IA indisponivel. Tente novamente em alguns segundos.'}), 503
+
+    try:
+        texto_ia = re.sub(r'```(?:json)?|```', '', texto_ia).strip()
+        d = json.loads(texto_ia)
+    except json.JSONDecodeError as e:
+        logger.warning('gerar_banner: JSON invalido: ' + str(e))
+        d = {
+            'titulo_curto': proposicao[:18], 'subtitulo': ementa[:60],
+            'descricao_curta': ementa[:110], 'resumo_executivo': ementa,
+            'o_que_preve': ['Consulte a ementa'],
+            'criticas': [{'titulo':'Analise pendente','detalhe':'Gere novamente'}],
+            'justificativa_oficial': 'Nao disponivel.',
+            'argumento_chave': '', 'na_pratica': ['Consulte a nota tecnica'],
+        }
+
+    def _e(s):
+        return str(s or '').replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;')
+
+    def _check(itens):
+        rows = []
+        for it in (itens or []):
+            rows.append(
+                '<div class="li">'
+                '<svg class="li-dot" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="' + ORI_COR + '"/></svg>'
+                '<span>' + _e(it) + '</span></div>'
+            )
+        return ''.join(rows)
+
+    def _criticas(itens):
+        rows = []
+        for it in (itens or []):
+            tit = _e(it.get('titulo','') if isinstance(it,dict) else str(it))
+            det = _e(it.get('detalhe','') if isinstance(it,dict) else '')
+            rows.append(
+                '<div class="ci"><div class="ci-bullet"></div>'
+                '<div><p class="ci-t">' + tit + '</p><p class="ci-d">' + det + '</p></div></div>'
+            )
+        return ''.join(rows)
+
+    has_img  = bool(imagem_css)
+    ov_bg    = 'rgba(11,31,58,0.72)' if has_img else 'rgba(11,31,58,0)'
+    desc_col = 'rgba(255,255,255,0.78)' if has_img else 'rgba(255,255,255,0.72)'
+
+    arg_block = ''
+    if d.get('argumento_chave'):
+        arg_block = (
+            '<div class="arg-wrap">'
+            '<p class="arg-eyebrow">Argumento-chave &mdash; 30 segundos de plen&aacute;rio</p>'
+            '<p class="arg-body">' + _e(d['argumento_chave']) + '</p>'
+            '</div>'
+        )
+
+    CSS = (
+        '*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}'
+        ':root{'
+        '--azul:#0B1F3A;--verde:#1B6B3A;--verm:#C9111E;'
+        '--ambar:#E9B847;--fundo:#F2F5F8;--branco:#FFFFFF;'
+        '--cinza1:#E0E6ED;--cinza2:#64748B;--texto:#1A202C;'
+        '--ori:ORI_COR_VAR;'
+        '--f-display:"Teko",sans-serif;'
+        '--f-body:"Source Sans 3",sans-serif;'
+        '}'
+        'body{background:#C5D0DC;display:flex;flex-direction:column;align-items:center;'
+        'padding:24px;font-family:var(--f-body);-webkit-font-smoothing:antialiased;}'
+        '.banner{width:794px;background:var(--branco);'
+        'box-shadow:0 12px 48px rgba(11,31,58,.28),0 2px 8px rgba(11,31,58,.12);overflow:hidden;}'
+        '.cab{CAB_BG_VARposition:relative;overflow:hidden;}'
+        '.cab-ov{background:OV_BG_VAR;padding:26px 30px 0;position:relative;}'
+        '.cab-stripe{position:absolute;top:0;left:0;right:0;height:3px;background:var(--ambar);}'
+        '.cab-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:4px;}'
+        '.cab-tit{font-family:var(--f-display);font-size:52px;font-weight:700;color:#FFFFFF;line-height:.92;letter-spacing:1px;}'
+        '.cab-logos{display:flex;gap:8px;align-items:center;flex-shrink:0;'
+        'background:rgba(255,255,255,0.10);border:1px solid rgba(255,255,255,0.16);'
+        'border-radius:3px;padding:6px 10px;margin-top:6px;}'
+        '.cab-sub{font-family:var(--f-display);font-size:17px;font-weight:500;'
+        'color:#E9B847;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:5px;}'
+        '.cab-desc{font-size:12.5px;color:DESC_COL_VAR;line-height:1.55;margin-bottom:18px;max-width:680px;}'
+        '.meta-bar{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid rgba(255,255,255,0.12);}'
+        '.mc{padding:10px 14px 10px 0;border-right:1px solid rgba(255,255,255,0.12);}'
+        '.mc:first-child{padding-left:0;}.mc:last-child{border-right:none;}'
+        '.mc-label{font-size:8.5px;font-weight:700;letter-spacing:2.2px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:3px;}'
+        '.mc-val{font-size:11.5px;font-weight:600;color:#FFFFFF;line-height:1.3;}'
+        '.resumo{padding:18px 30px 16px;border-bottom:1px solid var(--cinza1);font-size:13px;color:var(--texto);line-height:1.72;}'
+        '.grade{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--cinza1);}'
+        '.col-e{border-right:1px solid var(--cinza1);}'
+        '.sh{display:flex;align-items:center;gap:8px;padding:9px 18px;'
+        'font-family:var(--f-display);font-size:13px;font-weight:600;letter-spacing:2px;text-transform:uppercase;}'
+        '.sh-g{background:var(--verde);color:#fff;}'
+        '.sh-r{background:var(--verm);color:#fff;}'
+        '.sh-b{background:var(--azul);color:#fff;}'
+        '.sh-o{background:ORI_COR_VAR;color:ORI_TXT_VAR;}'
+        '.sh-pip{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,0.5);flex-shrink:0;}'
+        '.sb{padding:14px 18px;min-height:124px;}'
+        '.li{display:flex;align-items:flex-start;gap:9px;margin-bottom:8px;font-size:12px;color:var(--texto);line-height:1.45;}'
+        '.li-dot{width:8px;height:8px;flex-shrink:0;margin-top:4px;}'
+        '.ci{display:flex;align-items:flex-start;gap:10px;margin-bottom:11px;}'
+        '.ci-bullet{width:3px;min-height:36px;background:var(--verm);flex-shrink:0;margin-top:2px;border-radius:2px;}'
+        '.ci-t{font-size:12px;font-weight:700;color:var(--texto);margin-bottom:2px;line-height:1.3;}'
+        '.ci-d{font-size:11px;color:var(--cinza2);line-height:1.4;}'
+        '.ori-container{padding:0 18px 12px;}'
+        '.ori-macro-wrap{position:relative;overflow:hidden;height:88px;margin:8px 0 0;}'
+        '.ori-macro{font-family:var(--f-display);font-size:90px;font-weight:700;'
+        'color:ORI_COR_VAR;letter-spacing:6px;text-transform:uppercase;'
+        'line-height:1;position:absolute;top:0;left:0;right:0;text-align:center;white-space:nowrap;}'
+        '.ori-cut{position:absolute;top:50%;left:0;right:0;height:2px;background:ORI_COR_VAR;opacity:0.22;transform:translateY(-50%);}'
+        '.ori-rule{display:flex;align-items:center;gap:8px;margin-top:4px;}'
+        '.ori-rule-line{flex:1;height:1px;background:var(--cinza1);}'
+        '.ori-rule-txt{font-size:8px;font-weight:700;letter-spacing:2.5px;color:var(--cinza2);text-transform:uppercase;white-space:nowrap;}'
+        '.arg-wrap{margin-top:10px;padding:10px 12px;background:var(--fundo);border-left:3px solid ORI_COR_VAR;}'
+        '.arg-eyebrow{font-size:8px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--cinza2);margin-bottom:5px;}'
+        '.arg-body{font-size:12px;color:var(--texto);line-height:1.6;font-style:italic;}'
+        '.np-wrap{border-top:1px solid var(--cinza1);}'
+        '.np-grid{display:grid;grid-template-columns:1fr 1fr;padding:14px 18px;gap:4px 20px;}'
+        '.rod{height:4px;background:ORI_COR_VAR;}'
+        '@media print{body{background:#fff;padding:0;}.banner{box-shadow:none;width:100%;}'
+        '.np-btn{display:none!important;}@page{size:A4 portrait;margin:0;}}'
+    )
+    CSS = (CSS
+        .replace('ORI_COR_VAR', ORI_COR)
+        .replace('ORI_TXT_VAR', ORI_TXT)
+        .replace('CAB_BG_VAR', 'background-color:#0B1F3A;' + imagem_css)
+        .replace('OV_BG_VAR', ov_bg)
+        .replace('DESC_COL_VAR', desc_col)
+    )
+
+    titulo_esc  = _e(d.get('titulo_curto', proposicao))
+    sub_esc     = _e(d.get('subtitulo', ''))
+    desc_esc    = _e(d.get('descricao_curta', ementa[:110]))
+    resumo_esc  = _e(d.get('resumo_executivo', ementa))
+    just_esc    = _e(d.get('justificativa_oficial', ''))
+    autor_esc   = _e(autor[:55] or '&mdash;')
+    regime_esc  = _e(regime or 'Ordinario')
+    comis_esc   = _e(comissoes or 'Plenario')
+    relator_esc = _e(relator[:55] or '&mdash;')
+
+    html = (
+        '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Banner</title>'
+        '<link rel="preconnect" href="https://fonts.googleapis.com">'
+        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+        '<link href="https://fonts.googleapis.com/css2?family=Teko:wght@500;600;700'
+        '&amp;family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&amp;display=swap" rel="stylesheet">'
+        '<style>' + CSS + '</style></head><body>'
+        '<div class="banner">'
+        '<div class="cab"><div class="cab-ov">'
+        '<div class="cab-stripe"></div>'
+        '<div class="cab-row">'
+        '<div class="cab-tit">' + titulo_esc + '</div>'
+        '<div class="cab-logos">' + logos_html + '</div>'
+        '</div>'
+        '<div class="cab-sub">' + sub_esc + '</div>'
+        '<div class="cab-desc">' + desc_esc + '</div>'
+        '<div class="meta-bar">'
+        '<div class="mc"><div class="mc-label">Autor</div><div class="mc-val">' + autor_esc + '</div></div>'
+        '<div class="mc"><div class="mc-label">Regime</div><div class="mc-val">' + regime_esc + '</div></div>'
+        '<div class="mc"><div class="mc-label">Comiss&otilde;es</div><div class="mc-val">' + comis_esc + '</div></div>'
+        '<div class="mc"><div class="mc-label">Relator</div><div class="mc-val">' + relator_esc + '</div></div>'
+        '</div></div></div>'
+        '<div class="resumo">' + resumo_esc + '</div>'
+        '<div class="grade">'
+        '<div class="col-e">'
+        '<div class="sh sh-g"><div class="sh-pip"></div>O que o projeto prev&ecirc;</div>'
+        '<div class="sb">' + _check(d.get('o_que_preve',[])) + '</div>'
+        '</div>'
+        '<div>'
+        '<div class="sh sh-r"><div class="sh-pip"></div>Cr&iacute;ticas</div>'
+        '<div class="sb">' + _criticas(d.get('criticas',[])) + '</div>'
+        '</div>'
+        '</div>'
+        '<div class="grade">'
+        '<div class="col-e">'
+        '<div class="sh sh-b"><div class="sh-pip"></div>Justificativa oficial</div>'
+        '<div class="sb" style="font-size:12px;color:var(--texto);line-height:1.65;">' + just_esc + '</div>'
+        '</div>'
+        '<div>'
+        '<div class="sh sh-o"><div class="sh-pip"></div>Orienta&ccedil;&atilde;o</div>'
+        '<div class="sb" style="padding:0 0 4px;">'
+        '<div class="ori-container">'
+        '<div class="ori-macro-wrap">'
+        '<div class="ori-macro">' + ORI_LABEL + '</div>'
+        '<div class="ori-cut"></div>'
+        '</div>'
+        '<div class="ori-rule">'
+        '<div class="ori-rule-line"></div>'
+        '<span class="ori-rule-txt">Lideran&ccedil;a da Minoria &middot; C&acirc;mara dos Deputados</span>'
+        '<div class="ori-rule-line"></div>'
+        '</div>'
+        + arg_block +
+        '</div></div></div></div>'
+        '<div class="np-wrap">'
+        '<div class="sh sh-g" style="border-top:1px solid var(--cinza1);">'
+        '<div class="sh-pip"></div>Na pr&aacute;tica</div>'
+        '<div class="np-grid">' + _check(d.get('na_pratica',[])) + '</div>'
+        '</div>'
+        '<div class="rod"></div>'
+        '</div>'
+        '<div class="np-btn" style="margin-top:18px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">'
+        '<button onclick="window.print()" style="background:' + ORI_COR + ';color:#fff;border:none;'
+        'padding:9px 24px;border-radius:3px;cursor:pointer;font-size:13px;font-weight:700;">'
+        '&#128424; Imprimir / Salvar PDF</button>'
+        '<button onclick="window.close()" style="background:#475569;color:#fff;border:none;'
+        'padding:9px 16px;border-radius:3px;cursor:pointer;font-size:13px;">&#10005; Fechar</button>'
+        '</div>'
+        '</body></html>'
+    )
+
+    return jsonify({'success': True, 'html': html, 'fonte': fonte})
+
+
+@app.route('/exportar_banner_png', methods=['POST'])
+@login_required
+def exportar_banner_png():
+    """Converte HTML do banner em PNG via Playwright headless."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return jsonify({'error': 'Playwright nao instalado.'}), 500
+    data = request.get_json()
+    html = data.get('html', '')
+    if not html:
+        return jsonify({'error': 'HTML nao fornecido.'}), 400
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
+            page = browser.new_page(viewport={'width': 850, 'height': 1200})
+            page.set_content(html, wait_until='networkidle')
+            page.wait_for_timeout(1800)
+            banner = page.query_selector('.banner')
+            png_bytes = banner.screenshot(type='png') if banner else page.screenshot(type='png', full_page=True)
+            browser.close()
+        resp = make_response(png_bytes)
+        resp.headers['Content-Type'] = 'image/png'
+        resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.png"'
+        return resp
+    except Exception as e:
+        logger.error('exportar_banner_png: ' + str(e))
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/exportar_banner_pdf', methods=['POST'])
+@login_required
+def exportar_banner_pdf():
+    """Converte HTML do banner em PDF via Playwright headless."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return jsonify({'error': 'Playwright nao instalado.'}), 500
+    data = request.get_json()
+    html = data.get('html', '')
+    if not html:
+        return jsonify({'error': 'HTML nao fornecido.'}), 400
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
+            page = browser.new_page(viewport={'width': 850, 'height': 1200})
+            page.set_content(html, wait_until='networkidle')
+            page.wait_for_timeout(1800)
+            pdf_bytes = page.pdf(
+                format='A4', print_background=True,
+                margin={'top':'0.4cm','bottom':'0.4cm','left':'0.4cm','right':'0.4cm'}
+            )
+            browser.close()
+        resp = make_response(pdf_bytes)
+        resp.headers['Content-Type'] = 'application/pdf'
+        resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.pdf"'
+        return resp
+    except Exception as e:
+        logger.error('exportar_banner_pdf: ' + str(e))
+        return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
