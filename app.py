@@ -11,18 +11,56 @@ from datetime import datetime, timedelta, timezone
 # Fuso horário de Brasília (UTC-3)
 TZ_BRASILIA = timezone(timedelta(hours=-3))
 
-# ── Helper Gemini com retry automático ──────────────────────────────────────
-# gemini-2.0-flash descontinuado (404). Usa gemini-1.5-flash (estável) com
-# fallback para gemini-1.5-flash-latest se o primeiro falhar.
-GEMINI_MODEL = "gemini-1.5-flash"
+# ── Helper Gemini com detecção automática de modelo ─────────────────────────
+GEMINI_MODEL = "gemini-2.0-flash"  # fallback fixo
+_gemini_modelo_cache = {"modelo": None}  # cache em memória
 
-# Dict temporário: texto bruto do PDF por chave REQSN
-_texto_pdf_por_chave = {}
+GEMINI_PREFERENCIA = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+    "gemini-1.5-pro",
+]
+
+def detectar_modelo_gemini(key):
+    """Consulta API Gemini e retorna o melhor modelo disponível.
+    Resultado cacheado em memória para não repetir a chamada a cada request."""
+    if _gemini_modelo_cache["modelo"]:
+        return _gemini_modelo_cache["modelo"]
+    try:
+        r = requests.get(
+            "https://generativelanguage.googleapis.com/v1beta/models?key=" + key,
+            timeout=8
+        )
+        if not r.ok:
+            logger.warning(f"detectar_modelo_gemini: HTTP {r.status_code}")
+            return GEMINI_MODEL
+        modelos_disponiveis = [
+            m["name"].split("/")[-1]
+            for m in r.json().get("models", [])
+            if "generateContent" in m.get("supportedGenerationMethods", [])
+        ]
+        logger.info(f"Modelos Gemini disponíveis: {modelos_disponiveis}")
+        for preferido in GEMINI_PREFERENCIA:
+            if preferido in modelos_disponiveis:
+                _gemini_modelo_cache["modelo"] = preferido
+                logger.info(f"Modelo Gemini selecionado: {preferido}")
+                return preferido
+        # Se nenhum da lista, usa o primeiro disponível
+        if modelos_disponiveis:
+            _gemini_modelo_cache["modelo"] = modelos_disponiveis[0]
+            return modelos_disponiveis[0]
+    except Exception as e:
+        logger.warning(f"detectar_modelo_gemini falhou: {e}")
+    return GEMINI_MODEL
 
 def gemini_post(key, prompt, max_tokens=1500, temperatura=0.3, tentativas=3):
-    """Chama a API Gemini com retry automático em caso de rate limit (429)."""
+    """Chama a API Gemini com retry automático em caso de rate limit (429).
+    Detecta automaticamente o modelo ativo via API."""
     import time
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}"
+    modelo = detectar_modelo_gemini(key)
+    url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + key
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperatura}
@@ -35,6 +73,13 @@ def gemini_post(key, prompt, max_tokens=1500, temperatura=0.3, tentativas=3):
                 espera = 5 * (i + 1)
                 logger.warning(f"Gemini 429 — aguardando {espera}s (tentativa {i+1}/{tentativas})")
                 time.sleep(espera)
+                continue
+            if r.status_code == 404:
+                # Modelo não existe mais — limpa cache e tenta novamente
+                logger.warning(f"Gemini 404 — modelo {modelo} não encontrado, limpando cache")
+                _gemini_modelo_cache["modelo"] = None
+                modelo = detectar_modelo_gemini(key)
+                url = "https://generativelanguage.googleapis.com/v1beta/models/" + modelo + ":generateContent?key=" + key
                 continue
             r.raise_for_status()
             return r.json()['candidates'][0]['content']['parts'][0]['text']
@@ -76,49 +121,24 @@ def cloudflare_post(prompt, max_tokens=1500, temperatura=0.3):
         headers={"Authorization": f"Bearer {cf_token}", "Content-Type": "application/json"},
         json={"messages": [{"role": "user", "content": prompt}],
               "max_tokens": max_tokens, "temperature": temperatura},
-        timeout=25
+        timeout=15
     )
     r.raise_for_status()
     return r.json()['result']['response']
 
 
 def ia_chain(prompt, max_tokens=1500, temperatura=0.3, contexto=""):
-    """Cadeia tripla: Groq → Cloudflare AI → Gemini. Máx 15s por tentativa.
+    """Cadeia tripla: Gemini → Groq → Cloudflare AI. Máx 15s por tentativa.
     Retorna (texto, fonte) ou lança Exception se todos falharem."""
     erros = []
 
-    # Log diagnóstico (só na primeira chamada ou em erro)
+    # Log diagnóstico
     groq_ok = bool(os.environ.get('GROQ_API_KEY', ''))
     cf_ok   = bool(os.environ.get('CF_ACCOUNT_ID', '') and os.environ.get('CF_API_TOKEN', ''))
     gem_ok  = bool(os.environ.get('GEMINI_API_KEY', ''))
-    logger.info(f"ia_chain [{contexto}] chaves: GROQ={'✅' if groq_ok else '❌'} CF={'✅' if cf_ok else '❌'} GEMINI={'✅' if gem_ok else '❌'}")
+    logger.info(f"ia_chain [{contexto}] chaves: GEMINI={'✅' if gem_ok else '❌'} GROQ={'✅' if groq_ok else '❌'} CF={'✅' if cf_ok else '❌'}")
 
-    # 1. Groq (llama-3.3-70b, 30 RPM gratuito)
-    groq_key = os.environ.get('GROQ_API_KEY', '')
-    if groq_key:
-        try:
-            texto = groq_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
-            if texto and texto.strip():
-                logger.info(f"ia_chain [{contexto}]: Groq OK")
-                return texto, 'groq'
-        except Exception as e:
-            logger.warning(f"ia_chain [{contexto}]: Groq falhou — {e}")
-            erros.append(f"Groq: {e}")
-
-    # 2. Cloudflare Workers AI (llama-3.1-70b, 500 RPM gratuito)
-    cf_account = os.environ.get('CF_ACCOUNT_ID', '')
-    cf_token   = os.environ.get('CF_API_TOKEN', '')
-    if cf_account and cf_token:
-        try:
-            texto = cloudflare_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
-            if texto and texto.strip():
-                logger.info(f"ia_chain [{contexto}]: Cloudflare OK")
-                return texto, 'cloudflare'
-        except Exception as e:
-            logger.warning(f"ia_chain [{contexto}]: Cloudflare falhou — {e}")
-            erros.append(f"Cloudflare: {e}")
-
-    # 3. Gemini (fallback final)
+    # 1. Gemini (modelo detectado automaticamente)
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     if gemini_key:
         try:
@@ -130,6 +150,31 @@ def ia_chain(prompt, max_tokens=1500, temperatura=0.3, contexto=""):
         except Exception as e:
             logger.warning(f"ia_chain [{contexto}]: Gemini falhou — {e}")
             erros.append(f"Gemini: {e}")
+
+    # 2. Groq (llama-3.3-70b, 30 RPM gratuito)
+    groq_key = os.environ.get('GROQ_API_KEY', '')
+    if groq_key:
+        try:
+            texto = groq_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
+            if texto and texto.strip():
+                logger.info(f"ia_chain [{contexto}]: Groq OK")
+                return texto, 'groq'
+        except Exception as e:
+            logger.warning(f"ia_chain [{contexto}]: Groq falhou — {e}")
+            erros.append(f"Groq: {e}")
+
+    # 3. Cloudflare Workers AI (llama-3.1-70b, 500 RPM gratuito)
+    cf_account = os.environ.get('CF_ACCOUNT_ID', '')
+    cf_token   = os.environ.get('CF_API_TOKEN', '')
+    if cf_account and cf_token:
+        try:
+            texto = cloudflare_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
+            if texto and texto.strip():
+                logger.info(f"ia_chain [{contexto}]: Cloudflare OK")
+                return texto, 'cloudflare'
+        except Exception as e:
+            logger.warning(f"ia_chain [{contexto}]: Cloudflare falhou — {e}")
+            erros.append(f"Cloudflare: {e}")
 
     raise Exception("Todos os provedores falharam: " + " | ".join(erros))
 
@@ -582,9 +627,6 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
         from bs4 import BeautifulSoup
         import pdfplumber
 
-        global _texto_pdf_por_chave
-        _texto_pdf_por_chave = {}
-
         # Passo 1: Busca o PDF de pauta na página do evento
         url_evento = f"https://www.camara.leg.br/evento-legislativo/{evento_id}"
         r = requests.get(url_evento, headers={
@@ -835,34 +877,11 @@ def buscar_ordem_oficial(evento_id, data_evento=''):
                     chave = f"REQSN_{sigla_pl}{num_pl}/{ano_pl}"
                     logger.info(f"  Item {num} (REQ s/nº → {sigla_pl} {num_pl}/{ano_pl}): chave={chave}")
                 else:
-                    # Tenta PDL, PEC, MPV, PRC
-                    m_pdl = re.search(
-                        r'(Projeto\s+de\s+Decreto\s+Legislativo'
-                        r'|Proposta\s+de\s+Emenda\s+[A\u00c0]\s+Constitui[c\u00e7][a\u00e3]o'
-                        r'|Medida\s+Provis[o\u00f3]ria'
-                        r'|Projeto\s+de\s+Resolu[c\u00e7][a\u00e3]o)'
-                        r'\s+n[\u00ba\u00b0.]?\s*([\d.]+),?\s*de\s+(\d{4})',
-                        bloco_req, re.IGNORECASE
-                    )
-                    if m_pdl:
-                        t2 = m_pdl.group(1).upper()
-                        n2 = m_pdl.group(2).replace('.','')
-                        a2 = m_pdl.group(3)
-                        if 'DECRETO' in t2:   sg = 'PDL'
-                        elif 'EMENDA' in t2:  sg = 'PEC'
-                        elif 'MEDIDA' in t2:  sg = 'MPV'
-                        elif 'RESOLU' in t2:  sg = 'PRC'
-                        else:                 sg = 'PDL'
-                        chave = f"REQSN_{sg}{n2}/{a2}"
-                        logger.info(f"  Item {num} (REQ s/nº → {sg} {n2}/{a2}): chave={chave}")
-                    else:
-                        chave = f"REQSN{req_sn_count}"
-                        logger.info(f"  Item {num} (REQ s/nº sem ref): chave={chave}")
+                    chave = f"REQSN{req_sn_count}"
+                    logger.info(f"  Item {num} (REQ s/nº): chave={chave}")
                 req_sn_count += 1
                 ordem[chave] = num
                 posicoes_usadas_final[num] = chave
-                # Salva bloco bruto para uso no placeholder
-                _texto_pdf_por_chave[chave] = bloco_req
 
         # Preenche gaps de posição usando cabeçalhos de PL/PLP/PEC no texto
         # Ex: "PROJETO DE LEI Nº 5.868, DE 2025" aparece entre pos 18 e 20 → pos 19
@@ -1190,13 +1209,11 @@ def fetch_pauta(evento_id, force_reload=False):
                         'saved_at':         notas.get(key, {}).get('saved_at', ''),
                         'destaques_emendas': []
                     })
-                elif cod_pdf.startswith('REQSN'):
-                    # REQ s/nº sem match direto na API.
-                    # Tenta resolver o PL/PDL/PLP/PEC/MPV referenciado na chave.
-                    resolvido = False
-                    m_ref = re.search(r'REQSN_([A-Z]+)(\d+)/(\d{4})', cod_pdf)
+                elif cod_pdf.startswith('REQSN_'):
+                    # REQ s/n sem match na API — busca o PL referenciado diretamente
+                    m_ref = re.search(r'REQSN_((?:PL|PLP)(\d+)/(\d{4}))', cod_pdf)
                     if m_ref:
-                        sigla_ref = m_ref.group(1)
+                        sigla_ref = 'PLP' if 'PLP' in m_ref.group(1) else 'PL'
                         num_ref   = m_ref.group(2)
                         ano_ref   = m_ref.group(3)
                         try:
@@ -1207,159 +1224,38 @@ def fetch_pauta(evento_id, force_reload=False):
                             )
                             dados_pl = r_pl.json().get('dados', []) if r_pl.ok else []
                             if dados_pl:
-                                pl    = dados_pl[0]
+                                pl = dados_pl[0]
                                 id_pl = str(pl.get('id', ''))
-                                if id_pl and id_pl not in vistos_ids:
-                                    vistos_ids.add(id_pl)
-                                    key = f"PROP_{id_pl}"
-                                    projeto_req = f"REQ s/nº ao {sigla_ref} {num_ref}/{ano_ref}"
-                                    itens.append({
-                                        'ordem':            str(len(itens) + 1),
-                                        'id_principal':     id_pl,
-                                        'projeto':          projeto_req,
-                                        'projeto_original': projeto_req,
-                                        'ementa':           pl.get('ementa', ''),
-                                        'autor':            'Líderes',
-                                        'relator':          'Não atribuído',
-                                        'situacao':         pl.get('statusProposicao', {}).get('descricaoSituacao', 'N/D') if isinstance(pl.get('statusProposicao'), dict) else 'N/D',
-                                        'secao':            'N/D',
-                                        'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
-                                        'orientacao':       notas.get(key, {}).get('orientacao', ''),
-                                        'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
-                                        'saved_by':         notas.get(key, {}).get('saved_by', ''),
-                                        'saved_at':         notas.get(key, {}).get('saved_at', ''),
-                                        'destaques_emendas': []
-                                    })
-                                    logger.info(f"REQSN resolvido via API: {cod_pdf} → {sigla_ref} {num_ref}/{ano_ref} id={id_pl}")
-                                    resolvido = True
+                                if id_pl in vistos_ids:
+                                    continue
+                                vistos_ids.add(id_pl)
+                                key = f"PROP_{id_pl}"
+                                projeto_req = f"REQ s/nº ao {sigla_ref} {num_ref}/{ano_ref}"
+                                itens.append({
+                                    'ordem':            str(len(itens) + 1),
+                                    'id_principal':     id_pl,
+                                    'projeto':          projeto_req,
+                                    'projeto_original': projeto_req,
+                                    'ementa':           pl.get('ementa', ''),
+                                    'autor':            'Líderes',
+                                    'relator':          'Não atribuído',
+                                    'situacao':         pl.get('statusProposicao', {}).get('descricaoSituacao', 'N/D') if isinstance(pl.get('statusProposicao'), dict) else 'N/D',
+                                    'secao':            'N/D',
+                                    'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
+                                    'orientacao':       notas.get(key, {}).get('orientacao', ''),
+                                    'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
+                                    'saved_by':         notas.get(key, {}).get('saved_by', ''),
+                                    'saved_at':         notas.get(key, {}).get('saved_at', ''),
+                                    'destaques_emendas': []
+                                })
+                                logger.info(f"REQSN resolvido via API: {cod_pdf} → {sigla_ref} {num_ref}/{ano_ref} id={id_pl}")
+                            else:
+                                logger.warning(f"REQSN: PL {num_ref}/{ano_ref} não encontrado na API")
                         except Exception as e:
-                            logger.warning(f"Erro ao resolver REQSN {cod_pdf} via API: {e}")
-
-                    if not resolvido:
-                        # Usa dados extraídos do próprio texto do PDF
-                        id_ficticio = f"REQSN_{cod_pdf}_{len(itens)}"
-                        key = f"PROP_{id_ficticio}"
-                        bloco_pdf = _texto_pdf_por_chave.get(cod_pdf, '')
-
-                        # Título da proposição
-                        projeto_req = 'REQ s/nº'
-                        ementa_req  = ''
-                        autor_req   = 'Líderes'
-
-                        if bloco_pdf:
-                            # Título: extrai a proposição referenciada do bloco
-                            m_ref2 = re.search(
-                                r'(Projeto\s+de\s+(?:Lei(?:\s+Complementar)?|Decreto\s+Legislativo|Resolu[cç][aã]o)'
-                                r'|Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o'
-                                r'|Medida\s+Provis[oó]ria)'
-                                r'\s+(?:n[º°.]?\s*)?([\d.]+),?\s*de\s+(\d{4})',
-                                bloco_pdf, re.IGNORECASE
-                            )
-                            if m_ref2:
-                                tp = m_ref2.group(1).upper()
-                                if 'COMPLEMENTAR' in tp: sg2 = 'PLP'
-                                elif 'DECRETO' in tp:    sg2 = 'PDL'
-                                elif 'EMENDA' in tp:     sg2 = 'PEC'
-                                elif 'MEDIDA' in tp:     sg2 = 'MPV'
-                                elif 'RESOLU' in tp:     sg2 = 'PRC'
-                                else:                    sg2 = 'PL'
-                                n2 = m_ref2.group(2).replace('.','')
-                                a2 = m_ref2.group(3)
-                                projeto_req = f"REQ s/nº ao {sg2} {n2}/{a2}"
-                            else:
-                                # Usa primeira linha do bloco como título
-                                primeira = [l.strip() for l in bloco_pdf.split('\n') if l.strip()]
-                                if primeira:
-                                    projeto_req = f"REQ s/nº — {primeira[0][:80]}"
-
-                            # Ementa: texto após "que requer" ou bloco completo
-                            m_em = re.search(
-                                r'que\s+requer[^,]*,\s*(.{10,400}?)(?:\.\s|$)',
-                                bloco_pdf, re.IGNORECASE | re.DOTALL
-                            )
-                            if m_em:
-                                ementa_req = re.sub(r'\s+', ' ', m_em.group(1)).strip()[:400]
-                            else:
-                                ementa_req = re.sub(r'\s+', ' ', bloco_pdf).strip()[:400]
-
-                            # Autor: "dos Srs.", "da Sra." etc.
-                            m_aut = re.search(
-                                r'd[oa]s?\s+(?:Srs?\.|Sras?\.)\s+(.{5,120}?)(?:,\s+que|\.\s|$)',
-                                bloco_pdf, re.IGNORECASE
-                            )
-                            if m_aut:
-                                autor_req = re.sub(r'\s+', ' ', m_aut.group(1)).strip()
-
-                        itens.append({
-                            'ordem':            str(len(itens) + 1),
-                            'id_principal':     id_ficticio,
-                            'projeto':          projeto_req,
-                            'projeto_original': projeto_req,
-                            'ementa':           ementa_req or '(ver PDF da pauta)',
-                            'autor':            autor_req,
-                            'relator':          'Não atribuído',
-                            'situacao':         'N/D',
-                            'secao':            'N/D',
-                            'resumo_materia':   notas.get(key, {}).get('resumo_materia', ''),
-                            'orientacao':       notas.get(key, {}).get('orientacao', ''),
-                            'resumo_parecer':   notas.get(key, {}).get('resumo_parecer', ''),
-                            'saved_by':         notas.get(key, {}).get('saved_by', ''),
-                            'saved_at':         notas.get(key, {}).get('saved_at', ''),
-                            'destaques_emendas': []
-                        })
-                        logger.warning(f"REQSN '{cod_pdf}' sem match na API — inserido com dados do PDF na posição {len(itens)}")
-
+                            logger.warning(f"Erro buscar PL para REQSN {cod_pdf}: {e}")
                 else:
-                    # Item do PDF não encontrado no itens_raw.
-                    # Pode estar "Em Análise" ou "Em Votação" — API de pauta
-                    # remove esses itens da lista normal.
-                    # Busca diretamente na API de proposições por código.
-                    m_cod2 = re.match(r'^([A-Z]+)(\d+)/(\d{4})$', cod_pdf)
-                    if m_cod2:
-                        sig2, num2, ano2 = m_cod2.group(1), m_cod2.group(2), m_cod2.group(3)
-                        try:
-                            r2 = requests.get(
-                                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
-                                f"?siglaTipo={sig2}&numero={num2}&ano={ano2}&itens=1",
-                                headers={'Accept': 'application/json'}, timeout=8
-                            )
-                            dados2 = r2.json().get('dados', []) if r2.ok else []
-                            if dados2:
-                                it2  = dados2[0]
-                                id_p = str(it2.get('id', ''))
-                                if id_p and id_p not in vistos_ids:
-                                    vistos_ids.add(id_p)
-                                    key2 = f"PROP_{id_p}"
-                                    cod2_str = f"{sig2} {num2}/{ano2}"
-                                    status2  = it2.get('statusProposicao', {}) or {}
-                                    sit2 = (status2.get('descricaoSituacao', '')
-                                            or it2.get('situacao', 'N/D'))
-                                    itens.append({
-                                        'ordem':            str(len(itens) + 1),
-                                        'id_principal':     id_p,
-                                        'projeto':          extrair_ref_pl(cod2_str, it2.get('ementa','')),
-                                        'projeto_original': cod2_str,
-                                        'ementa':           it2.get('ementa', ''),
-                                        'autor':            it2.get('autores', 'N/D'),
-                                        'relator':          it2.get('relator', 'Não atribuído'),
-                                        'situacao':         sit2 or 'N/D',
-                                        'secao':            'N/D',
-                                        'resumo_materia':   notas.get(key2, {}).get('resumo_materia', ''),
-                                        'orientacao':       notas.get(key2, {}).get('orientacao', ''),
-                                        'resumo_parecer':   notas.get(key2, {}).get('resumo_parecer', ''),
-                                        'saved_by':         notas.get(key2, {}).get('saved_by', ''),
-                                        'saved_at':         notas.get(key2, {}).get('saved_at', ''),
-                                        'destaques_emendas': []
-                                    })
-                                    logger.info(f"PDF item '{cod_pdf}' recuperado via API direta (possivelmente Em Análise): sit={sit2}")
-                                else:
-                                    logger.warning(f"PDF item '{cod_pdf}' já visto — ignorado")
-                            else:
-                                logger.warning(f"PDF item '{cod_pdf}' não encontrado nem na API direta")
-                        except Exception as e2:
-                            logger.warning(f"PDF item '{cod_pdf}' erro API direta: {e2}")
-                    else:
-                        logger.warning(f"PDF item '{cod_pdf}' sem padrão reconhecível — ignorado")
+                    # Item do PDF não encontrado na API — ignora
+                    logger.warning(f"PDF item '{cod_pdf}' não na API — ignorado")
 
             # Itens da API não encontrados no PDF — insere na posição correta
             # A posição é inferida pela sequência relativa na API
@@ -3427,12 +3323,9 @@ def analisar_destaque():
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     groq_key   = os.environ.get('GROQ_API_KEY', '')
 
-    # ── Classifica tipo de destaque ────────────────────────────────────────
+    # ── Destaque de emenda: busca e analisa o texto da emenda diretamente ──
     descricao_upper = descricao.upper()
-    # "Votação em separado" = destaque de texto do relator, NUNCA emenda
-    eh_separado = 'EM SEPARADO' in descricao_upper or 'VOTACAO EM SEPARADO' in descricao_upper
-    # Emenda: só se contiver EMENDA/EMD/SUBEMENDA E NÃO for "em separado"
-    eh_emenda = (not eh_separado) and any(p in descricao_upper for p in ['EMENDA', 'EMD', 'SUBEMENDA'])
+    eh_emenda = any(p in descricao_upper for p in ['EMENDA', 'EMD', 'SUBEMENDA'])
 
     # ── Destaque de emenda: usa URL passada diretamente pelo frontend ──
     url_emenda_sel = data.get('url_emenda', '')  # URL específica da emenda selecionada
@@ -3444,15 +3337,10 @@ def analisar_destaque():
 
         # Se não veio do frontend, tenta extrair da descrição
         if not num_emenda_desc:
-            # Estratégia 1: número explícito de emenda (ex: "Emenda nº 3", "EMD 42")
-            m_num_emd = re.search(r'(?:EMD|Emenda)\s*(?:n[º°.\s]*)?(\d+)(?!\s*/\s*\d{4})(?!\d)', descricao, re.IGNORECASE)
-            if m_num_emd:
-                num_emenda_desc = m_num_emd.group(1)
-            else:
-                # Estratégia 2: último número que NÃO seja um ano (< 2000)
-                todos_nums = re.findall(r'\d+', descricao)
-                candidatos = [n for n in todos_nums if int(n) < 2000 and int(n) > 0]
-                num_emenda_desc = candidatos[-1] if candidatos else (todos_nums[0] if todos_nums else '')
+            m_num_emd = re.search(r'(\d+)\s*$', descricao.strip())
+            if not m_num_emd:
+                m_num_emd = re.search(r'(?:EMD|Emenda)\s*(?:[^\d]*)(\d+)', descricao, re.IGNORECASE)
+            num_emenda_desc = m_num_emd.group(1) if m_num_emd else ''
 
         logger.info(f"Analisando emenda nº '{num_emenda_desc}' (frontend enviou: '{num_emenda_sel}') | descrição: {descricao}")
 
@@ -3608,30 +3496,12 @@ Não use ### ou ** fora do HTML. Não repita análise de outras emendas."""
 
         texto_truncado = texto_relevante if texto_relevante else texto_doc[:12000]
 
-    # Ajusta regra do prompt conforme tipo de destaque
-    if eh_separado:
-        regra_destaque = (
-            "REGRA FUNDAMENTAL — DESTAQUE DE VOTAÇÃO EM SEPARADO:\n"
-            "Este destaque isola um trecho do texto do relator para votação independente.\n"
-            "Voto SIM = MANTÉM o trecho do relator (aprovado como está)\n"
-            "Voto NÃO = SUPRIME ou ALTERA o trecho do relator\n"
-            "IMPORTANTE: NÃO mencione emenda. Explique o conteúdo do trecho destacado."
-        )
-    else:
-        regra_destaque = (
-            "REGRA FUNDAMENTAL — DESTAQUE DE TEXTO:\n"
-            "Voto SIM = MANTÉM o texto do relator\n"
-            "Voto NÃO = ALTERA o texto do relator"
-        )
-
     prompt = f"""Você é um assessor legislativo especializado na Câmara dos Deputados do Brasil.
 
 **Proposição:** {projeto}
 **Destaque:** {numero}
 **Descrição do Destaque:** {descricao}{nota_refs}
 **Documento analisado:** {tipo_doc}
-
-{regra_destaque}
 
 TEXTO COMPLETO DO DOCUMENTO:
 {texto_truncado if texto_truncado else '(texto não disponível)'}
@@ -4183,39 +4053,51 @@ def salvar_resumo_ia():
 @login_required
 def buscar_imagem_item():
     """Usa IA para extrair keywords e busca imagem via Wikimedia Commons (gratuito)."""
-    data      = request.get_json()
-    resumo    = data.get('resumo', '')
-    groq_key  = os.environ.get('GROQ_API_KEY', '')
+    data       = request.get_json()
+    resumo     = data.get('resumo', '')
+    groq_key   = os.environ.get('GROQ_API_KEY', '')
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
 
-    # Extrai 2-3 palavras-chave do resumo para busca de imagem
-    keywords = ''
-    prompt_kw = f"""Extraia 2 ou 3 palavras-chave em inglês para buscar uma imagem que ilustre o tema desta proposição legislativa brasileira.
-Responda APENAS com as palavras separadas por espaço, sem explicação.
-Proposição: {resumo[:300]}"""
+    resumo_trunc = str(resumo)[:300]
+    prompt_kw = ("Extraia 2 ou 3 palavras-chave em inglês para buscar uma imagem que ilustre "
+                 "o tema desta proposição legislativa brasileira.\n"
+                 "Responda APENAS com as palavras separadas por espaço, sem explicação.\n"
+                 "Proposição: " + resumo_trunc)
 
-    for key, url, body_fn in [
-        (gemini_key,
-         f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}",
-         lambda: {"contents":[{"parts":[{"text":prompt_kw}]}],"generationConfig":{"maxOutputTokens":20,"temperature":0.1}}),
-        (groq_key,
-         "https://api.groq.com/openai/v1/chat/completions",
-         lambda: {"model":"llama-3.3-70b-versatile","messages":[{"role":"user","content":prompt_kw}],"max_tokens":20,"temperature":0.1}),
-    ]:
-        if not key: continue
+    keywords = ''
+
+    # Tenta Gemini
+    if gemini_key and not keywords:
         try:
-            headers = {"Content-Type": "application/json"}
-            if 'groq' in url: headers["Authorization"] = f"Bearer {key}"
-            r = requests.post(url, headers=headers, json=body_fn(), timeout=8)
+            r = requests.post(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + gemini_key,
+                headers={"Content-Type": "application/json"},
+                json={"contents": [{"parts": [{"text": prompt_kw}]}],
+                      "generationConfig": {"maxOutputTokens": 20, "temperature": 0.1}},
+                timeout=8
+            )
             if r.ok:
-                if 'generativelanguage' in url:
-                    keywords = r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
-                else:
-                    keywords = r.json()['choices'][0]['message']['content'].strip()
+                keywords = r.json()['candidates'][0]['content']['parts'][0]['text'].strip()
                 keywords = re.sub(r'[^\w\s]', '', keywords).strip()
-                break
         except Exception as e:
-            logger.warning(f"Erro keywords imagem: {e}")
+            logger.warning(f"Erro keywords imagem (Gemini): {e}")
+
+    # Tenta Groq
+    if groq_key and not keywords:
+        try:
+            r = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": "Bearer " + groq_key, "Content-Type": "application/json"},
+                json={"model": "llama-3.3-70b-versatile",
+                      "messages": [{"role": "user", "content": prompt_kw}],
+                      "max_tokens": 20, "temperature": 0.1},
+                timeout=8
+            )
+            if r.ok:
+                keywords = r.json()['choices'][0]['message']['content'].strip()
+                keywords = re.sub(r'[^\w\s]', '', keywords).strip()
+        except Exception as e:
+            logger.warning(f"Erro keywords imagem (Groq): {e}")
 
     if not keywords:
         keywords = 'brazil congress law'
@@ -4759,415 +4641,6 @@ def diagnostico():
     finally:
         conn.close()
     return jsonify(resultado)
-
-
-@app.route('/gerar_banner_proposicao', methods=['POST'])
-@login_required
-def gerar_banner_proposicao():
-    """Gera banner HTML de orientacao de bancada - design refinado Teko+SourceSans."""
-    import base64 as _b64
-
-    proposicao   = request.form.get('proposicao', '')
-    ementa       = request.form.get('ementa', '')
-    autor        = request.form.get('autor', '')
-    relator      = request.form.get('relator', '')
-    regime       = request.form.get('regime', 'Ordinario')
-    comissoes    = request.form.get('comissoes', 'Plenario')
-    orientacao   = request.form.get('orientacao', 'SIM')
-    nota_tecnica = request.form.get('nota_tecnica', '')
-    resumo_extra = request.form.get('resumo_extra', '')
-
-    # Imagem de fundo opcional
-    imagem_css = ''
-    if 'imagem' in request.files:
-        f = request.files['imagem']
-        if f and f.filename:
-            raw  = f.read()
-            ext  = f.filename.rsplit('.', 1)[-1].lower()
-            mime = {'jpg':'image/jpeg','jpeg':'image/jpeg','png':'image/png','webp':'image/webp'}.get(ext,'image/jpeg')
-            b64  = _b64.b64encode(raw).decode('utf-8')
-            imagem_css = 'background-image:url("data:' + mime + ';base64,' + b64 + '");background-size:cover;background-position:center top;'
-
-    # Logos embutidos
-    def _logo(nome):
-        try:
-            with open(os.path.join(app.root_path, 'static', nome), 'rb') as fh:
-                return 'data:image/png;base64,' + _b64.b64encode(fh.read()).decode('utf-8')
-        except Exception:
-            return ''
-
-    logo_opo = _logo('logo_oposicao.png')
-    logo_min = _logo('logo_minoria.png')
-    logos_html = ''
-    if logo_opo:
-        logos_html += '<img src="' + logo_opo + '" alt="Oposicao" style="height:38px;object-fit:contain;">'
-    if logo_min:
-        logos_html += '<img src="' + logo_min + '" alt="Lideranca" style="height:38px;object-fit:contain;">'
-
-    # Config por orientacao
-    ORI = {
-        'SIM':        {'cor':'#1B6B3A','txt':'#fff','label':'SIM'},
-        'NAO':        {'cor':'#C9111E','txt':'#fff','label':'NAO'},
-        'NÃO':        {'cor':'#C9111E','txt':'#fff','label':'NAO'},
-        'NEGOCIACAO': {'cor':'#92600A','txt':'#fff','label':'NEGOCIACAO'},
-        'NEGOCIAÇÃO': {'cor':'#92600A','txt':'#fff','label':'NEGOCIACAO'},
-        'LIBERADO':   {'cor':'#0B1F3A','txt':'#fff','label':'LIBERADO'},
-        'OBSTRUCAO':  {'cor':'#C9111E','txt':'#fff','label':'OBSTRUCAO'},
-        'OBSTRUÇÃO':  {'cor':'#C9111E','txt':'#fff','label':'OBSTRUCAO'},
-        'ABSTENCAO':  {'cor':'#475569','txt':'#fff','label':'ABSTENCAO'},
-        'ABSTENÇÃO':  {'cor':'#475569','txt':'#fff','label':'ABSTENCAO'},
-    }
-    cfg = ORI.get(orientacao.upper(), {'cor':'#0B1F3A','txt':'#fff','label':orientacao.upper()})
-    ORI_COR   = cfg['cor']
-    ORI_TXT   = cfg['txt']
-    ORI_LABEL = cfg['label']
-
-    # Prompt IA
-    ctx = ''
-    if nota_tecnica and len(nota_tecnica.strip()) > 40:
-        ctx += '\n\nNOTA TECNICA:\n' + nota_tecnica[:4000]
-    if resumo_extra:
-        ctx += '\n\nCONTEXTO ADICIONAL:\n' + resumo_extra
-
-    prompt = (
-        'Voce e um assessor legislativo senior da Camara dos Deputados, trabalhando para a Minoria/Oposicao.\n\n'
-        'PROPOSICAO: ' + proposicao + '\nEMENTA: ' + ementa + '\nAUTOR: ' + autor + '\n'
-        'RELATOR: ' + relator + '\nREGIME: ' + regime + '\nCOMISSOES: ' + comissoes + '\nORIENTACAO: ' + orientacao + ctx + '\n\n'
-        'Gere APENAS um JSON valido, sem markdown:\n'
-        '{\n'
-        '  "titulo_curto": "(sigla+numero+ano, ex: PLP 114/2026, max 18 chars)",\n'
-        '  "subtitulo": "(frase impacto, max 7 palavras)",\n'
-        '  "descricao_curta": "(1 frase do que faz, max 110 chars)",\n'
-        '  "resumo_executivo": "(3-4 frases claras, max 180 palavras)",\n'
-        '  "o_que_preve": ["item 1","item 2","item 3","item 4","item 5","item 6"],\n'
-        '  "criticas": [\n'
-        '    {"titulo":"Critica 1","detalhe":"explicacao curta"},\n'
-        '    {"titulo":"Critica 2","detalhe":"explicacao curta"},\n'
-        '    {"titulo":"Critica 3","detalhe":"explicacao curta"}\n'
-        '  ],\n'
-        '  "justificativa_oficial": "(2-3 frases, max 90 palavras)",\n'
-        '  "argumento_chave": "(30 segundos de plenario, max 55 palavras)",\n'
-        '  "na_pratica": ["efeito 1","efeito 2","efeito 3","efeito 4","efeito 5"]\n'
-        '}\nResponda APENAS com o JSON.'
-    )
-
-    fonte = 'ia'
-    try:
-        texto_ia, fonte = ia_chain(prompt, max_tokens=1200, temperatura=0.3, contexto='gerar_banner')
-        texto_ia = re.sub(r'```(?:json)?|```', '', texto_ia).strip()
-        d = json.loads(texto_ia)
-    except json.JSONDecodeError as e:
-        logger.warning('gerar_banner: JSON invalido: ' + str(e))
-        d = {
-            'titulo_curto': proposicao[:18], 'subtitulo': ementa[:60],
-            'descricao_curta': ementa[:110], 'resumo_executivo': ementa,
-            'o_que_preve': ['Consulte a ementa'],
-            'criticas': [{'titulo':'Analise pendente','detalhe':'Gere novamente'}],
-            'justificativa_oficial': 'Nao disponivel.',
-            'argumento_chave': '', 'na_pratica': ['Consulte a nota tecnica'],
-        }
-    except Exception as e:
-        logger.error('gerar_banner: IA falhou: ' + str(e))
-        return jsonify({'success': False, 'error': 'IA indisponivel: ' + str(e)}), 503
-
-    # Helpers HTML
-    def _e(s):
-        return str(s or '').replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;')
-
-    def _check(itens):
-        rows = []
-        for it in (itens or []):
-            rows.append(
-                '<div class="li">'
-                '<svg class="li-dot" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="' + ORI_COR + '"/></svg>'
-                '<span>' + _e(it) + '</span></div>'
-            )
-        return ''.join(rows)
-
-    def _criticas(itens):
-        rows = []
-        for it in (itens or []):
-            tit = _e(it.get('titulo','') if isinstance(it,dict) else str(it))
-            det = _e(it.get('detalhe','') if isinstance(it,dict) else '')
-            rows.append(
-                '<div class="ci">'
-                '<div class="ci-bullet"></div>'
-                '<div><p class="ci-t">' + tit + '</p><p class="ci-d">' + det + '</p></div>'
-                '</div>'
-            )
-        return ''.join(rows)
-
-    has_img  = bool(imagem_css)
-    ov_bg    = 'rgba(11,31,58,0.72)' if has_img else 'rgba(11,31,58,0)'
-    desc_col = 'rgba(255,255,255,0.78)' if has_img else 'rgba(255,255,255,0.72)'
-
-    arg_block = ''
-    if d.get('argumento_chave'):
-        arg_block = (
-            '<div class="arg-wrap">'
-            '<p class="arg-eyebrow">Argumento-chave &mdash; 30 segundos de plen&aacute;rio</p>'
-            '<p class="arg-body">' + _e(d['argumento_chave']) + '</p>'
-            '</div>'
-        )
-
-    # CSS — construído como string simples, sem f-string, para evitar conflito com chaves CSS
-    CSS = (
-        '*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}'
-        ':root{'
-        '--azul:#0B1F3A;--verde:#1B6B3A;--verm:#C9111E;'
-        '--ambar:#E9B847;--fundo:#F2F5F8;--branco:#FFFFFF;'
-        '--cinza1:#E0E6ED;--cinza2:#64748B;--texto:#1A202C;'
-        '--ori:ORI_COR_VAR;'
-        '--f-display:"Teko",sans-serif;'
-        '--f-body:"Source Sans 3",sans-serif;'
-        '--f-mono:"Source Code Pro",monospace;'
-        '}'
-        'body{background:#C5D0DC;display:flex;flex-direction:column;align-items:center;'
-        'padding:24px;font-family:var(--f-body);-webkit-font-smoothing:antialiased;}'
-        '.banner{width:794px;background:var(--branco);'
-        'box-shadow:0 12px 48px rgba(11,31,58,.28),0 2px 8px rgba(11,31,58,.12);overflow:hidden;}'
-        '.cab{CAB_BG_VARposition:relative;overflow:hidden;}'
-        '.cab-ov{background:OV_BG_VAR;padding:26px 30px 0;position:relative;}'
-        '.cab-stripe{position:absolute;top:0;left:0;right:0;height:3px;background:var(--ambar);}'
-        '.cab-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:4px;}'
-        '.cab-tit{font-family:var(--f-display);font-size:52px;font-weight:700;'
-        'color:#FFFFFF;line-height:.92;letter-spacing:1px;}'
-        '.cab-logos{display:flex;gap:8px;align-items:center;flex-shrink:0;'
-        'background:rgba(255,255,255,0.10);border:1px solid rgba(255,255,255,0.16);'
-        'border-radius:3px;padding:6px 10px;margin-top:6px;}'
-        '.cab-sub{font-family:var(--f-display);font-size:17px;font-weight:500;'
-        'color:#E9B847;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:5px;}'
-        '.cab-desc{font-size:12.5px;color:DESC_COL_VAR;line-height:1.55;margin-bottom:18px;max-width:680px;}'
-        '.meta-bar{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid rgba(255,255,255,0.12);}'
-        '.mc{padding:10px 14px 10px 0;border-right:1px solid rgba(255,255,255,0.12);}'
-        '.mc:first-child{padding-left:0;}.mc:last-child{border-right:none;}'
-        '.mc-label{font-size:8.5px;font-weight:700;letter-spacing:2.2px;'
-        'color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:3px;}'
-        '.mc-val{font-size:11.5px;font-weight:600;color:#FFFFFF;line-height:1.3;}'
-        '.resumo{padding:18px 30px 16px;border-bottom:1px solid var(--cinza1);'
-        'font-size:13px;color:var(--texto);line-height:1.72;}'
-        '.grade{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--cinza1);}'
-        '.col-e{border-right:1px solid var(--cinza1);}'
-        '.sh{display:flex;align-items:center;gap:8px;padding:9px 18px;'
-        'font-family:var(--f-display);font-size:13px;font-weight:600;'
-        'letter-spacing:2px;text-transform:uppercase;}'
-        '.sh-g{background:var(--verde);color:#fff;}'
-        '.sh-r{background:var(--verm);color:#fff;}'
-        '.sh-b{background:var(--azul);color:#fff;}'
-        '.sh-o{background:ORI_COR_VAR;color:ORI_TXT_VAR;}'
-        '.sh-pip{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,0.5);flex-shrink:0;}'
-        '.sb{padding:14px 18px;min-height:124px;}'
-        '.li{display:flex;align-items:flex-start;gap:9px;margin-bottom:8px;'
-        'font-size:12px;color:var(--texto);line-height:1.45;}'
-        '.li-dot{width:8px;height:8px;flex-shrink:0;margin-top:4px;}'
-        '.ci{display:flex;align-items:flex-start;gap:10px;margin-bottom:11px;}'
-        '.ci-bullet{width:3px;min-height:36px;background:var(--verm);'
-        'flex-shrink:0;margin-top:2px;border-radius:2px;}'
-        '.ci-t{font-size:12px;font-weight:700;color:var(--texto);margin-bottom:2px;line-height:1.3;}'
-        '.ci-d{font-size:11px;color:var(--cinza2);line-height:1.4;}'
-        # Assinatura: orientação em macro com corte
-        '.ori-container{padding:0 18px 12px;}'
-        '.ori-macro-wrap{position:relative;overflow:hidden;height:88px;margin:8px 0 0;}'
-        '.ori-macro{font-family:var(--f-display);font-size:90px;font-weight:700;'
-        'color:ORI_COR_VAR;letter-spacing:6px;text-transform:uppercase;'
-        'line-height:1;position:absolute;top:0;left:0;right:0;text-align:center;white-space:nowrap;}'
-        '.ori-cut{position:absolute;top:50%;left:0;right:0;height:2px;'
-        'background:ORI_COR_VAR;opacity:0.22;transform:translateY(-50%);}'
-        '.ori-rule{display:flex;align-items:center;gap:8px;margin-top:4px;}'
-        '.ori-rule-line{flex:1;height:1px;background:var(--cinza1);}'
-        '.ori-rule-txt{font-size:8px;font-weight:700;letter-spacing:2.5px;'
-        'color:var(--cinza2);text-transform:uppercase;white-space:nowrap;}'
-        '.arg-wrap{margin-top:10px;padding:10px 12px;background:var(--fundo);'
-        'border-left:3px solid ORI_COR_VAR;}'
-        '.arg-eyebrow{font-size:8px;font-weight:700;letter-spacing:2px;'
-        'text-transform:uppercase;color:var(--cinza2);margin-bottom:5px;}'
-        '.arg-body{font-size:12px;color:var(--texto);line-height:1.6;font-style:italic;}'
-        '.np-wrap{border-top:1px solid var(--cinza1);}'
-        '.np-grid{display:grid;grid-template-columns:1fr 1fr;padding:14px 18px;gap:4px 20px;}'
-        '.rod{height:4px;background:ORI_COR_VAR;}'
-        '@media print{'
-        'body{background:#fff;padding:0;}'
-        '.banner{box-shadow:none;width:100%;}'
-        '.np-btn{display:none!important;}'
-        '@page{size:A4 portrait;margin:0;}'
-        '}'
-    )
-
-    # Substitui os placeholders pelas variáveis Python
-    CSS = (CSS
-        .replace('ORI_COR_VAR', ORI_COR)
-        .replace('ORI_TXT_VAR', ORI_TXT)
-        .replace('CAB_BG_VAR', 'background-color:#0B1F3A;' + imagem_css)
-        .replace('OV_BG_VAR', ov_bg)
-        .replace('DESC_COL_VAR', desc_col)
-    )
-
-    titulo_esc    = _e(d.get('titulo_curto', proposicao))
-    subtitulo_esc = _e(d.get('subtitulo', ''))
-    desc_esc      = _e(d.get('descricao_curta', ementa[:110]))
-    resumo_esc    = _e(d.get('resumo_executivo', ementa))
-    just_esc      = _e(d.get('justificativa_oficial', ''))
-    autor_esc     = _e(autor[:55] or '&mdash;')
-    regime_esc    = _e(regime or 'Ordinario')
-    comis_esc     = _e(comissoes or 'Plenario')
-    relator_esc   = _e(relator[:55] or '&mdash;')
-    check_preve   = _check(d.get('o_que_preve', []))
-    list_criticas = _criticas(d.get('criticas', []))
-    check_pratica = _check(d.get('na_pratica', []))
-
-    html = (
-        '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Banner</title>'
-        '<link rel="preconnect" href="https://fonts.googleapis.com">'
-        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
-        '<link href="https://fonts.googleapis.com/css2?family=Teko:wght@500;600;700'
-        '&amp;family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400'
-        '&amp;family=Source+Code+Pro:wght@500&amp;display=swap" rel="stylesheet">'
-        '<style>' + CSS + '</style></head><body>'
-        '<div class="banner">'
-
-        # Cabeçalho
-        '<div class="cab"><div class="cab-ov">'
-        '<div class="cab-stripe"></div>'
-        '<div class="cab-row">'
-        '<div class="cab-tit">' + titulo_esc + '</div>'
-        '<div class="cab-logos">' + logos_html + '</div>'
-        '</div>'
-        '<div class="cab-sub">' + subtitulo_esc + '</div>'
-        '<div class="cab-desc">' + desc_esc + '</div>'
-        '<div class="meta-bar">'
-        '<div class="mc"><div class="mc-label">Autor</div><div class="mc-val">' + autor_esc + '</div></div>'
-        '<div class="mc"><div class="mc-label">Regime</div><div class="mc-val">' + regime_esc + '</div></div>'
-        '<div class="mc"><div class="mc-label">Comiss&otilde;es</div><div class="mc-val">' + comis_esc + '</div></div>'
-        '<div class="mc"><div class="mc-label">Relator</div><div class="mc-val">' + relator_esc + '</div></div>'
-        '</div>'
-        '</div></div>'
-
-        # Resumo
-        '<div class="resumo">' + resumo_esc + '</div>'
-
-        # Grade 1: O que prevê | Críticas
-        '<div class="grade">'
-        '<div class="col-e">'
-        '<div class="sh sh-g"><div class="sh-pip"></div>O que o projeto prev&ecirc;</div>'
-        '<div class="sb">' + check_preve + '</div>'
-        '</div>'
-        '<div>'
-        '<div class="sh sh-r"><div class="sh-pip"></div>Cr&iacute;ticas</div>'
-        '<div class="sb">' + list_criticas + '</div>'
-        '</div>'
-        '</div>'
-
-        # Grade 2: Justificativa | Orientação
-        '<div class="grade">'
-        '<div class="col-e">'
-        '<div class="sh sh-b"><div class="sh-pip"></div>Justificativa oficial</div>'
-        '<div class="sb" style="font-size:12px;color:var(--texto);line-height:1.65;">' + just_esc + '</div>'
-        '</div>'
-        '<div>'
-        '<div class="sh sh-o"><div class="sh-pip"></div>Orienta&ccedil;&atilde;o</div>'
-        '<div class="sb" style="padding:0 0 4px;">'
-        '<div class="ori-container">'
-        '<div class="ori-macro-wrap">'
-        '<div class="ori-macro">' + ORI_LABEL + '</div>'
-        '<div class="ori-cut"></div>'
-        '</div>'
-        '<div class="ori-rule">'
-        '<div class="ori-rule-line"></div>'
-        '<span class="ori-rule-txt">Lideran&ccedil;a da Minoria &middot; C&acirc;mara dos Deputados</span>'
-        '<div class="ori-rule-line"></div>'
-        '</div>'
-        + arg_block +
-        '</div>'
-        '</div>'
-        '</div>'
-        '</div>'
-
-        # Na prática
-        '<div class="np-wrap">'
-        '<div class="sh sh-g" style="border-top:1px solid var(--cinza1);">'
-        '<div class="sh-pip"></div>Na pr&aacute;tica</div>'
-        '<div class="np-grid">' + check_pratica + '</div>'
-        '</div>'
-
-        '<div class="rod"></div>'
-        '</div>'  # /banner
-
-        '<div class="np-btn" style="margin-top:18px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">'
-        '<button onclick="window.print()" style="background:' + ORI_COR + ';color:#fff;border:none;'
-        'padding:9px 24px;border-radius:3px;cursor:pointer;font-size:13px;font-weight:700;'
-        'font-family:\'Source Sans 3\',sans-serif;">'
-        '&#128424; Imprimir / Salvar PDF</button>'
-        '<button onclick="window.close()" style="background:#475569;color:#fff;border:none;'
-        'padding:9px 16px;border-radius:3px;cursor:pointer;font-size:13px;">'
-        '&#10005; Fechar</button>'
-        '</div>'
-        '</body></html>'
-    )
-
-    return jsonify({'success': True, 'html': html, 'fonte': fonte})
-
-
-@app.route('/exportar_banner_png', methods=['POST'])
-@login_required
-def exportar_banner_png():
-    """Converte HTML do banner em PNG via Playwright headless."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return jsonify({'error': 'Playwright nao instalado.'}), 500
-    data = request.get_json()
-    html = data.get('html', '')
-    if not html:
-        return jsonify({'error': 'HTML nao fornecido.'}), 400
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
-            page = browser.new_page(viewport={'width': 850, 'height': 1200})
-            page.set_content(html, wait_until='networkidle')
-            page.wait_for_timeout(1800)
-            banner = page.query_selector('.banner')
-            png_bytes = banner.screenshot(type='png') if banner else page.screenshot(type='png', full_page=True)
-            browser.close()
-        resp = make_response(png_bytes)
-        resp.headers['Content-Type'] = 'image/png'
-        resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.png"'
-        return resp
-    except Exception as e:
-        logger.error(f'exportar_banner_png: {e}')
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/exportar_banner_pdf', methods=['POST'])
-@login_required
-def exportar_banner_pdf():
-    """Converte HTML do banner em PDF via Playwright headless."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return jsonify({'error': 'Playwright nao instalado.'}), 500
-    data = request.get_json()
-    html = data.get('html', '')
-    if not html:
-        return jsonify({'error': 'HTML nao fornecido.'}), 400
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
-            page = browser.new_page(viewport={'width': 850, 'height': 1200})
-            page.set_content(html, wait_until='networkidle')
-            page.wait_for_timeout(1800)
-            pdf_bytes = page.pdf(
-                format='A4', print_background=True,
-                margin={'top':'0.4cm','bottom':'0.4cm','left':'0.4cm','right':'0.4cm'}
-            )
-            browser.close()
-        resp = make_response(pdf_bytes)
-        resp.headers['Content-Type'] = 'application/pdf'
-        resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.pdf"'
-        return resp
-    except Exception as e:
-        logger.error(f'exportar_banner_pdf: {e}')
-        return jsonify({'error': str(e)}), 500
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
