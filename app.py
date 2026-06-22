@@ -4646,11 +4646,13 @@ def diagnostico():
     return jsonify(resultado)
 
 
+
 @app.route('/gerar_banner_proposicao', methods=['POST'])
 @login_required
 def gerar_banner_proposicao():
-    """Gera banner HTML de orientacao de bancada — design refinado."""
+    """Gera banner HTML estilo panfleto jornalistico — layout fiel ao modelo de referencia."""
     import base64 as _b64
+    from datetime import datetime as _dt
 
     proposicao   = request.form.get('proposicao', '')
     ementa       = request.form.get('ementa', '')
@@ -4662,7 +4664,8 @@ def gerar_banner_proposicao():
     nota_tecnica = request.form.get('nota_tecnica', '')
     resumo_extra = request.form.get('resumo_extra', '')
 
-    imagem_css = ''
+    # Imagem de fundo do cabecalho
+    imagem_b64_css = ''
     if 'imagem' in request.files:
         f = request.files['imagem']
         if f and f.filename:
@@ -4670,7 +4673,7 @@ def gerar_banner_proposicao():
             ext  = f.filename.rsplit('.', 1)[-1].lower()
             mime = {'jpg':'image/jpeg','jpeg':'image/jpeg','png':'image/png','webp':'image/webp'}.get(ext,'image/jpeg')
             b64  = _b64.b64encode(raw).decode('utf-8')
-            imagem_css = 'background-image:url("data:' + mime + ';base64,' + b64 + '");background-size:cover;background-position:center top;'
+            imagem_b64_css = f'url("data:{mime};base64,{b64}")'
 
     def _logo(nome):
         try:
@@ -4679,31 +4682,29 @@ def gerar_banner_proposicao():
         except Exception:
             return ''
 
-    logo_opo = _logo('logo_oposicao.png')
     logo_min = _logo('logo_minoria.png')
-    logos_html = ''
-    if logo_opo:
-        logos_html += '<img src="' + logo_opo + '" alt="Oposicao" style="height:38px;object-fit:contain;">'
-    if logo_min:
-        logos_html += '<img src="' + logo_min + '" alt="Lideranca" style="height:38px;object-fit:contain;">'
+    logo_opo = _logo('logo_oposicao.png')
 
-    ORI = {
-        'SIM':        {'cor':'#1B6B3A','txt':'#fff','label':'SIM'},
-        'NAO':        {'cor':'#C9111E','txt':'#fff','label':'NAO'},
-        'NÃO':        {'cor':'#C9111E','txt':'#fff','label':'NAO'},
-        'NEGOCIACAO': {'cor':'#92600A','txt':'#fff','label':'NEGOCIACAO'},
-        'NEGOCIAÇÃO': {'cor':'#92600A','txt':'#fff','label':'NEGOCIACAO'},
-        'LIBERADO':   {'cor':'#0B1F3A','txt':'#fff','label':'LIBERADO'},
-        'OBSTRUCAO':  {'cor':'#C9111E','txt':'#fff','label':'OBSTRUCAO'},
-        'OBSTRUÇÃO':  {'cor':'#C9111E','txt':'#fff','label':'OBSTRUCAO'},
-        'ABSTENCAO':  {'cor':'#475569','txt':'#fff','label':'ABSTENCAO'},
-        'ABSTENÇÃO':  {'cor':'#475569','txt':'#fff','label':'ABSTENCAO'},
+    # Cores por orientacao
+    ORI_CFG = {
+        'SIM':        {'cor':'#1B6B3A','txt':'#fff','label':'SIM',        'emoji':'&#9989;'},
+        'NAO':        {'cor':'#C9111E','txt':'#fff','label':'NAO',        'emoji':'&#10060;'},
+        'NÃO':        {'cor':'#C9111E','txt':'#fff','label':'NÃO',        'emoji':'&#10060;'},
+        'NEGOCIACAO': {'cor':'#D4A017','txt':'#1a1a1a','label':'NEGOCIAÇÃO','emoji':'&#129309;'},
+        'NEGOCIAÇÃO': {'cor':'#D4A017','txt':'#1a1a1a','label':'NEGOCIAÇÃO','emoji':'&#129309;'},
+        'LIBERADO':   {'cor':'#0B5394','txt':'#fff','label':'LIBERADO',   'emoji':'&#128275;'},
+        'OBSTRUCAO':  {'cor':'#C9111E','txt':'#fff','label':'OBSTRUÇÃO',  'emoji':'&#128683;'},
+        'OBSTRUÇÃO':  {'cor':'#C9111E','txt':'#fff','label':'OBSTRUÇÃO',  'emoji':'&#128683;'},
+        'ABSTENCAO':  {'cor':'#555555','txt':'#fff','label':'ABSTENÇÃO',  'emoji':'&#8866;'},
+        'ABSTENÇÃO':  {'cor':'#555555','txt':'#fff','label':'ABSTENÇÃO',  'emoji':'&#8866;'},
     }
-    cfg = ORI.get(orientacao.upper(), {'cor':'#0B1F3A','txt':'#fff','label':orientacao.upper()})
+    cfg = ORI_CFG.get(orientacao.upper(), {'cor':'#1B6B3A','txt':'#fff','label':orientacao.upper(),'emoji':'&#128203;'})
     ORI_COR   = cfg['cor']
     ORI_TXT   = cfg['txt']
     ORI_LABEL = cfg['label']
+    ORI_EMOJI = cfg['emoji']
 
+    # Prompt IA
     ctx = ''
     if nota_tecnica and len(nota_tecnica.strip()) > 40:
         ctx += '\n\nNOTA TECNICA:\n' + nota_tecnica[:4000]
@@ -4711,86 +4712,84 @@ def gerar_banner_proposicao():
         ctx += '\n\nCONTEXTO ADICIONAL:\n' + resumo_extra
 
     prompt = (
-        'Voce e um assessor legislativo senior da Camara dos Deputados, trabalhando para a Minoria/Oposicao.\n\n'
+        'Voce e um assessor legislativo senior da Camara dos Deputados.\n\n'
         'PROPOSICAO: ' + proposicao + '\nEMENTA: ' + ementa + '\nAUTOR: ' + autor + '\n'
         'RELATOR: ' + relator + '\nREGIME: ' + regime + '\nCOMISSOES: ' + comissoes + '\nORIENTACAO: ' + orientacao + ctx + '\n\n'
         'Gere APENAS um JSON valido, sem markdown:\n'
         '{\n'
-        '  "titulo_curto": "(sigla+numero+ano, ex: PLP 114/2026, max 18 chars)",\n'
-        '  "subtitulo": "(frase impacto, max 7 palavras)",\n'
-        '  "descricao_curta": "(1 frase do que faz, max 110 chars)",\n'
-        '  "resumo_executivo": "(3-4 frases claras, max 180 palavras)",\n'
-        '  "o_que_preve": ["item 1","item 2","item 3","item 4","item 5","item 6"],\n'
-        '  "criticas": [\n'
-        '    {"titulo":"Critica 1","detalhe":"explicacao curta"},\n'
-        '    {"titulo":"Critica 2","detalhe":"explicacao curta"},\n'
-        '    {"titulo":"Critica 3","detalhe":"explicacao curta"}\n'
+        '  "titulo_curto": "(sigla+numero+ano, ex: PL 1838/2026, max 18 chars)",\n'
+        '  "subtitulo": "(frase de impacto em MAIUSCULAS, max 8 palavras)",\n'
+        '  "descricao_curta": "(1 frase clara do que o projeto faz, max 120 chars)",\n'
+        '  "dado_chave_label": "(label do dado mais impactante, ex: JORNADA MAXIMA, max 20 chars)",\n'
+        '  "dado_chave_valor": "(valor do dado, ex: 40 HORAS SEMANAIS, max 25 chars)",\n'
+        '  "dado_chave_detalhe": "(complemento, ex: 2 DESCANSOS SEMANAIS REMUNERADOS, max 35 chars)",\n'
+        '  "resumo_executivo": "(3-4 frases claras, max 200 palavras)",\n'
+        '  "o_que_preve": [\n'
+        '    {"texto": "descricao completa do item, 1-2 frases"},\n'
+        '    {"texto": "..."},\n'
+        '    {"texto": "..."},\n'
+        '    {"texto": "..."},\n'
+        '    {"texto": "..."}\n'
         '  ],\n'
-        '  "justificativa_oficial": "(2-3 frases, max 90 palavras)",\n'
-        '  "argumento_chave": "(30 segundos de plenario, max 55 palavras)",\n'
+        '  "criticas": [\n'
+        '    {"titulo": "Critica 1", "detalhe": "explicacao 1-2 frases"},\n'
+        '    {"titulo": "Critica 2", "detalhe": "explicacao 1-2 frases"},\n'
+        '    {"titulo": "Critica 3", "detalhe": "explicacao 1-2 frases"},\n'
+        '    {"titulo": "Critica 4", "detalhe": "explicacao 1-2 frases"},\n'
+        '    {"titulo": "Critica 5", "detalhe": "explicacao 1-2 frases"}\n'
+        '  ],\n'
+        '  "justificativa_oficial": "(3-4 frases sobre a justificativa formal, max 120 palavras)",\n'
+        '  "argumento_chave": "(argumento de 30 segundos para o plenario, max 60 palavras)",\n'
         '  "na_pratica": ["efeito 1","efeito 2","efeito 3","efeito 4","efeito 5"]\n'
         '}\nResponda APENAS com o JSON.'
     )
 
-    # Banner usa Gemini como provedor principal (qualidade superior para design).
-    # Fallback: Groq → Cloudflare.
+    # Gemini primeiro, depois Groq, depois Cloudflare
     fonte = 'ia'
     texto_ia = None
 
-    # 1. Gemini — tenta TODOS os modelos da lista de preferência em sequência
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     if gemini_key:
         for modelo_gem in GEMINI_PREFERENCIA:
             try:
                 url_gem = ('https://generativelanguage.googleapis.com/v1beta/models/'
                            + modelo_gem + ':generateContent?key=' + gemini_key)
-                payload_gem = {
-                    'contents': [{'parts': [{'text': prompt}]}],
-                    'generationConfig': {'maxOutputTokens': 1200, 'temperature': 0.3}
-                }
                 r_gem = requests.post(url_gem,
-                                      headers={'Content-Type': 'application/json'},
-                                      json=payload_gem, timeout=20)
+                    headers={'Content-Type': 'application/json'},
+                    json={'contents':[{'parts':[{'text':prompt}]}],
+                          'generationConfig':{'maxOutputTokens':1500,'temperature':0.3}},
+                    timeout=20)
                 if r_gem.status_code == 503:
-                    import time as _t
-                    logger.warning('gerar_banner: Gemini ' + modelo_gem + ' — 503, aguardando 3s e tentando próximo')
-                    _t.sleep(3)
-                    continue
+                    import time as _t; _t.sleep(3); continue
                 if r_gem.status_code in (404, 429):
-                    logger.warning('gerar_banner: Gemini ' + modelo_gem + ' — ' + str(r_gem.status_code) + ', tentando próximo')
                     continue
                 r_gem.raise_for_status()
                 texto_ia = r_gem.json()['candidates'][0]['content']['parts'][0]['text']
                 fonte = 'gemini/' + modelo_gem
-                logger.info('gerar_banner: Gemini OK com modelo ' + modelo_gem)
+                logger.info('gerar_banner: Gemini OK — ' + modelo_gem)
                 break
             except Exception as e:
                 logger.warning('gerar_banner: Gemini ' + modelo_gem + ' falhou — ' + str(e))
                 continue
 
-    # 2. Groq (fallback)
     if not texto_ia:
         groq_key = os.environ.get('GROQ_API_KEY', '')
         if groq_key:
             try:
-                texto_ia = groq_post(prompt, max_tokens=1200, temperatura=0.3)
+                texto_ia = groq_post(prompt, max_tokens=1500, temperatura=0.3)
                 fonte = 'groq'
-                logger.info('gerar_banner: Groq OK (fallback)')
             except Exception as e:
                 logger.warning('gerar_banner: Groq falhou — ' + str(e))
 
-    # 3. Cloudflare (fallback final)
     if not texto_ia:
         try:
-            texto_ia = cloudflare_post(prompt, max_tokens=1200, temperatura=0.3)
+            texto_ia = cloudflare_post(prompt, max_tokens=1500, temperatura=0.3)
             fonte = 'cloudflare'
-            logger.info('gerar_banner: Cloudflare OK (fallback)')
         except Exception as e:
             logger.warning('gerar_banner: Cloudflare falhou — ' + str(e))
 
     if not texto_ia:
-        logger.error('gerar_banner: todos os provedores falharam')
-        return jsonify({'success': False, 'error': 'Servico de IA indisponivel. Tente novamente em alguns segundos.'}), 503
+        return jsonify({'success': False, 'error': 'Servico de IA indisponivel. Tente novamente.'}), 503
 
     try:
         texto_ia = re.sub(r'```(?:json)?|```', '', texto_ia).strip()
@@ -4798,9 +4797,10 @@ def gerar_banner_proposicao():
     except json.JSONDecodeError as e:
         logger.warning('gerar_banner: JSON invalido: ' + str(e))
         d = {
-            'titulo_curto': proposicao[:18], 'subtitulo': ementa[:60],
-            'descricao_curta': ementa[:110], 'resumo_executivo': ementa,
-            'o_que_preve': ['Consulte a ementa'],
+            'titulo_curto': proposicao[:18], 'subtitulo': ementa[:60].upper(),
+            'descricao_curta': ementa[:120], 'resumo_executivo': ementa,
+            'dado_chave_label': '', 'dado_chave_valor': '', 'dado_chave_detalhe': '',
+            'o_que_preve': [{'texto':'Consulte a ementa completa'}],
             'criticas': [{'titulo':'Analise pendente','detalhe':'Gere novamente'}],
             'justificativa_oficial': 'Nao disponivel.',
             'argumento_chave': '', 'na_pratica': ['Consulte a nota tecnica'],
@@ -4809,189 +4809,325 @@ def gerar_banner_proposicao():
     def _e(s):
         return str(s or '').replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;')
 
-    def _check(itens):
+    # SVG ícones inline
+    def ico_check():
+        return ('<svg width="18" height="18" viewBox="0 0 18 18" fill="none">'
+                '<circle cx="9" cy="9" r="9" fill="' + ORI_COR + '"/>'
+                '<path d="M5 9.5l2.5 2.5 5.5-5.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
+                '</svg>')
+
+    CRITICA_ICOS = [
+        # dolar
+        '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="16" fill="#C9111E"/><text x="16" y="21" text-anchor="middle" font-size="16" fill="#fff" font-family="Arial">$</text></svg>',
+        # grafico
+        '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="16" fill="#C9111E"/><path d="M8 22l5-6 4 3 5-8" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        # tendencia
+        '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="16" fill="#C9111E"/><path d="M8 20l4-4 3 3 7-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        # grupo
+        '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="16" fill="#C9111E"/><circle cx="12" cy="13" r="3" fill="#fff"/><circle cx="20" cy="13" r="3" fill="#fff"/><path d="M6 23c0-3 3-5 6-5h8c3 0 6 2 6 5" stroke="#fff" stroke-width="2" fill="none"/></svg>',
+        # balanca
+        '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="16" fill="#C9111E"/><rect x="15" y="8" width="2" height="14" fill="#fff"/><path d="M8 12l4 4-4 4M24 12l-4 4 4 4" stroke="#fff" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>',
+    ]
+
+    # Monta HTML dos itens "o que preve"
+    def _preve_items(itens):
         rows = []
         for it in (itens or []):
+            texto = it.get('texto','') if isinstance(it,dict) else str(it)
             rows.append(
-                '<div class="li">'
-                '<svg class="li-dot" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="' + ORI_COR + '"/></svg>'
-                '<span>' + _e(it) + '</span></div>'
+                '<div class="preve-item">'
+                + ico_check() +
+                '<span>' + _e(texto) + '</span>'
+                '</div>'
             )
         return ''.join(rows)
 
-    def _criticas(itens):
+    # Monta HTML das criticas
+    def _critica_items(itens):
         rows = []
-        for it in (itens or []):
+        for i, it in enumerate(itens or []):
             tit = _e(it.get('titulo','') if isinstance(it,dict) else str(it))
             det = _e(it.get('detalhe','') if isinstance(it,dict) else '')
+            ico = CRITICA_ICOS[i % len(CRITICA_ICOS)]
             rows.append(
-                '<div class="ci"><div class="ci-bullet"></div>'
-                '<div><p class="ci-t">' + tit + '</p><p class="ci-d">' + det + '</p></div></div>'
+                '<div class="critica-item">'
+                '<div class="critica-ico">' + ico + '</div>'
+                '<div>'
+                '<p class="critica-titulo">' + tit + '</p>'
+                '<p class="critica-detalhe">' + det + '</p>'
+                '</div>'
+                '</div>'
             )
         return ''.join(rows)
 
-    has_img  = bool(imagem_css)
-    ov_bg    = 'rgba(11,31,58,0.72)' if has_img else 'rgba(11,31,58,0)'
-    desc_col = 'rgba(255,255,255,0.78)' if has_img else 'rgba(255,255,255,0.72)'
+    # Monta HTML da lista "na pratica"
+    def _pratica_items(itens):
+        rows = []
+        for it in (itens or []):
+            rows.append('<div class="pratica-item">' + ico_check() + '<span>' + _e(str(it)) + '</span></div>')
+        return ''.join(rows)
 
-    arg_block = ''
-    if d.get('argumento_chave'):
-        arg_block = (
-            '<div class="arg-wrap">'
-            '<p class="arg-eyebrow">Argumento-chave &mdash; 30 segundos de plen&aacute;rio</p>'
-            '<p class="arg-body">' + _e(d['argumento_chave']) + '</p>'
+    # Logos para o cabecalho
+    logos_cab = ''
+    if logo_min:
+        logos_cab += '<img src="' + logo_min + '" style="height:44px;object-fit:contain;">'
+    if logo_opo:
+        logos_cab += '<img src="' + logo_opo + '" style="height:44px;object-fit:contain;">'
+
+    # Dado-chave badge (canto direito do cabecalho)
+    dado_label  = _e(d.get('dado_chave_label',''))
+    dado_valor  = _e(d.get('dado_chave_valor',''))
+    dado_detalhe= _e(d.get('dado_chave_detalhe',''))
+    dado_block  = ''
+    if dado_label or dado_valor:
+        dado_block = (
+            '<div class="dado-chave">'
+            '<div class="dado-label">' + dado_label + '</div>'
+            '<div class="dado-valor">' + dado_valor + '</div>'
+            + ('<div class="dado-detalhe">' + dado_detalhe + '</div>' if dado_detalhe else '') +
             '</div>'
         )
 
-    CSS = (
+    # Cabecalho — fundo: foto se houver, senao gradiente escuro
+    if imagem_b64_css:
+        cab_bg = 'background:' + imagem_b64_css + ',linear-gradient(135deg,#0A1628 0%,#1B3A5C 100%);background-size:cover,cover;background-position:center,center;'
+    else:
+        cab_bg = 'background:linear-gradient(135deg,#0A1628 0%,#1B3A5C 100%);'
+
+    data_hoje = _dt.now().strftime('%d/%m/%Y')
+
+    # CSS
+    css = (
+        '@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap");'
         '*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}'
-        ':root{'
-        '--azul:#0B1F3A;--verde:#1B6B3A;--verm:#C9111E;'
-        '--ambar:#E9B847;--fundo:#F2F5F8;--branco:#FFFFFF;'
-        '--cinza1:#E0E6ED;--cinza2:#64748B;--texto:#1A202C;'
-        '--ori:ORI_COR_VAR;'
-        '--f-display:"Teko",sans-serif;'
-        '--f-body:"Source Sans 3",sans-serif;'
-        '}'
-        'body{background:#C5D0DC;display:flex;flex-direction:column;align-items:center;'
-        'padding:24px;font-family:var(--f-body);-webkit-font-smoothing:antialiased;}'
-        '.banner{width:794px;background:var(--branco);'
-        'box-shadow:0 12px 48px rgba(11,31,58,.28),0 2px 8px rgba(11,31,58,.12);overflow:hidden;}'
-        '.cab{CAB_BG_VARposition:relative;overflow:hidden;}'
-        '.cab-ov{background:OV_BG_VAR;padding:26px 30px 0;position:relative;}'
-        '.cab-stripe{position:absolute;top:0;left:0;right:0;height:3px;background:var(--ambar);}'
-        '.cab-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:4px;}'
-        '.cab-tit{font-family:var(--f-display);font-size:52px;font-weight:700;color:#FFFFFF;line-height:.92;letter-spacing:1px;}'
-        '.cab-logos{display:flex;gap:8px;align-items:center;flex-shrink:0;'
-        'background:rgba(255,255,255,0.10);border:1px solid rgba(255,255,255,0.16);'
-        'border-radius:3px;padding:6px 10px;margin-top:6px;}'
-        '.cab-sub{font-family:var(--f-display);font-size:17px;font-weight:500;'
-        'color:#E9B847;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:5px;}'
-        '.cab-desc{font-size:12.5px;color:DESC_COL_VAR;line-height:1.55;margin-bottom:18px;max-width:680px;}'
-        '.meta-bar{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid rgba(255,255,255,0.12);}'
-        '.mc{padding:10px 14px 10px 0;border-right:1px solid rgba(255,255,255,0.12);}'
-        '.mc:first-child{padding-left:0;}.mc:last-child{border-right:none;}'
-        '.mc-label{font-size:8.5px;font-weight:700;letter-spacing:2.2px;color:rgba(255,255,255,0.45);text-transform:uppercase;margin-bottom:3px;}'
-        '.mc-val{font-size:11.5px;font-weight:600;color:#FFFFFF;line-height:1.3;}'
-        '.resumo{padding:18px 30px 16px;border-bottom:1px solid var(--cinza1);font-size:13px;color:var(--texto);line-height:1.72;}'
-        '.grade{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--cinza1);}'
-        '.col-e{border-right:1px solid var(--cinza1);}'
-        '.sh{display:flex;align-items:center;gap:8px;padding:9px 18px;'
-        'font-family:var(--f-display);font-size:13px;font-weight:600;letter-spacing:2px;text-transform:uppercase;}'
-        '.sh-g{background:var(--verde);color:#fff;}'
-        '.sh-r{background:var(--verm);color:#fff;}'
-        '.sh-b{background:var(--azul);color:#fff;}'
-        '.sh-o{background:ORI_COR_VAR;color:ORI_TXT_VAR;}'
-        '.sh-pip{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,0.5);flex-shrink:0;}'
-        '.sb{padding:14px 18px;min-height:124px;}'
-        '.li{display:flex;align-items:flex-start;gap:9px;margin-bottom:8px;font-size:12px;color:var(--texto);line-height:1.45;}'
-        '.li-dot{width:8px;height:8px;flex-shrink:0;margin-top:4px;}'
-        '.ci{display:flex;align-items:flex-start;gap:10px;margin-bottom:11px;}'
-        '.ci-bullet{width:3px;min-height:36px;background:var(--verm);flex-shrink:0;margin-top:2px;border-radius:2px;}'
-        '.ci-t{font-size:12px;font-weight:700;color:var(--texto);margin-bottom:2px;line-height:1.3;}'
-        '.ci-d{font-size:11px;color:var(--cinza2);line-height:1.4;}'
-        '.ori-container{padding:0 18px 12px;}'
-        '.ori-macro-wrap{position:relative;overflow:hidden;height:88px;margin:8px 0 0;}'
-        '.ori-macro{font-family:var(--f-display);font-size:90px;font-weight:700;'
-        'color:ORI_COR_VAR;letter-spacing:6px;text-transform:uppercase;'
-        'line-height:1;position:absolute;top:0;left:0;right:0;text-align:center;white-space:nowrap;}'
-        '.ori-cut{position:absolute;top:50%;left:0;right:0;height:2px;background:ORI_COR_VAR;opacity:0.22;transform:translateY(-50%);}'
-        '.ori-rule{display:flex;align-items:center;gap:8px;margin-top:4px;}'
-        '.ori-rule-line{flex:1;height:1px;background:var(--cinza1);}'
-        '.ori-rule-txt{font-size:8px;font-weight:700;letter-spacing:2.5px;color:var(--cinza2);text-transform:uppercase;white-space:nowrap;}'
-        '.arg-wrap{margin-top:10px;padding:10px 12px;background:var(--fundo);border-left:3px solid ORI_COR_VAR;}'
-        '.arg-eyebrow{font-size:8px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--cinza2);margin-bottom:5px;}'
-        '.arg-body{font-size:12px;color:var(--texto);line-height:1.6;font-style:italic;}'
-        '.np-wrap{border-top:1px solid var(--cinza1);}'
-        '.np-grid{display:grid;grid-template-columns:1fr 1fr;padding:14px 18px;gap:4px 20px;}'
-        '.rod{height:4px;background:ORI_COR_VAR;}'
-        '@media print{body{background:#fff;padding:0;}.banner{box-shadow:none;width:100%;}'
-        '.np-btn{display:none!important;}@page{size:A4 portrait;margin:0;}}'
-    )
-    CSS = (CSS
-        .replace('ORI_COR_VAR', ORI_COR)
-        .replace('ORI_TXT_VAR', ORI_TXT)
-        .replace('CAB_BG_VAR', 'background-color:#0B1F3A;' + imagem_css)
-        .replace('OV_BG_VAR', ov_bg)
-        .replace('DESC_COL_VAR', desc_col)
+        'body{background:#D8DCE0;display:flex;flex-direction:column;align-items:center;padding:20px;font-family:"Source Sans 3",Arial,sans-serif;}'
+        '.banner{width:794px;background:#F5F5F5;box-shadow:0 6px 32px rgba(0,0,0,.22);overflow:hidden;border-radius:8px;}'
+
+        # Cabecalho
+        '.cab{position:relative;overflow:hidden;min-height:200px;}'
+        '.cab-overlay{position:absolute;inset:0;background:rgba(10,22,40,0.62);}'
+        '.cab-inner{position:relative;z-index:2;padding:22px 24px 0;display:flex;flex-direction:column;gap:0;}'
+        '.cab-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}'
+        '.cab-logos{display:flex;gap:6px;align-items:center;flex-shrink:0;background:rgba(255,255,255,0.12);border-radius:6px;padding:5px 8px;}'
+        '.cab-titulo{font-family:"Barlow Condensed",sans-serif;font-size:58px;font-weight:900;color:#fff;line-height:.92;letter-spacing:0;margin-top:8px;}'
+        '.cab-subtitulo{font-family:"Barlow Condensed",sans-serif;font-size:20px;font-weight:800;color:' + ORI_COR + ';text-transform:uppercase;letter-spacing:.5px;margin:6px 0 4px;line-height:1.1;}'
+        '.cab-desc{font-size:13px;color:rgba(255,255,255,.85);line-height:1.5;margin-bottom:16px;max-width:480px;}'
+
+        # Dado-chave badge
+        '.dado-chave{flex-shrink:0;background:rgba(15,30,55,0.85);border:2px solid ' + ORI_COR + ';border-radius:8px;padding:10px 14px;text-align:center;min-width:130px;}'
+        '.dado-label{font-size:8.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:4px;}'
+        '.dado-valor{font-family:"Barlow Condensed",sans-serif;font-size:22px;font-weight:900;color:#fff;line-height:1;}'
+        '.dado-detalhe{font-size:8px;font-weight:700;color:rgba(255,255,255,.7);text-transform:uppercase;letter-spacing:1px;margin-top:4px;line-height:1.2;}'
+
+        # Meta bar (autor/regime/comissoes/relator)
+        '.meta-bar{display:grid;grid-template-columns:repeat(4,1fr);background:#fff;border-bottom:2px solid #E0E0E0;}'
+        '.mc{display:flex;align-items:center;gap:10px;padding:12px 14px;border-right:1px solid #E8E8E8;}'
+        '.mc:last-child{border-right:none;}'
+        '.mc-ico{width:32px;height:32px;background:' + ORI_COR + ';border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;}'
+        '.mc-ico svg{width:16px;height:16px;fill:#fff;}'
+        '.mc-label{font-size:8.5px;font-weight:700;letter-spacing:1.8px;color:#888;text-transform:uppercase;margin-bottom:2px;}'
+        '.mc-val{font-size:11.5px;font-weight:700;color:#1A1A1A;line-height:1.3;}'
+
+        # Resumo
+        '.resumo{padding:16px 20px;background:#fff;font-size:13px;color:#222;line-height:1.7;border-bottom:1px solid #E0E0E0;}'
+
+        # Grade 2 colunas
+        '.grade{display:grid;grid-template-columns:1fr 1fr;gap:0;border-top:1px solid #E0E0E0;}'
+
+        # Card generico
+        '.card{margin:14px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);}'
+        '.card-header{display:flex;align-items:center;gap:10px;padding:10px 14px;}'
+        '.card-header-ico{width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px;}'
+        '.card-header-txt{font-family:"Barlow Condensed",sans-serif;font-size:14px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#fff;}'
+        '.card-body{padding:12px 14px;}'
+
+        # O que preve
+        '.card-verde .card-header{background:' + ORI_COR + ';}'
+        '.preve-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;font-size:12px;color:#222;line-height:1.45;}'
+        '.preve-item:last-child{margin-bottom:0;}'
+        '.preve-item svg{flex-shrink:0;margin-top:2px;}'
+
+        # Criticas
+        '.card-verm .card-header{background:#C9111E;}'
+        '.critica-item{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;}'
+        '.critica-item:last-child{margin-bottom:0;}'
+        '.critica-ico{width:32px;height:32px;flex-shrink:0;}'
+        '.critica-ico svg{width:32px;height:32px;}'
+        '.critica-titulo{font-size:12px;font-weight:700;color:#1A1A1A;margin-bottom:2px;line-height:1.3;}'
+        '.critica-detalhe{font-size:11px;color:#555;line-height:1.4;}'
+
+        # Justificativa
+        '.card-escuro .card-header{background:#1A2A3A;}'
+        '.just-inner{display:flex;align-items:flex-start;gap:12px;}'
+        '.just-ico{flex-shrink:0;opacity:.15;}'
+        '.just-txt{font-size:12px;color:#333;line-height:1.6;}'
+
+        # Orientacao
+        '.card-ori .card-header{background:#1A2A3A;}'
+        '.ori-badge{margin:12px 14px 8px;background:' + ORI_COR + ';border-radius:8px;padding:14px;text-align:center;}'
+        '.ori-badge-txt{font-family:"Barlow Condensed",sans-serif;font-size:40px;font-weight:900;color:' + ORI_TXT + ';letter-spacing:3px;text-transform:uppercase;}'
+        '.arg-header{background:#1A2A3A;margin:0 14px 0;border-radius:6px 6px 0 0;padding:7px 12px;}'
+        '.arg-header-txt{font-size:8.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.65);}'
+        '.arg-body{background:#243040;margin:0 14px 14px;border-radius:0 0 6px 6px;padding:10px 12px;}'
+        '.arg-body-txt{font-size:12px;color:rgba(255,255,255,.9);line-height:1.6;}'
+
+        # Na pratica
+        '.np-card{margin:14px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);}'
+        '.np-header{background:' + ORI_COR + ';display:flex;align-items:center;gap:10px;padding:10px 14px;}'
+        '.np-header-txt{font-family:"Barlow Condensed",sans-serif;font-size:14px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#fff;}'
+        '.np-ico{width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;}'
+        '.np-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 16px;padding:12px 14px;}'
+        '.pratica-item{display:flex;align-items:flex-start;gap:7px;font-size:12px;color:#222;line-height:1.4;padding:4px 0;}'
+        '.pratica-item svg{flex-shrink:0;margin-top:2px;}'
+
+        # Rodape
+        '.rodape{background:#1A2A3A;padding:8px 20px;display:flex;justify-content:flex-end;}'
+        '.rodape-txt{font-size:10px;color:rgba(255,255,255,.5);}'
+
+        '@media print{body{background:#fff;padding:0;}.banner{box-shadow:none;border-radius:0;width:100%;}.np-btn{display:none!important;}@page{size:A4 portrait;margin:0;}}'
     )
 
-    titulo_esc  = _e(d.get('titulo_curto', proposicao))
-    sub_esc     = _e(d.get('subtitulo', ''))
-    desc_esc    = _e(d.get('descricao_curta', ementa[:110]))
-    resumo_esc  = _e(d.get('resumo_executivo', ementa))
-    just_esc    = _e(d.get('justificativa_oficial', ''))
-    autor_esc   = _e(autor[:55] or '&mdash;')
-    regime_esc  = _e(regime or 'Ordinario')
-    comis_esc   = _e(comissoes or 'Plenario')
-    relator_esc = _e(relator[:55] or '&mdash;')
+    # SVG ícones para meta bar
+    ico_autor    = '<svg viewBox="0 0 24 24"><path d="M12 12c2.7 0 5-2.3 5-5s-2.3-5-5-5-5 2.3-5 5 2.3 5 5 5zm0 2c-3.3 0-10 1.7-10 5v2h20v-2c0-3.3-6.7-5-10-5z"/></svg>'
+    ico_regime   = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="2" fill="none"/><path d="M12 7v5l3 3" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/></svg>'
+    ico_comissao = '<svg viewBox="0 0 24 24"><path d="M17 20H7a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v12a2 2 0 01-2 2zM9 10h6M9 14h4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/></svg>'
+    ico_relator  = '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM9 13h6M9 17h4" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>'
+
+    # SVG balanca para justificativa
+    ico_balanca = (
+        '<svg width="64" height="64" viewBox="0 0 24 24" fill="none">'
+        '<path d="M12 3v18M3 9l4 4-4 4M21 9l-4 4 4 4M5 7h14" stroke="#1A2A3A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
+        '</svg>'
+    )
+
+    # SVG grupo para na pratica
+    ico_grupo = (
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none">'
+        '<circle cx="9" cy="7" r="3" fill="#fff"/>'
+        '<circle cx="15" cy="7" r="3" fill="#fff"/>'
+        '<path d="M3 19c0-3 2.7-5 6-5h6c3.3 0 6 2 6 5" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/>'
+        '</svg>'
+    )
 
     html = (
-        '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Banner</title>'
-        '<link rel="preconnect" href="https://fonts.googleapis.com">'
-        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
-        '<link href="https://fonts.googleapis.com/css2?family=Teko:wght@500;600;700'
-        '&amp;family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&amp;display=swap" rel="stylesheet">'
-        '<style>' + CSS + '</style></head><body>'
+        '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Banner ' + _e(proposicao) + '</title>'
+        '<style>' + css + '</style></head><body>'
         '<div class="banner">'
-        '<div class="cab"><div class="cab-ov">'
-        '<div class="cab-stripe"></div>'
-        '<div class="cab-row">'
-        '<div class="cab-tit">' + titulo_esc + '</div>'
-        '<div class="cab-logos">' + logos_html + '</div>'
+
+        # CABECALHO
+        '<div class="cab" style="' + cab_bg + '">'
+        '<div class="cab-overlay"></div>'
+        '<div class="cab-inner">'
+        '<div class="cab-top">'
+        '<div class="cab-logos">' + logos_cab + '</div>'
         '</div>'
-        '<div class="cab-sub">' + sub_esc + '</div>'
-        '<div class="cab-desc">' + desc_esc + '</div>'
+        '<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;">'
+        '<div style="flex:1;">'
+        '<div class="cab-titulo">' + _e(d.get('titulo_curto', proposicao)) + '</div>'
+        '<div class="cab-subtitulo">' + _e(d.get('subtitulo','')) + '</div>'
+        '<div class="cab-desc">' + _e(d.get('descricao_curta', ementa[:120])) + '</div>'
+        '</div>'
+        + dado_block +
+        '</div>'
+        '</div>'
+        '</div>'
+
+        # META BAR
         '<div class="meta-bar">'
-        '<div class="mc"><div class="mc-label">Autor</div><div class="mc-val">' + autor_esc + '</div></div>'
-        '<div class="mc"><div class="mc-label">Regime</div><div class="mc-val">' + regime_esc + '</div></div>'
-        '<div class="mc"><div class="mc-label">Comiss&otilde;es</div><div class="mc-val">' + comis_esc + '</div></div>'
-        '<div class="mc"><div class="mc-label">Relator</div><div class="mc-val">' + relator_esc + '</div></div>'
+        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24">' + ico_autor[23:] + '</div>'
+        '<div><div class="mc-label">Autor</div><div class="mc-val">' + _e(autor[:55] or '—') + '</div></div></div>'
+
+        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24" fill="none">' + ico_regime[28:] + '</div>'
+        '<div><div class="mc-label">Regime</div><div class="mc-val">' + _e(regime or 'Ordinario') + '</div></div></div>'
+
+        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24" fill="none">' + ico_comissao[28:] + '</div>'
+        '<div><div class="mc-label">Comissões</div><div class="mc-val">' + _e(comissoes or 'Plenario') + '</div></div></div>'
+
+        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24" fill="none">' + ico_relator[28:] + '</div>'
+        '<div><div class="mc-label">Relator</div><div class="mc-val">' + _e(relator[:55] or '—') + '</div></div></div>'
+        '</div>'
+
+        # RESUMO
+        '<div class="resumo">' + _e(d.get('resumo_executivo', ementa)) + '</div>'
+
+        # GRADE: O QUE PREVE | CRITICAS
+        '<div class="grade">'
+
+        # O que preve
+        '<div style="background:#F0F0F0;">'
+        '<div class="card card-verde">'
+        '<div class="card-header">'
+        '<div class="card-header-ico">&#10003;</div>'
+        '<div class="card-header-txt">O que o projeto prev&ecirc;</div>'
+        '</div>'
+        '<div class="card-body">'
+        + _preve_items(d.get('o_que_preve',[])) +
         '</div></div></div>'
-        '<div class="resumo">' + resumo_esc + '</div>'
-        '<div class="grade">'
-        '<div class="col-e">'
-        '<div class="sh sh-g"><div class="sh-pip"></div>O que o projeto prev&ecirc;</div>'
-        '<div class="sb">' + _check(d.get('o_que_preve',[])) + '</div>'
+
+        # Criticas
+        '<div style="background:#F0F0F0;">'
+        '<div class="card card-verm">'
+        '<div class="card-header">'
+        '<div class="card-header-ico">&#10007;</div>'
+        '<div class="card-header-txt">Cr&iacute;ticas e pontos de aten&ccedil;&atilde;o</div>'
         '</div>'
-        '<div>'
-        '<div class="sh sh-r"><div class="sh-pip"></div>Cr&iacute;ticas</div>'
-        '<div class="sb">' + _criticas(d.get('criticas',[])) + '</div>'
+        '<div class="card-body">'
+        + _critica_items(d.get('criticas',[])) +
+        '</div></div></div>'
         '</div>'
+
+        # GRADE: JUSTIFICATIVA | ORIENTACAO
+        '<div class="grade" style="border-top:1px solid #E0E0E0;">'
+
+        # Justificativa
+        '<div style="background:#F0F0F0;">'
+        '<div class="card card-escuro">'
+        '<div class="card-header">'
+        '<div class="card-header-ico">&#9878;</div>'
+        '<div class="card-header-txt">Justificativa oficial</div>'
         '</div>'
-        '<div class="grade">'
-        '<div class="col-e">'
-        '<div class="sh sh-b"><div class="sh-pip"></div>Justificativa oficial</div>'
-        '<div class="sb" style="font-size:12px;color:var(--texto);line-height:1.65;">' + just_esc + '</div>'
+        '<div class="card-body">'
+        '<div class="just-inner">'
+        '<div class="just-ico">' + ico_balanca + '</div>'
+        '<div class="just-txt">' + _e(d.get('justificativa_oficial','')) + '</div>'
         '</div>'
-        '<div>'
-        '<div class="sh sh-o"><div class="sh-pip"></div>Orienta&ccedil;&atilde;o</div>'
-        '<div class="sb" style="padding:0 0 4px;">'
-        '<div class="ori-container">'
-        '<div class="ori-macro-wrap">'
-        '<div class="ori-macro">' + ORI_LABEL + '</div>'
-        '<div class="ori-cut"></div>'
+        '</div></div></div>'
+
+        # Orientacao
+        '<div style="background:#F0F0F0;">'
+        '<div class="card card-ori">'
+        '<div class="card-header">'
+        '<div class="card-header-ico">&#127885;</div>'
+        '<div class="card-header-txt">Orienta&ccedil;&atilde;o da Minoria</div>'
         '</div>'
-        '<div class="ori-rule">'
-        '<div class="ori-rule-line"></div>'
-        '<span class="ori-rule-txt">Lideran&ccedil;a da Minoria &middot; C&acirc;mara dos Deputados</span>'
-        '<div class="ori-rule-line"></div>'
+        '<div class="ori-badge"><div class="ori-badge-txt">' + ORI_EMOJI + ' ' + ORI_LABEL + '</div></div>'
+        + (
+            '<div class="arg-header"><div class="arg-header-txt">Argumento-chave (30 segundos de plen&aacute;rio)</div></div>'
+            '<div class="arg-body"><div class="arg-body-txt">' + _e(d.get('argumento_chave','')) + '</div></div>'
+            if d.get('argumento_chave') else ''
+        ) +
+        '</div></div>'
         '</div>'
-        + arg_block +
-        '</div></div></div></div>'
-        '<div class="np-wrap">'
-        '<div class="sh sh-g" style="border-top:1px solid var(--cinza1);">'
-        '<div class="sh-pip"></div>Na pr&aacute;tica</div>'
-        '<div class="np-grid">' + _check(d.get('na_pratica',[])) + '</div>'
+
+        # NA PRATICA
+        '<div style="background:#F0F0F0;padding:0 0 14px;">'
+        '<div class="np-card">'
+        '<div class="np-header">'
+        '<div class="np-ico">' + ico_grupo + '</div>'
+        '<div class="np-header-txt">Na pr&aacute;tica</div>'
         '</div>'
-        '<div class="rod"></div>'
-        '</div>'
-        '<div class="np-btn" style="margin-top:18px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">'
-        '<button onclick="window.print()" style="background:' + ORI_COR + ';color:#fff;border:none;'
-        'padding:9px 24px;border-radius:3px;cursor:pointer;font-size:13px;font-weight:700;">'
-        '&#128424; Imprimir / Salvar PDF</button>'
-        '<button onclick="window.close()" style="background:#475569;color:#fff;border:none;'
-        'padding:9px 16px;border-radius:3px;cursor:pointer;font-size:13px;">&#10005; Fechar</button>'
+        '<div class="np-grid">'
+        + _pratica_items(d.get('na_pratica',[])) +
+        '</div></div></div>'
+
+        # RODAPE
+        '<div class="rodape"><span class="rodape-txt">Publicado em: ' + data_hoje + '</span></div>'
+
+        '</div>'  # /banner
+
+        '<div class="np-btn" style="margin-top:16px;display:flex;gap:10px;justify-content:center;">'
+        '<button onclick="window.print()" style="background:#1A2A3A;color:#fff;border:none;padding:9px 24px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:700;">&#128424; Imprimir / PDF</button>'
+        '<button onclick="window.close()" style="background:#555;color:#fff;border:none;padding:9px 16px;border-radius:4px;cursor:pointer;font-size:13px;">&#10005; Fechar</button>'
         '</div>'
         '</body></html>'
     )
