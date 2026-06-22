@@ -16,11 +16,13 @@ GEMINI_MODEL = "gemini-2.0-flash"  # fallback fixo
 _gemini_modelo_cache = {"modelo": None}  # cache em memória
 
 GEMINI_PREFERENCIA = [
+    "gemini-2.5-flash-lite-preview-06-17",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
     "gemini-1.5-flash",
     "gemini-1.5-flash-8b",
-    "gemini-1.5-pro",
 ]
 
 def detectar_modelo_gemini(key):
@@ -145,10 +147,12 @@ def ia_chain(prompt, max_tokens=1500, temperatura=0.3, contexto=""):
             texto = gemini_post(gemini_key, prompt, max_tokens=max_tokens,
                                 temperatura=temperatura, tentativas=1)
             if texto and texto.strip():
-                logger.info(f"ia_chain [{contexto}]: Gemini OK")
+                logger.info(f"ia_chain [{contexto}]: Gemini OK ({_gemini_modelo_cache.get('modelo','?')})")
                 return texto, 'gemini'
         except Exception as e:
             logger.warning(f"ia_chain [{contexto}]: Gemini falhou — {e}")
+            # Limpa cache para tentar detectar novo modelo na próxima chamada
+            _gemini_modelo_cache["modelo"] = None
             erros.append(f"Gemini: {e}")
 
     # 2. Groq (llama-3.3-70b, 30 RPM gratuito)
