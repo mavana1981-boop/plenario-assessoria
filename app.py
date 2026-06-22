@@ -16,7 +16,6 @@ GEMINI_MODEL = "gemini-2.0-flash"  # fallback fixo
 _gemini_modelo_cache = {"modelo": None}  # cache em memória
 
 GEMINI_PREFERENCIA = [
-    "gemini-2.5-flash-lite-preview-06-17",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
     "gemini-2.0-flash",
@@ -4752,6 +4751,11 @@ def gerar_banner_proposicao():
                 r_gem = requests.post(url_gem,
                                       headers={'Content-Type': 'application/json'},
                                       json=payload_gem, timeout=20)
+                if r_gem.status_code == 503:
+                    import time as _t
+                    logger.warning('gerar_banner: Gemini ' + modelo_gem + ' — 503, aguardando 3s e tentando próximo')
+                    _t.sleep(3)
+                    continue
                 if r_gem.status_code in (404, 429):
                     logger.warning('gerar_banner: Gemini ' + modelo_gem + ' — ' + str(r_gem.status_code) + ', tentando próximo')
                     continue
