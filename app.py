@@ -4733,58 +4733,56 @@ def gerar_banner_proposicao():
         '}\nResponda APENAS com o JSON.'
     )
 
-    # Tenta cadeia completa: Groq → Cloudflare → todos os modelos Gemini em sequência
+    # Banner usa Gemini como provedor principal (qualidade superior para design).
+    # Fallback: Groq → Cloudflare.
     fonte = 'ia'
     texto_ia = None
 
-    # 1. Groq
-    groq_key = os.environ.get('GROQ_API_KEY', '')
-    if groq_key:
-        try:
-            texto_ia = groq_post(prompt, max_tokens=1200, temperatura=0.3)
-            fonte = 'groq'
-            logger.info('gerar_banner: Groq OK')
-        except Exception as e:
-            logger.warning('gerar_banner: Groq falhou — ' + str(e))
+    # 1. Gemini — tenta TODOS os modelos da lista de preferência em sequência
+    gemini_key = os.environ.get('GEMINI_API_KEY', '')
+    if gemini_key:
+        for modelo_gem in GEMINI_PREFERENCIA:
+            try:
+                url_gem = ('https://generativelanguage.googleapis.com/v1beta/models/'
+                           + modelo_gem + ':generateContent?key=' + gemini_key)
+                payload_gem = {
+                    'contents': [{'parts': [{'text': prompt}]}],
+                    'generationConfig': {'maxOutputTokens': 1200, 'temperature': 0.3}
+                }
+                r_gem = requests.post(url_gem,
+                                      headers={'Content-Type': 'application/json'},
+                                      json=payload_gem, timeout=20)
+                if r_gem.status_code in (404, 429):
+                    logger.warning('gerar_banner: Gemini ' + modelo_gem + ' — ' + str(r_gem.status_code) + ', tentando próximo')
+                    continue
+                r_gem.raise_for_status()
+                texto_ia = r_gem.json()['candidates'][0]['content']['parts'][0]['text']
+                fonte = 'gemini/' + modelo_gem
+                logger.info('gerar_banner: Gemini OK com modelo ' + modelo_gem)
+                break
+            except Exception as e:
+                logger.warning('gerar_banner: Gemini ' + modelo_gem + ' falhou — ' + str(e))
+                continue
 
-    # 2. Cloudflare
+    # 2. Groq (fallback)
+    if not texto_ia:
+        groq_key = os.environ.get('GROQ_API_KEY', '')
+        if groq_key:
+            try:
+                texto_ia = groq_post(prompt, max_tokens=1200, temperatura=0.3)
+                fonte = 'groq'
+                logger.info('gerar_banner: Groq OK (fallback)')
+            except Exception as e:
+                logger.warning('gerar_banner: Groq falhou — ' + str(e))
+
+    # 3. Cloudflare (fallback final)
     if not texto_ia:
         try:
             texto_ia = cloudflare_post(prompt, max_tokens=1200, temperatura=0.3)
             fonte = 'cloudflare'
-            logger.info('gerar_banner: Cloudflare OK')
+            logger.info('gerar_banner: Cloudflare OK (fallback)')
         except Exception as e:
             logger.warning('gerar_banner: Cloudflare falhou — ' + str(e))
-
-    # 3. Gemini — tenta TODOS os modelos da lista de preferência em sequência
-    if not texto_ia:
-        gemini_key = os.environ.get('GEMINI_API_KEY', '')
-        if gemini_key:
-            for modelo_gem in GEMINI_PREFERENCIA:
-                try:
-                    url_gem = ('https://generativelanguage.googleapis.com/v1beta/models/'
-                               + modelo_gem + ':generateContent?key=' + gemini_key)
-                    payload_gem = {
-                        'contents': [{'parts': [{'text': prompt}]}],
-                        'generationConfig': {'maxOutputTokens': 1200, 'temperature': 0.3}
-                    }
-                    r_gem = requests.post(url_gem,
-                                          headers={'Content-Type': 'application/json'},
-                                          json=payload_gem, timeout=20)
-                    if r_gem.status_code == 404:
-                        logger.warning('gerar_banner: Gemini ' + modelo_gem + ' — 404, tentando próximo')
-                        continue
-                    if r_gem.status_code == 429:
-                        logger.warning('gerar_banner: Gemini ' + modelo_gem + ' — 429, tentando próximo')
-                        continue
-                    r_gem.raise_for_status()
-                    texto_ia = r_gem.json()['candidates'][0]['content']['parts'][0]['text']
-                    fonte = 'gemini/' + modelo_gem
-                    logger.info('gerar_banner: Gemini OK com modelo ' + modelo_gem)
-                    break
-                except Exception as e:
-                    logger.warning('gerar_banner: Gemini ' + modelo_gem + ' falhou — ' + str(e))
-                    continue
 
     if not texto_ia:
         logger.error('gerar_banner: todos os provedores falharam')
