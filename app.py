@@ -5125,6 +5125,47 @@ def gerar_banner_proposicao():
 
         '</div>'  # /banner
 
+        # Script de edição inline no banner
+        '<script>'
+        'document.addEventListener("DOMContentLoaded",function(){'
+        '  var editables=['
+        '    ".cab-titulo",".cab-subtitulo",".cab-desc",'
+        '    ".dado-valor",".dado-label",".dado-detalhe",'
+        '    ".mc-val",'
+        '    ".resumo",'
+        '    ".preve-item span",'
+        '    ".critica-titulo",".critica-detalhe",'
+        '    ".just-txt",'
+        '    ".ori-badge-txt",'
+        '    ".arg-body-txt",'
+        '    ".pratica-item span",'
+        '    ".rodape-txt"'
+        '  ];'
+        '  editables.forEach(function(sel){'
+        '    document.querySelectorAll(sel).forEach(function(el){'
+        '      el.contentEditable="true";'
+        '      el.style.outline="none";'
+        '      el.style.cursor="text";'
+        '      el.addEventListener("focus",function(){this.style.background="rgba(255,255,0,0.18)";});'
+        '      el.addEventListener("blur",function(){this.style.background="";});'
+        '    });'
+        '  });'
+        '  // Barra de edição flutuante'
+        '  var bar=document.createElement("div");'
+        '  bar.id="edit-bar";'
+        '  bar.style.cssText="position:fixed;top:0;left:0;right:0;background:#1A2A3A;color:#fff;'
+        '    padding:8px 16px;display:flex;align-items:center;gap:12px;z-index:9999;'
+        '    font-family:Arial,sans-serif;font-size:12px;";'
+        '  bar.innerHTML="<span style=color:#E9B847;font-weight:700>&#9998; Modo Edição</span>'
+        '    <span style=opacity:.6>Clique em qualquer campo para editar</span>'
+        '    <button onclick=window.print() style=margin-left:auto;background:#1B6B3A;color:#fff;border:none;'
+        '      padding:6px 16px;border-radius:3px;cursor:pointer;font-size:12px>'
+        '      &#128424; Imprimir/PDF</button>";'
+        '  document.body.insertBefore(bar,document.body.firstChild);'
+        '  document.body.style.paddingTop="40px";'
+        '});'
+        '</script>'
+
         '<div class="np-btn" style="margin-top:16px;display:flex;gap:10px;justify-content:center;">'
         '<button onclick="window.print()" style="background:#1A2A3A;color:#fff;border:none;padding:9px 24px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:700;">&#128424; Imprimir / PDF</button>'
         '<button onclick="window.close()" style="background:#555;color:#fff;border:none;padding:9px 16px;border-radius:4px;cursor:pointer;font-size:13px;">&#10005; Fechar</button>'
@@ -5135,27 +5176,38 @@ def gerar_banner_proposicao():
     return jsonify({'success': True, 'html': html, 'fonte': fonte})
 
 
+
 @app.route('/exportar_banner_png', methods=['POST'])
 @login_required
 def exportar_banner_png():
-    """Converte HTML do banner em PNG via Playwright headless."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return jsonify({'error': 'Playwright nao instalado.'}), 500
+    """Converte HTML do banner em PNG via wkhtmltoimage."""
+    import subprocess, tempfile, os as _os
     data = request.get_json()
     html = data.get('html', '')
     if not html:
         return jsonify({'error': 'HTML nao fornecido.'}), 400
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
-            page = browser.new_page(viewport={'width': 850, 'height': 1200})
-            page.set_content(html, wait_until='networkidle')
-            page.wait_for_timeout(1800)
-            banner = page.query_selector('.banner')
-            png_bytes = banner.screenshot(type='png') if banner else page.screenshot(type='png', full_page=True)
-            browser.close()
+        with tempfile.NamedTemporaryFile(suffix='.html', mode='w',
+                                         delete=False, encoding='utf-8') as fh:
+            fh.write(html)
+            tmp_html = fh.name
+        tmp_png = tmp_html.replace('.html', '.png')
+        r = subprocess.run(
+            ['wkhtmltoimage',
+             '--width', '850',
+             '--quality', '95',
+             '--enable-local-file-access',
+             '--disable-smart-width',
+             tmp_html, tmp_png],
+            capture_output=True, timeout=60
+        )
+        if r.returncode != 0 or not _os.path.exists(tmp_png):
+            logger.error('wkhtmltoimage erro: ' + r.stderr.decode('utf-8','replace')[:300])
+            return jsonify({'error': 'Falha ao gerar PNG: ' + r.stderr.decode('utf-8','replace')[:200]}), 500
+        with open(tmp_png, 'rb') as fp:
+            png_bytes = fp.read()
+        _os.unlink(tmp_html)
+        _os.unlink(tmp_png)
         resp = make_response(png_bytes)
         resp.headers['Content-Type'] = 'image/png'
         resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.png"'
@@ -5168,26 +5220,27 @@ def exportar_banner_png():
 @app.route('/exportar_banner_pdf', methods=['POST'])
 @login_required
 def exportar_banner_pdf():
-    """Converte HTML do banner em PDF via Playwright headless."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return jsonify({'error': 'Playwright nao instalado.'}), 500
+    """Converte HTML do banner em PDF via wkhtmltopdf."""
+    import pdfkit
     data = request.get_json()
     html = data.get('html', '')
     if not html:
         return jsonify({'error': 'HTML nao fornecido.'}), 400
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
-            page = browser.new_page(viewport={'width': 850, 'height': 1200})
-            page.set_content(html, wait_until='networkidle')
-            page.wait_for_timeout(1800)
-            pdf_bytes = page.pdf(
-                format='A4', print_background=True,
-                margin={'top':'0.4cm','bottom':'0.4cm','left':'0.4cm','right':'0.4cm'}
-            )
-            browser.close()
+        opts = {
+            'page-size': 'A4',
+            'orientation': 'Portrait',
+            'margin-top':    '0',
+            'margin-bottom': '0',
+            'margin-left':   '0',
+            'margin-right':  '0',
+            'encoding': 'UTF-8',
+            'enable-local-file-access': '',
+            'print-media-type': '',
+            'disable-smart-shrinking': '',
+            'zoom': '1.0',
+        }
+        pdf_bytes = pdfkit.from_string(html, False, options=opts)
         resp = make_response(pdf_bytes)
         resp.headers['Content-Type'] = 'application/pdf'
         resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.pdf"'
