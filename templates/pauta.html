@@ -3866,70 +3866,86 @@ function _ativarEdicaoBanner(container) {
 
 async function exportarBannerPNG(btn) {
   if (!_bannerHtmlAtual) return;
-  btn = btn || event?.currentTarget || document.querySelector('[onclick*="exportarBannerPNG"]');
-  const orig = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando PNG...';
+  btn = btn || event?.currentTarget;
+  const orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando PNG...'; }
+
   try {
-    const r = await fetch('/exportar_banner_png', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html: _capturarHtmlBanner() })
-    });
-    if (!r.ok) {
-      const j = await r.json().catch(() => ({}));
-      alert('Erro ao gerar PNG: ' + (j.error || 'Falha no servidor'));
-      return;
-    }
-    const blob = await r.blob();
+    // Abre o banner numa janela popup e usa html2canvas para capturar
+    const htmlComCanvas = _bannerHtmlAtual.replace('</head>',
+      '<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"><\/script>' +
+      '<style>.np-btn{display:none!important}</style>' +
+      '</head>'
+    ) + `<script>
+      window.addEventListener('load', function() {
+        setTimeout(function() {
+          var el = document.querySelector('.banner') || document.body;
+          html2canvas(el, {
+            scale: 2,
+            useCORS: true,
+            allowTaint: true,
+            backgroundColor: '#ffffff',
+            logging: false
+          }).then(function(canvas) {
+            var link = document.createElement('a');
+            link.download = 'banner_plenario.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            setTimeout(function(){ window.close(); }, 500);
+          });
+        }, 1500);
+      });
+    <\/script>`;
+
+    const blob = new Blob([htmlComCanvas], {type: 'text/html;charset=utf-8'});
     const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = 'banner_plenario.png';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    const popup = window.open(url, '_blank', 'width=920,height=800');
+    if (!popup) {
+      alert('Permita pop-ups para gerar o PNG.');
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
   } catch(e) {
     alert('Erro: ' + e.message);
   } finally {
-    btn.disabled = false;
-    btn.innerHTML = orig;
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
   }
 }
 
-// ── Exporta banner como PDF via Playwright (servidor) ────────────────────
 async function exportarBannerPDF(btn) {
   if (!_bannerHtmlAtual) return;
-  btn = btn || event?.currentTarget || document.querySelector('[onclick*="exportarBannerPDF"]');
-  const orig = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando PDF...';
+  btn = btn || event?.currentTarget;
+  const orig = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Abrindo PDF...'; }
+
   try {
-    const r = await fetch('/exportar_banner_pdf', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html: _capturarHtmlBanner() })
-    });
-    if (!r.ok) {
-      const j = await r.json().catch(() => ({}));
-      alert('Erro ao gerar PDF: ' + (j.error || 'Falha no servidor'));
-      return;
-    }
-    const blob = await r.blob();
+    // Abre o banner numa janela e dispara window.print() automaticamente
+    const htmlParaPrint = _capturarHtmlBanner().replace('</head>',
+      '<style>' +
+      '@media print{.np-btn{display:none!important}body{margin:0;padding:0;}' +
+      '.banner{box-shadow:none!important;border-radius:0!important;width:100%!important;}' +
+      '@page{size:A4 portrait;margin:0;}}' +
+      '</style>' +
+      '</head>'
+    );
+    const blob = new Blob([htmlParaPrint], {type: 'text/html;charset=utf-8'});
     const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = 'banner_plenario.pdf';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    const popup = window.open(url, '_blank', 'width=900,height=800,scrollbars=yes');
+    if (!popup) {
+      alert('Permita pop-ups para gerar o PDF.');
+    } else {
+      popup.addEventListener('load', function() {
+        setTimeout(function() { popup.print(); }, 800);
+      });
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch(e) {
     alert('Erro: ' + e.message);
   } finally {
-    btn.disabled = false;
-    btn.innerHTML = orig;
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
   }
 }
 
-// ── Abre banner em popup para imprimir manualmente ───────────────────────
+
 function abrirBannerPopup() {
   if (!_bannerHtmlAtual) return;
   const blob = new Blob([_capturarHtmlBanner()], { type: 'text/html;charset=utf-8' });
