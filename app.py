@@ -5180,34 +5180,47 @@ def gerar_banner_proposicao():
 @app.route('/exportar_banner_png', methods=['POST'])
 @login_required
 def exportar_banner_png():
-    """Converte HTML do banner em PNG via wkhtmltoimage."""
-    import subprocess, tempfile, os as _os
+    """Converte HTML do banner em PNG via wkhtmltopdf + pdf2image."""
+    import pdfkit, pdf2image, tempfile, os as _os
     data = request.get_json()
     html = data.get('html', '')
     if not html:
         return jsonify({'error': 'HTML nao fornecido.'}), 400
+    tmp_pdf = None
     try:
-        with tempfile.NamedTemporaryFile(suffix='.html', mode='w',
-                                         delete=False, encoding='utf-8') as fh:
-            fh.write(html)
-            tmp_html = fh.name
-        tmp_png = tmp_html.replace('.html', '.png')
-        r = subprocess.run(
-            ['/usr/bin/wkhtmltoimage',
-             '--width', '850',
-             '--quality', '95',
-             '--enable-local-file-access',
-             '--disable-smart-width',
-             tmp_html, tmp_png],
-            capture_output=True, timeout=60
-        )
-        if r.returncode != 0 or not _os.path.exists(tmp_png):
-            logger.error('wkhtmltoimage erro: ' + r.stderr.decode('utf-8','replace')[:300])
-            return jsonify({'error': 'Falha ao gerar PNG: ' + r.stderr.decode('utf-8','replace')[:200]}), 500
-        with open(tmp_png, 'rb') as fp:
+        opts = {
+            'page-size': 'A4',
+            'orientation': 'Portrait',
+            'margin-top':    '0',
+            'margin-bottom': '0',
+            'margin-left':   '0',
+            'margin-right':  '0',
+            'encoding': 'UTF-8',
+            'enable-local-file-access': '',
+            'disable-smart-shrinking': '',
+            'zoom': '1.0',
+        }
+        # Gera PDF em memória
+        pdf_bytes = pdfkit.from_string(html, False, options=opts)
+
+        # Salva PDF temporário para pdf2image
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
+            f.write(pdf_bytes)
+            tmp_pdf = f.name
+
+        # Converte primeira página para PNG em 150 DPI
+        imgs = pdf2image.convert_from_path(tmp_pdf, dpi=150,
+                                            first_page=1, last_page=1)
+        if not imgs:
+            return jsonify({'error': 'Nenhuma página gerada'}), 500
+
+        buf = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        buf.close()
+        imgs[0].save(buf.name, 'PNG')
+        with open(buf.name, 'rb') as fp:
             png_bytes = fp.read()
-        _os.unlink(tmp_html)
-        _os.unlink(tmp_png)
+        _os.unlink(buf.name)
+
         resp = make_response(png_bytes)
         resp.headers['Content-Type'] = 'image/png'
         resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.png"'
@@ -5215,6 +5228,10 @@ def exportar_banner_png():
     except Exception as e:
         logger.error('exportar_banner_png: ' + str(e))
         return jsonify({'error': str(e)}), 500
+    finally:
+        if tmp_pdf and _os.path.exists(tmp_pdf):
+            try: _os.unlink(tmp_pdf)
+            except: pass
 
 
 @app.route('/exportar_banner_pdf', methods=['POST'])
