@@ -71,6 +71,7 @@
 </head>
 
 <body>
+  <!-- PAUTA-BANNER-V3-2026-06-26 -->
   <div class="alert text-center py-1 mb-0" 
      style="font-size:0.85rem; background-color:#b5d3bc; color:#4d5d4d; border:1px solid #dbe3da;">
     ⚠️ Ambiente de desenvolvimento — dados e análises podem conter erros.
@@ -614,6 +615,7 @@
   <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
 
   <script>
+    console.log('[PautaBanner] Template v3 carregado - 2026-06-26');
     const quillInstances = {};
 
     // Inicializa Quill quando collapse abre
@@ -1705,7 +1707,8 @@
 
     const popup = window.open('', '_blank', 'width=1000,height=700,scrollbars=yes,resizable=yes');
     const pd = popup.document;
-    pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Tabela de Destaques</title></head><body></body></html>'); pd.close();
+    pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Tabela de Destaques</title></head><body>
+  <!-- PAUTA-BANNER-V3-2026-06-26 --></body></html>'); pd.close();
     const st = pd.createElement('style');
     st.textContent = `body{font-family:Arial,sans-serif;padding:24px;background:#fff}
       h2{color:#1a1a2e;border-bottom:3px solid #1a1a2e;padding-bottom:8px;margin-bottom:16px}
@@ -1776,7 +1779,8 @@
       // Constrói popup via DOM — sem document.write com template literal
       const popup = window.open('', '_blank', 'width=900,height=700,scrollbars=yes,resizable=yes');
       const pd = popup.document;
-      pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Quadro DTQ</title></head><body></body></html>'); pd.close();
+      pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Quadro DTQ</title></head><body>
+  <!-- PAUTA-BANNER-V3-2026-06-26 --></body></html>'); pd.close();
 
       const st = pd.createElement('style');
       st.textContent = '* {box-sizing:border-box;margin:0;padding:0} body{font-family:Arial,sans-serif;padding:30px;background:#fff} .quadro{border:2px solid #1a1a2e;border-radius:4px;overflow:hidden;max-width:820px;margin:0 auto} .header{background:#1a1a2e;color:#fff;padding:10px 16px;display:flex;justify-content:space-between;align-items:center} .header-titulo{font-size:14px;font-weight:bold;flex:1} .header-logos{background:#fff;padding:4px 8px;border-radius:3px;display:flex;align-items:center;gap:8px} .header-logos img{height:34px;width:100px;object-fit:contain} .dtq-bar{background:#2c3e6b;color:#fff;text-align:center;padding:6px;font-size:13px;font-weight:bold} .descricao{background:#f0f4ff;text-align:center;padding:8px 16px;font-size:12px;color:#333;border-bottom:1px solid #ccc} .votos{display:grid;grid-template-columns:1fr 1fr} .voto-sim{border-right:1px solid #ccc;padding:12px} .voto-nao{padding:12px} .voto-label-sim{color:#1A6B3A;font-weight:bold;font-size:12px;margin-bottom:6px} .voto-label-nao{color:#cc0000;font-weight:bold;font-size:12px;margin-bottom:6px} .voto-conteudo-sim{color:#1A6B3A;font-size:13px;font-weight:bold;line-height:1.4} .voto-conteudo-nao{color:#cc0000;font-size:13px;font-weight:bold;line-height:1.4} .explicacao{background:#f9f9f9;border-top:2px solid #1a1a2e;padding:12px 16px} .explicacao-titulo{text-align:center;font-weight:bold;font-size:12px;color:#1a1a2e;margin-bottom:8px;letter-spacing:1px} .explicacao-texto{font-size:12px;color:#333;line-height:1.6} .btn-imprimir{display:block;margin:16px auto 0;padding:8px 24px;background:#1a1a2e;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px} @media print{.btn-imprimir{display:none}body{padding:0}}';
@@ -1899,7 +1903,8 @@
   async function verTextoDoc(urlDoc, label) {
     const popup = window.open('', '_blank', 'width=800,height=700,scrollbars=yes,resizable=yes');
     const pd = popup.document;
-    pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body></body></html>'); pd.close();
+    pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>
+  <!-- PAUTA-BANNER-V3-2026-06-26 --></body></html>'); pd.close();
     const st = pd.createElement('style');
     st.textContent = 'body{font-family:monospace;font-size:13px;padding:20px;line-height:1.6;color:#222} h3{color:#1A6B3A;border-bottom:2px solid #1A6B3A;padding-bottom:8px;margin-bottom:12px} pre{white-space:pre-wrap;word-break:break-word;background:#f8f8f8;padding:15px;border-radius:4px}';
     pd.head.appendChild(st);
@@ -1916,11 +1921,4 @@
       const info = pd.createElement('p'); info.style.fontSize = '0.8rem'; info.style.color = '#666';
       info.textContent = 'Total: ' + texto.length + ' caracteres';
       pd.body.appendChild(info);
-      const pre = pd.createElement('pre'); pre.textContent = texto; pd.body.appendChild(pre);
-    } catch(e) {
-      loading.textContent = 'Erro: ' + e.message; loading.style.color = 'red';
-    }
-  }
-
-  async function analisarDestaque(btn) {
-    const idPrincipal = btn.dat
+      const pre = pd.createElement('pre'); pre.textC
