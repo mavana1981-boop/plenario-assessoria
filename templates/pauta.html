@@ -3809,6 +3809,17 @@ async function gerarBannerIA() {
 }
 
 // ── Exporta banner como PNG via Playwright (servidor) ────────────────────
+function _capturarHtmlBanner() {
+  // Captura HTML atual do iframe (com edições do usuario)
+  const iframe = document.getElementById('banner-iframe');
+  try {
+    if (iframe && iframe.contentDocument && iframe.contentDocument.documentElement) {
+      return '<!DOCTYPE html>' + iframe.contentDocument.documentElement.outerHTML;
+    }
+  } catch(e) {}
+  return _bannerHtmlAtual;
+}
+
 async function exportarBannerPNG(btn) {
   if (!_bannerHtmlAtual) return;
   btn = btn || event?.currentTarget || document.querySelector('[onclick*="exportarBannerPNG"]');
@@ -3819,7 +3830,7 @@ async function exportarBannerPNG(btn) {
     const r = await fetch('/exportar_banner_png', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html: _bannerHtmlAtual })
+      body: JSON.stringify({ html: _capturarHtmlBanner() })
     });
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
@@ -3852,7 +3863,7 @@ async function exportarBannerPDF(btn) {
     const r = await fetch('/exportar_banner_pdf', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html: _bannerHtmlAtual })
+      body: JSON.stringify({ html: _capturarHtmlBanner() })
     });
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
@@ -3877,7 +3888,7 @@ async function exportarBannerPDF(btn) {
 // ── Abre banner em popup para imprimir manualmente ───────────────────────
 function abrirBannerPopup() {
   if (!_bannerHtmlAtual) return;
-  const blob = new Blob([_bannerHtmlAtual], { type: 'text/html;charset=utf-8' });
+  const blob = new Blob([_capturarHtmlBanner()], { type: 'text/html;charset=utf-8' });
   const url  = URL.createObjectURL(blob);
   const popup = window.open(url, '_blank', 'width=920,height=820,scrollbars=yes,resizable=yes');
   if (!popup) {
