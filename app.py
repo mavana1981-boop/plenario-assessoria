@@ -5178,23 +5178,27 @@ def gerar_banner_proposicao():
 
 
 
+
 @app.route('/exportar_banner_png', methods=['POST'])
 @login_required
 def exportar_banner_png():
-    """Converte HTML do banner em PNG via wkhtmltopdf + pdf2image."""
-    import subprocess, tempfile, os as _os, pdf2image
+    """Converte HTML do banner em PNG via wkhtmltopdf + pdftoppm (poppler-utils)."""
+    import subprocess, tempfile, os as _os
     data = request.get_json()
     html = data.get('html', '')
     if not html:
         return jsonify({'error': 'HTML nao fornecido.'}), 400
-    tmp_html = tmp_pdf = None
+    tmp_html = tmp_pdf = tmp_png = None
     try:
         with tempfile.NamedTemporaryFile(suffix='.html', mode='w',
                                          delete=False, encoding='utf-8') as fh:
             fh.write(html); tmp_html = fh.name
-        tmp_pdf = tmp_html.replace('.html', '.pdf')
+        tmp_pdf  = tmp_html.replace('.html', '.pdf')
+        tmp_base = tmp_html.replace('.html', '_pg')
+        tmp_png  = tmp_base + '.png'
 
-        r = subprocess.run(
+        # Passo 1: HTML → PDF
+        r1 = subprocess.run(
             ['/usr/bin/wkhtmltopdf',
              '--page-size', 'A4', '--orientation', 'Portrait',
              '--margin-top', '0', '--margin-bottom', '0',
@@ -5206,17 +5210,23 @@ def exportar_banner_png():
              tmp_html, tmp_pdf],
             capture_output=True, timeout=60
         )
-        if r.returncode != 0 or not _os.path.exists(tmp_pdf):
-            return jsonify({'error': 'wkhtmltopdf falhou: ' + r.stderr.decode('utf-8','replace')[:200]}), 500
+        if r1.returncode != 0 or not _os.path.exists(tmp_pdf):
+            return jsonify({'error': 'wkhtmltopdf falhou: ' + r1.stderr.decode('utf-8','replace')[:200]}), 500
 
-        imgs = pdf2image.convert_from_path(tmp_pdf, dpi=150, first_page=1, last_page=1)
-        if not imgs:
-            return jsonify({'error': 'pdf2image nao gerou imagem'}), 500
+        # Passo 2: PDF → PNG via pdftoppm (poppler-utils, sem dependências Python)
+        r2 = subprocess.run(
+            ['/usr/bin/pdftoppm',
+             '-png',
+             '-r', '150',
+             '-singlefile',
+             tmp_pdf, tmp_base],
+            capture_output=True, timeout=30
+        )
+        if r2.returncode != 0 or not _os.path.exists(tmp_png):
+            return jsonify({'error': 'pdftoppm falhou: ' + r2.stderr.decode('utf-8','replace')[:200]}), 500
 
-        import io
-        buf = io.BytesIO()
-        imgs[0].save(buf, 'PNG')
-        png_bytes = buf.getvalue()
+        with open(tmp_png, 'rb') as fp:
+            png_bytes = fp.read()
 
         resp = make_response(png_bytes)
         resp.headers['Content-Type'] = 'image/png'
@@ -5226,7 +5236,7 @@ def exportar_banner_png():
         logger.error('exportar_banner_png: ' + str(e))
         return jsonify({'error': str(e)}), 500
     finally:
-        for f in [tmp_html, tmp_pdf]:
+        for f in [tmp_html, tmp_pdf, tmp_png]:
             if f and _os.path.exists(f):
                 try: _os.unlink(f)
                 except: pass
