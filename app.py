@@ -5193,7 +5193,7 @@ def exportar_banner_png():
             tmp_html = fh.name
         tmp_png = tmp_html.replace('.html', '.png')
         r = subprocess.run(
-            ['wkhtmltoimage',
+            ['/usr/bin/wkhtmltoimage',
              '--width', '850',
              '--quality', '95',
              '--enable-local-file-access',
