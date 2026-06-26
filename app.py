@@ -5179,55 +5179,28 @@ def gerar_banner_proposicao():
 
 
 
+
 @app.route('/exportar_banner_png', methods=['POST'])
 @login_required
 def exportar_banner_png():
-    """Converte HTML do banner em PNG via wkhtmltopdf + pdftoppm (poppler-utils)."""
-    import subprocess, tempfile, os as _os
+    """Converte HTML do banner em PNG via Playwright (chromium headless)."""
+    from playwright.sync_api import sync_playwright
     data = request.get_json()
     html = data.get('html', '')
     if not html:
         return jsonify({'error': 'HTML nao fornecido.'}), 400
-    tmp_html = tmp_pdf = tmp_png = None
     try:
-        with tempfile.NamedTemporaryFile(suffix='.html', mode='w',
-                                         delete=False, encoding='utf-8') as fh:
-            fh.write(html); tmp_html = fh.name
-        tmp_pdf  = tmp_html.replace('.html', '.pdf')
-        tmp_base = tmp_html.replace('.html', '_pg')
-        tmp_png  = tmp_base + '.png'
-
-        # Passo 1: HTML → PDF
-        r1 = subprocess.run(
-            ['/usr/bin/wkhtmltopdf',
-             '--page-size', 'A4', '--orientation', 'Portrait',
-             '--margin-top', '0', '--margin-bottom', '0',
-             '--margin-left', '0', '--margin-right', '0',
-             '--encoding', 'UTF-8',
-             '--enable-local-file-access',
-             '--disable-smart-shrinking',
-             '--quiet',
-             tmp_html, tmp_pdf],
-            capture_output=True, timeout=60
-        )
-        if r1.returncode != 0 or not _os.path.exists(tmp_pdf):
-            return jsonify({'error': 'wkhtmltopdf falhou: ' + r1.stderr.decode('utf-8','replace')[:200]}), 500
-
-        # Passo 2: PDF → PNG via pdftoppm (poppler-utils, sem dependências Python)
-        r2 = subprocess.run(
-            ['/usr/bin/pdftoppm',
-             '-png',
-             '-r', '150',
-             '-singlefile',
-             tmp_pdf, tmp_base],
-            capture_output=True, timeout=30
-        )
-        if r2.returncode != 0 or not _os.path.exists(tmp_png):
-            return jsonify({'error': 'pdftoppm falhou: ' + r2.stderr.decode('utf-8','replace')[:200]}), 500
-
-        with open(tmp_png, 'rb') as fp:
-            png_bytes = fp.read()
-
+        with sync_playwright() as p:
+            browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
+            page = browser.new_page(viewport={'width': 900, 'height': 1200})
+            page.set_content(html, wait_until='networkidle')
+            page.wait_for_timeout(1500)
+            banner = page.query_selector('.banner')
+            if banner:
+                png_bytes = banner.screenshot(type='png')
+            else:
+                png_bytes = page.screenshot(full_page=True, type='png')
+            browser.close()
         resp = make_response(png_bytes)
         resp.headers['Content-Type'] = 'image/png'
         resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.png"'
@@ -5235,47 +5208,29 @@ def exportar_banner_png():
     except Exception as e:
         logger.error('exportar_banner_png: ' + str(e))
         return jsonify({'error': str(e)}), 500
-    finally:
-        for f in [tmp_html, tmp_pdf, tmp_png]:
-            if f and _os.path.exists(f):
-                try: _os.unlink(f)
-                except: pass
 
 
 @app.route('/exportar_banner_pdf', methods=['POST'])
 @login_required
 def exportar_banner_pdf():
-    """Converte HTML do banner em PDF via wkhtmltopdf (subprocess direto)."""
-    import subprocess, tempfile, os as _os
+    """Converte HTML do banner em PDF via Playwright (chromium headless)."""
+    from playwright.sync_api import sync_playwright
     data = request.get_json()
     html = data.get('html', '')
     if not html:
         return jsonify({'error': 'HTML nao fornecido.'}), 400
-    tmp_html = tmp_pdf = None
     try:
-        with tempfile.NamedTemporaryFile(suffix='.html', mode='w',
-                                         delete=False, encoding='utf-8') as fh:
-            fh.write(html); tmp_html = fh.name
-        tmp_pdf = tmp_html.replace('.html', '.pdf')
-
-        r = subprocess.run(
-            ['/usr/bin/wkhtmltopdf',
-             '--page-size', 'A4', '--orientation', 'Portrait',
-             '--margin-top', '0', '--margin-bottom', '0',
-             '--margin-left', '0', '--margin-right', '0',
-             '--encoding', 'UTF-8',
-             '--enable-local-file-access',
-             '--disable-smart-shrinking',
-             '--quiet',
-             tmp_html, tmp_pdf],
-            capture_output=True, timeout=60
-        )
-        if r.returncode != 0 or not _os.path.exists(tmp_pdf):
-            return jsonify({'error': 'wkhtmltopdf falhou: ' + r.stderr.decode('utf-8','replace')[:200]}), 500
-
-        with open(tmp_pdf, 'rb') as fp:
-            pdf_bytes = fp.read()
-
+        with sync_playwright() as p:
+            browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
+            page = browser.new_page(viewport={'width': 900, 'height': 1200})
+            page.set_content(html, wait_until='networkidle')
+            page.wait_for_timeout(1500)
+            pdf_bytes = page.pdf(
+                format='A4',
+                print_background=True,
+                margin={'top': '0', 'bottom': '0', 'left': '0', 'right': '0'}
+            )
+            browser.close()
         resp = make_response(pdf_bytes)
         resp.headers['Content-Type'] = 'application/pdf'
         resp.headers['Content-Disposition'] = 'attachment; filename="banner_plenario.pdf"'
@@ -5283,11 +5238,6 @@ def exportar_banner_pdf():
     except Exception as e:
         logger.error('exportar_banner_pdf: ' + str(e))
         return jsonify({'error': str(e)}), 500
-    finally:
-        for f in [tmp_html, tmp_pdf]:
-            if f and _os.path.exists(f):
-                try: _os.unlink(f)
-                except: pass
 
 
 if __name__ == '__main__':
