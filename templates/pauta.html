@@ -189,7 +189,7 @@
         <i class="fas fa-file-export me-2"></i>Exportar resumo
       </a>
       <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-pauta-banner"
-        onclick="window._abrirPautaBanner && window._abrirPautaBanner();"
+        onclick="var d=document.getElementById('modalPautaBanner');var f=typeof window._abrirPautaBanner;if(f==='function'){window._abrirPautaBanner();}else{alert('DEBUG Pauta Banner:\nmodal='+(d?'OK':'AUSENTE')+'\n_abrirPautaBanner='+f);}"
         style="background:linear-gradient(135deg,#1A6B3A,#0d4a27);">
         <i class="fas fa-newspaper me-2"></i>Pauta Banner
       </button>
@@ -211,8 +211,8 @@
       {% endif %}
       <button class="btn btn-sm mb-3 ms-2 text-white"
         style="background:linear-gradient(135deg,#B8860B,#DAA520);"
-        data-bs-toggle="modal" data-bs-target="#modalOrientacoes"
-        onclick="carregarOrientacoes()">
+        onclick="var m=document.getElementById('modalOrientacoes');var f=typeof carregarOrientacoes;if(m&&f==='function'){carregarOrientacoes();new bootstrap.Modal(m).show();}else{alert('DEBUG Orientações:\nmodal='+(m?'OK':'AUSENTE')+'\ncarregarOrientacoes='+f);}"
+        >
         <i class="fas fa-vote-yea me-2"></i>Orientações
       </button>
 
@@ -1916,9 +1916,4 @@
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({url_documento: urlDoc})
       });
-      const j = await r.json();
-      const texto = j.texto || '(texto não extraído — verifique se o PDF está acessível)';
-      loading.remove();
-      const info = pd.createElement('p'); info.style.fontSize = '0.8rem'; info.style.color = '#666';
-      info.textContent = 'Total: ' + texto.length + ' caracteres';
-      pd.body.appendChild(info)
+      const
