@@ -3649,6 +3649,10 @@ async function exportarOrientacoesPDF() {
 
         <div id="banner-resultado" style="display:none;">
           <hr>
+          <div id="banner-edit-aviso" style="display:none;align-items:center;gap:8px;background:#FFF9E6;border:1px solid #F0C030;border-radius:6px;padding:8px 12px;margin-bottom:8px;">
+            <i class="fas fa-pencil-alt" style="color:#B8860B;"></i>
+            <span style="font-size:0.82rem;color:#7A5C00;"><strong>Modo edição:</strong> clique em qualquer campo do banner para editar o texto antes de exportar.</span>
+          </div>
           <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
             <label class="fw-bold small mb-0">
               <i class="fas fa-check-circle text-success me-1"></i>Banner gerado com sucesso
@@ -3665,10 +3669,10 @@ async function exportarOrientacoesPDF() {
               </button>
             </div>
           </div>
-          <div id="banner-iframe-wrapper"
-            style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#e8e8e8;position:relative;">
-            <iframe id="banner-iframe"
-              style="width:800px;height:900px;border:none;transform-origin:top left;display:block;"></iframe>
+          <div id="banner-preview-outer"
+            style="border:1px solid #ddd;border-radius:4px;overflow:auto;background:#C5D0DC;position:relative;max-height:70vh;">
+            <div id="banner-preview-inner"
+              style="transform-origin:top left;display:block;"></div>
           </div>
         </div>
 
@@ -3785,19 +3789,25 @@ async function gerarBannerIA() {
 
     _bannerHtmlAtual = j.html;
 
-    // Escala o iframe para caber no modal
-    const wrapper = document.getElementById('banner-iframe-wrapper');
-    const iframe  = document.getElementById('banner-iframe');
-    const modalW  = wrapper.offsetWidth || 700;
-    const scale   = Math.min(1, (modalW - 4) / 800);
-    iframe.style.transform = 'scale(' + scale + ')';
-    wrapper.style.height   = Math.round(900 * scale) + 'px';
+    // Renderiza o banner diretamente na div (sem iframe — evita cross-origin)
+    const previewInner = document.getElementById('banner-preview-inner');
+    previewInner.innerHTML = j.html;
 
-    // Usa blob URL — mais confiável que srcdoc para HTML com fontes externas
-    if (window._bannerBlobUrl) URL.revokeObjectURL(window._bannerBlobUrl);
-    const blob = new Blob([j.html], {type: 'text/html;charset=utf-8'});
-    window._bannerBlobUrl = URL.createObjectURL(blob);
-    iframe.src = window._bannerBlobUrl;
+    // Escala para caber no modal
+    const outerW = document.getElementById('banner-preview-outer').offsetWidth || 700;
+    const scale  = Math.min(1, (outerW - 8) / 850);
+    previewInner.style.transform = 'scale(' + scale + ')';
+    previewInner.style.width = '850px';
+    previewInner.style.transformOrigin = 'top left';
+    // Ajusta altura do outer para o conteúdo escalado
+    setTimeout(() => {
+      const h = previewInner.scrollHeight * scale;
+      document.getElementById('banner-preview-outer').style.height = Math.min(h, window.innerHeight * 0.65) + 'px';
+    }, 100);
+
+    // Torna todos os campos de texto editáveis
+    _ativarEdicaoBanner(previewInner);
+
     document.getElementById('banner-resultado').style.display = 'block';
 
   } catch (err) {
@@ -3810,14 +3820,48 @@ async function gerarBannerIA() {
 
 // ── Exporta banner como PNG via Playwright (servidor) ────────────────────
 function _capturarHtmlBanner() {
-  // Captura HTML atual do iframe (com edições do usuario)
-  const iframe = document.getElementById('banner-iframe');
-  try {
-    if (iframe && iframe.contentDocument && iframe.contentDocument.documentElement) {
-      return '<!DOCTYPE html>' + iframe.contentDocument.documentElement.outerHTML;
-    }
-  } catch(e) {}
+  // Captura HTML da div de preview (com edições do usuario)
+  const inner = document.getElementById('banner-preview-inner');
+  if (inner && inner.innerHTML) {
+    // Extrai só o conteúdo do banner (primeiro filho)
+    return inner.innerHTML;
+  }
   return _bannerHtmlAtual;
+}
+
+function _ativarEdicaoBanner(container) {
+  // Torna campos de texto do banner editáveis inline
+  const sels = [
+    '.cab-titulo','.cab-subtitulo','.cab-desc',
+    '.dado-valor','.dado-label','.dado-detalhe',
+    '.mc-val',
+    '.resumo',
+    '.preve-item span',
+    '.critica-titulo','.critica-detalhe',
+    '.just-txt',
+    '.ori-badge-txt',
+    '.arg-body-txt',
+    '.pratica-item span',
+    '.rodape-txt'
+  ];
+  sels.forEach(sel => {
+    (container || document).querySelectorAll(sel).forEach(el => {
+      el.contentEditable = 'true';
+      el.style.outline = 'none';
+      el.style.cursor = 'text';
+      el.style.minHeight = '1em';
+      el.addEventListener('focus', function() {
+        this.style.boxShadow = '0 0 0 2px rgba(255,200,0,0.6)';
+        this.style.borderRadius = '2px';
+      });
+      el.addEventListener('blur', function() {
+        this.style.boxShadow = '';
+      });
+    });
+  });
+  // Aviso de edição no topo do preview
+  const aviso = document.getElementById('banner-edit-aviso');
+  if (aviso) aviso.style.display = 'flex';
 }
 
 async function exportarBannerPNG(btn) {
