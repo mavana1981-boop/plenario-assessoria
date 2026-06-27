@@ -2831,39 +2831,108 @@ async function gerarPautaBanner(){
 function _ativarEdicaoPautaBanner(c){c.querySelectorAll('[data-pb-edit]').forEach(el=>{el.contentEditable='true';el.style.outline='none';el.style.cursor='text';el.addEventListener('focus',function(){this.style.boxShadow='0 0 0 2px rgba(255,200,0,0.7)';this.style.borderRadius='2px';});el.addEventListener('blur',function(){this.style.boxShadow='';});});}
 function _buildPautaBannerHTML({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64}){
   const C={v:'#1A6B3A',ve:'#0d4a27',a:'#E9B847',c:'#2C3E50',f:'#F4F6F8'};
-  const cabBg=imgB64?`background:linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0.55)),url("data:${imgMime};base64,${imgB64}");background-size:cover;background-position:center;`:`background:linear-gradient(160deg,#0d1f0d 0%,#1A6B3A 100%);`;
-  const lO=logoOpoB64?`<img src="${logoOpoB64}" style="height:34px;object-fit:contain;display:block;">`:'';
-  const lM=logoMinB64?`<img src="${logoMinB64}" style="height:34px;object-fit:contain;display:block;">`:'';
-  function ib(it,i,c){
-    const n=String(it.ordem||(i+1)),p=_ePB(it.projeto||''),a=_ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,55));
-    const rel=_ePB((it.relator||'').replace('Não atribuído','').substring(0,40));
+
+  // Imagem de fundo — overlay escuro sobre a foto
+  const cabBg = imgB64
+    ? `background-color:#0d1f0d;background-image:linear-gradient(rgba(0,0,0,0.52),rgba(0,0,0,0.52)),url("data:${imgMime};base64,${imgB64}");background-size:cover;background-position:center top;`
+    : `background:linear-gradient(160deg,#0d1f0d 0%,#1A6B3A 100%);`;
+
+  const lO=logoOpoB64?`<img src="${logoOpoB64}" style="height:36px;object-fit:contain;display:block;">`:'';
+  const lM=logoMinB64?`<img src="${logoMinB64}" style="height:36px;object-fit:contain;display:block;">`:'';
+
+  function ib(it,i,compact){
+    const n=String(it.ordem||(i+1));
+    const p=_ePB(it.projeto||'');
+    const a=_ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,60));
+    const rel=_ePB((it.relator||'').replace('Não atribuído','').substring(0,45));
     const res=_ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
-    if(c)return`<div style="display:flex;gap:7px;align-items:flex-start;margin-bottom:7px;font-size:10.5px;color:#222;"><div style="min-width:20px;height:20px;background:${C.v};color:#fff;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9.5px;flex-shrink:0;">${n}</div><div data-pb-edit><b>${p}</b>${a?` <span style="color:#666;">(${a})</span>`:''} ${res?`<div style="color:#444;margin-top:1px;font-size:10px;">${res.substring(0,100)}</div>`:''}</div></div>`;
-    return`<div style="display:flex;gap:9px;align-items:flex-start;margin-bottom:11px;"><div style="min-width:26px;height:26px;background:${C.v};color:#fff;border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;flex-shrink:0;">${n}</div><div data-pb-edit style="font-size:11px;color:#1a1a1a;"><div style="font-weight:800;color:${C.v};">${p}</div>${a?`<div style="font-size:10px;color:#555;">Autor: ${a}</div>`:''}${rel?`<div style="font-size:10px;color:#777;">Rel.: ${rel}</div>`:''}${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,140)}</div>`:''}</div></div>`;
+    if(compact){
+      return`<div style="display:flex;gap:7px;align-items:flex-start;margin-bottom:8px;font-size:10.5px;color:#222;">
+        <div style="min-width:20px;height:20px;background:${C.v};color:#fff;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9.5px;flex-shrink:0;">${n}</div>
+        <div data-pb-edit><b>${p}</b>${a?` <span style="color:#666;">(${a})</span>`:''}${res?`<div style="color:#444;margin-top:1px;font-size:10px;line-height:1.35;">${res.substring(0,110)}</div>`:''}</div>
+      </div>`;
+    }
+    return`<div style="display:flex;gap:9px;align-items:flex-start;margin-bottom:12px;">
+      <div style="min-width:26px;height:26px;background:${C.v};color:#fff;border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;flex-shrink:0;">${n}</div>
+      <div data-pb-edit style="font-size:11px;color:#1a1a1a;">
+        <div style="font-weight:800;color:${C.v};">${p}</div>
+        ${a?`<div style="font-size:10px;color:#555;">Autor: ${a}</div>`:''}
+        ${rel?`<div style="font-size:10px;color:#777;">Rel.: ${rel}</div>`:''}
+        ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,150)}</div>`:''}
+      </div>
+    </div>`;
   }
-  function card(ico,tit,cor,cont){return`<div style="background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.10);margin-bottom:10px;"><div style="background:${cor};padding:8px 12px;display:flex;align-items:center;gap:7px;"><div style="width:26px;height:26px;background:rgba(255,255,255,0.2);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;">${ico}</div><span style="font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#fff;" data-pb-edit>${tit}</span></div><div style="padding:10px 12px;">${cont}</div></div>`;}
-  const sM=materias.length?card('📄','Matérias sobre a Mesa',C.ve,materias.map((it,i)=>ib(it,i,false)).join('')):'';
-  const sU=urgencias.length?card('⚡','Requerimentos de Urgência',C.v,urgencias.map((it,i)=>ib(it,i,true)).join('')):'';
-  const sP=projetos.length?card('🏛️','Projetos em Discussão',C.v,projetos.map((it,i)=>ib(it,i,false)).join('')):'';
-  const sPr=prioridade.length?card('⭐','Prioridade','#9a7c00',prioridade.map((it,i)=>ib(it,i,false)).join('')):'';
-  const rod=`<div style="background:${C.c};padding:9px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;"><div style="display:flex;align-items:center;gap:7px;">${logoOpoB64?`<img src="${logoOpoB64}" style="height:24px;object-fit:contain;">`:''}${logoMinB64?`<img src="${logoMinB64}" style="height:24px;object-fit:contain;">`:''}  </div><div style="text-align:center;"><div style="font-size:9px;font-weight:800;color:#fff;letter-spacing:1px;text-transform:uppercase;" data-pb-edit>Pauta Resumida — Ordem do Dia</div><div style="font-size:7.5px;color:rgba(255,255,255,.55);" data-pb-edit>Atualizado em ${dataFmt||new Date().toLocaleDateString('pt-BR')}</div></div></div>`;
+
+  function card(ico,tit,cor,cont){
+    return`<div style="background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.10);margin-bottom:10px;">
+      <div style="background:${cor};padding:8px 12px;display:flex;align-items:center;gap:7px;">
+        <div style="width:26px;height:26px;background:rgba(255,255,255,0.2);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;">${ico}</div>
+        <span style="font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#fff;" data-pb-edit>${tit}</span>
+      </div>
+      <div style="padding:10px 12px;">${cont}</div>
+    </div>`;
+  }
+
+  // Monta seções
+  const sM  = materias.length   ? card('📄','Matérias sobre a Mesa',C.ve, materias.map((it,i)=>ib(it,i,false)).join('')) : '';
+  const sU  = urgencias.length  ? card('⚡','Requerimentos de Urgência',C.v, urgencias.map((it,i)=>ib(it,i,true)).join('')) : '';
+  const sP  = projetos.length   ? card('🏛️','Projetos em Discussão',C.v, projetos.map((it,i)=>ib(it,i,false)).join('')) : '';
+  const sPr = prioridade.length ? card('⭐','Prioridade','#9a7c00', prioridade.map((it,i)=>ib(it,i,false)).join('')) : '';
+
+  // Layout inteligente: distribui seções entre colunas para equalizar altura
+  // Regra: Matérias + Urgências sempre na esquerda
+  // Projetos na direita; Prioridade vai para onde houver menos conteúdo
+  const esq = sM + sU;
+  const dir = sP + sPr;
+
+  // Se esquerda vazia, coloca tudo na direita em coluna única
+  const gridStyle = (!esq || !dir)
+    ? 'display:block;padding:10px 10px 0;'
+    : 'display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 10px 0;align-items:start;';
+
+  const rod=`<div style="background:${C.c};padding:9px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div style="display:flex;align-items:center;gap:7px;">
+      ${logoOpoB64?`<img src="${logoOpoB64}" style="height:24px;object-fit:contain;">`:''}
+      ${logoMinB64?`<img src="${logoMinB64}" style="height:24px;object-fit:contain;">`:''}
+    </div>
+    <div style="text-align:center;">
+      <div style="font-size:9px;font-weight:800;color:#fff;letter-spacing:1px;text-transform:uppercase;" data-pb-edit>Pauta Resumida — Ordem do Dia</div>
+      <div style="font-size:7.5px;color:rgba(255,255,255,.55);" data-pb-edit>Material de Apoio Parlamentar · Atualizado em ${dataFmt||new Date().toLocaleDateString('pt-BR')}</div>
+    </div>
+  </div>`;
+
   return`<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
 <div class="pb-banner" style="width:600px;background:${C.f};font-family:'Source Sans 3',Arial,sans-serif;border-radius:8px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.2);">
-  <div style="${cabBg}padding:20px 18px 0;position:relative;min-height:150px;">
+
+  <!-- CABEÇALHO COM FOTO DE FUNDO -->
+  <div style="${cabBg}padding:22px 18px 0;position:relative;">
     <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${C.a};"></div>
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-      <div><div style="font-family:'Barlow Condensed',sans-serif;font-size:50px;font-weight:900;color:#fff;line-height:.88;" data-pb-edit>PAUTA<br><span style="color:${C.a}">RESUMIDA</span></div>
-      <div style="font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,.72);letter-spacing:2px;text-transform:uppercase;margin-top:5px;" data-pb-edit>Ordem do Dia — Câmara dos Deputados</div></div>
-      <div style="display:flex;flex-direction:column;gap:5px;align-items:center;background:rgba(255,255,255,0.10);border:1px solid rgba(255,255,255,0.18);border-radius:6px;padding:7px 9px;flex-shrink:0;">${lO}${lM}</div>
+      <div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-size:56px;font-weight:900;color:#fff;line-height:.85;letter-spacing:-1px;" data-pb-edit>PAUTA<br><span style="color:${C.a}">RESUMIDA</span></div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,.75);letter-spacing:2.5px;text-transform:uppercase;margin-top:7px;" data-pb-edit>Ordem do Dia — Câmara dos Deputados</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px;align-items:center;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.22);border-radius:6px;padding:8px 10px;flex-shrink:0;">${lO}${lM}</div>
     </div>
-    <div style="display:inline-flex;align-items:center;gap:5px;background:${C.v};color:#fff;border-radius:5px;padding:4px 10px;margin-top:10px;"><span>📅</span><span style="font-family:'Barlow Condensed',sans-serif;font-size:13px;font-weight:700;" data-pb-edit>${dataFmt||'—'}</span></div>
-    <div style="height:12px;background:${C.f};margin:10px -18px 0;border-radius:10px 10px 0 0;"></div>
+    <div style="display:inline-flex;align-items:center;gap:6px;background:${C.v};color:#fff;border-radius:5px;padding:5px 12px;margin-top:12px;">
+      <span style="font-size:13px;">📅</span>
+      <span style="font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;letter-spacing:.5px;" data-pb-edit>${dataFmt||'—'}</span>
+    </div>
+    <!-- curva de transição para o fundo claro -->
+    <div style="height:14px;background:${C.f};margin:12px -18px 0;border-radius:12px 12px 0 0;"></div>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 10px 0;">
-    <div>${sM}${sU}</div><div>${sP}${sPr}</div>
+
+  <!-- CORPO: grade dinâmica -->
+  <div style="${gridStyle}">
+    ${esq ? `<div style="min-width:0;">${esq}</div>` : ''}
+    ${dir  ? `<div style="min-width:0;">${dir}</div>`  : ''}
   </div>
-  <div style="padding:0 10px 10px;">&nbsp;</div>${rod}</div>`;
+
+  <div style="padding:0 10px 10px;"></div>
+  ${rod}
+</div>`;
 }
+
 async function baixarPautaBannerPNG(btn){
   const orig=btn.innerHTML;btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Gerando PNG...';
   try{
