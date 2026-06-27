@@ -2815,7 +2815,7 @@ async function gerarPautaBanner(){
     const materias=itens.filter(it=>/Reda[cç][aã]o Final/i.test(it.projeto)&&!urgencias.includes(it));
     const prioridade=itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)&&(it.orientacao||'').toUpperCase()==='SIM');
     const projetos=itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)&&!prioridade.includes(it));
-    const html=_buildPautaBannerHTML({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64});
+    const html=_buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64});
     const inner=document.getElementById('pb-preview-inner');
     inner.innerHTML=html;
     const outerW=document.getElementById('pb-preview-outer').offsetWidth||700;
@@ -2829,7 +2829,7 @@ async function gerarPautaBanner(){
   finally{btn.disabled=false;btn.innerHTML='<i class="fas fa-magic me-1"></i>Gerar Banner';}
 }
 function _ativarEdicaoPautaBanner(c){c.querySelectorAll('[data-pb-edit]').forEach(el=>{el.contentEditable='true';el.style.outline='none';el.style.cursor='text';el.addEventListener('focus',function(){this.style.boxShadow='0 0 0 2px rgba(255,200,0,0.7)';this.style.borderRadius='2px';});el.addEventListener('blur',function(){this.style.boxShadow='';});});}
-function _buildPautaBannerHTML({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64}){
+function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64}){
   const C={v:'#1A6B3A',ve:'#0d4a27',a:'#E9B847',c:'#2C3E50',f:'#F4F6F8'};
 
   // Imagem de fundo — overlay escuro sobre a foto
