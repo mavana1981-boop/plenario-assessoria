@@ -616,7 +616,7 @@
 
   <script>
     console.log('[PautaBanner] Template v3 carregado - 2026-06-26');
-    alert('✅ v6 — img tag + column-count');
+    alert('✅ v8 — data+prioridade');
     const quillInstances = {};
 
     // Inicializa Quill quando collapse abre
@@ -2750,6 +2750,16 @@ async function exportarOrientacoesPDF() {
         <div id="pb-img-preview" style="display:none;margin-bottom:10px;">
           <img id="pb-img-preview-src" style="max-height:80px;border-radius:4px;border:1px solid #ddd;">
         </div>
+        <div class="mb-2">
+          <label class="form-label fw-bold small mb-1">
+            <i class="fas fa-star me-1" style="color:#DAA520;"></i>Selecione os projetos em destaque/prioridade
+          </label>
+          <div class="form-text mb-2">Marque os itens que aparecerão no card ⭐ Prioridade.</div>
+          <div id="pb-lista-prioridade"
+            style="max-height:200px;overflow-y:auto;border:1px solid #dee2e6;border-radius:6px;padding:8px;">
+            <div class="text-muted small fst-italic">Abrindo pauta...</div>
+          </div>
+        </div>
         <div id="pb-resultado" style="display:none;">
           <div style="display:flex;align-items:center;gap:8px;background:#FFF9E6;border:1px solid #F0C030;border-radius:6px;padding:8px 12px;margin-bottom:10px;">
             <i class="fas fa-pencil-alt" style="color:#B8860B;"></i>
@@ -2789,6 +2799,28 @@ window._abrirPautaBanner=function(){
   document.getElementById('btn-pb-png').style.display='none';
   document.getElementById('pb-imagem').value='';
   document.getElementById('pb-img-preview').style.display='none';
+  // Popula lista de prioridade com itens da pauta
+  const lista=document.getElementById('pb-lista-prioridade');
+  const itens=(window.ITENS_DATA||[]).filter(it=>{
+    const p=it.projeto_original||it.projeto||'';
+    const naoEhReq=/^REQ\s|^RQS\s|^RQU\s|^REC\s/i.test(p);
+    const naoEhRedacao=/Reda[cç][aã]o Final/i.test(it.projeto);
+    return !naoEhReq && !naoEhRedacao;
+  });
+  if(itens.length===0){
+    lista.innerHTML='<div class="text-muted small fst-italic">Nenhum item disponível.</div>';
+  } else {
+    lista.innerHTML=itens.map(it=>{
+      const jaEPrioridade=(it.orientacao||'').toUpperCase()==='SIM';
+      return `<div class="form-check py-1" style="border-bottom:1px solid #f0f0f0;">`
+        +`<input class="form-check-input" type="checkbox" id="pb-pri-${it.id_principal}"
+           value="${it.id_principal}" ${jaEPrioridade?'checked':''}>`
+        +`<label class="form-check-label small" for="pb-pri-${it.id_principal}">`
+        +`<strong>Item ${it.ordem}</strong> — ${it.projeto}`
+        +`${jaEPrioridade?' <span class="badge" style="background:#DAA520;font-size:0.65rem;">SIM</span>':''}`
+        +`</label></div>`;
+    }).join('');
+  }
   new bootstrap.Modal(document.getElementById('modalPautaBanner')).show();
 };
 function _ePB(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -2810,10 +2842,22 @@ async function gerarPautaBanner(){
     const dataEl=document.querySelector('[data-evento-data]');
     const dataEvt=dataEl?.dataset?.eventoData||'';
     let dataFmt='';
-    if(dataEvt){const[ano,mes,dia]=dataEvt.split('-');const meses=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];dataFmt=`${parseInt(dia)} de ${meses[parseInt(mes)-1]} de ${ano}`;}
+    if(dataEvt){
+      // data-evento-data vem como DD/MM/YYYY do datetimeformat
+      const meses=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+      const partes=dataEvt.split('/');
+      if(partes.length===3){
+        const dia=parseInt(partes[0]),mes=parseInt(partes[1]),ano=partes[2];
+        if(!isNaN(dia)&&!isNaN(mes)) dataFmt=`${dia} de ${meses[mes-1]} de ${ano}`;
+      }
+    }
     const urgencias=itens.filter(it=>/^REQ\s|^RQS\s|^RQU\s|^REC\s/i.test((it.projeto_original||it.projeto||'')));
     const materias=itens.filter(it=>/Reda[cç][aã]o Final/i.test(it.projeto)&&!urgencias.includes(it));
-    const prioridade=itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)&&(it.orientacao||'').toUpperCase()==='SIM');
+    // Prioridade: usa checkboxes selecionados pelo usuário
+    const checksSel=Array.from(document.querySelectorAll('#pb-lista-prioridade input[type=checkbox]:checked')).map(cb=>String(cb.value));
+    const prioridade=checksSel.length>0
+      ? itens.filter(it=>checksSel.includes(String(it.id_principal))&&!urgencias.includes(it)&&!materias.includes(it))
+      : itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)&&(it.orientacao||'').toUpperCase()==='SIM');
     const projetos=itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)&&!prioridade.includes(it));
     const html=_buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64});
     const inner=document.getElementById('pb-preview-inner');
