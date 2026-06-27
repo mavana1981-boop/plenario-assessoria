@@ -616,7 +616,7 @@
 
   <script>
     console.log('[PautaBanner] Template v3 carregado - 2026-06-26');
-    alert('✅ v12 — layout adaptativo');
+    alert('✅ v13 — cores + estrela+num + layout');
     const quillInstances = {};
 
     // Inicializa Quill quando collapse abre
@@ -2900,7 +2900,7 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
     const a=ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,60));
     const res=ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
     return`<div style="padding:8px 12px;border-bottom:1px solid #f0f0f0;display:flex;gap:7px;align-items:flex-start;font-size:10.5px;color:#222;">
-      <div style="min-width:20px;height:20px;background:#1A3A2A;color:#fff;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9.5px;flex-shrink:0;">${n}</div>
+      <div style="min-width:20px;height:20px;background:#7A1A1A;color:#fff;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9.5px;flex-shrink:0;">${n}</div>
       <div data-pb-edit><b>${p}</b>${a?` <span style="color:#666;">(${a})</span>`:''}${res?`<div style="color:#444;margin-top:1px;font-size:10px;line-height:1.35;">${res.substring(0,120)}</div>`:''}</div>
     </div>`;
   }
@@ -2927,15 +2927,17 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
     const ehPri=priIds.has(String(it.id_principal));
     const maxRes = compacto ? 100 : 160;
     const badgeN = ehPri
-      ? `<div style="min-width:${compacto?20:26}px;height:${compacto?20:26}px;background:#7A5500;color:#fff;border-radius:${compacto?3:4}px;display:flex;align-items:center;justify-content:center;font-size:${compacto?10:13}px;flex-shrink:0;">⭐</div>`
-      : `<div style="min-width:${compacto?20:26}px;height:${compacto?20:26}px;background:#1A3A2A;color:#fff;border-radius:${compacto?3:4}px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:${compacto?9:11}px;flex-shrink:0;">${n}</div>`;
+      ? `<div style="display:flex;align-items:center;gap:2px;flex-shrink:0;">`
+        +`<div style="height:${compacto?20:26}px;background:#7A5500;color:#fff;border-radius:${compacto?3:4}px;padding:0 4px;display:flex;align-items:center;justify-content:center;font-size:${compacto?8:10}px;white-space:nowrap;">⭐ ${n}</div>`
+        +`</div>`
+      : `<div style="min-width:${compacto?20:26}px;height:${compacto?20:26}px;background:#1A2A5C;color:#fff;border-radius:${compacto?3:4}px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:${compacto?9:11}px;flex-shrink:0;">${n}</div>`;
     const rowBg=ehPri?'background:#FFFBEA;border-left:3px solid #E9B847;':'';
     const pad=compacto?'7px 10px':'10px 12px';
     const gap=compacto?'7px':'9px';
     return`<div style="padding:${pad};border-bottom:1px solid #f0f0f0;${rowBg}display:flex;gap:${gap};align-items:flex-start;">
       ${badgeN}
       <div data-pb-edit style="font-size:${compacto?10:11}px;color:#1a1a1a;">
-        <div style="font-weight:800;color:${ehPri?'#7A5500':'#1A3A2A'};">${p}</div>
+        <div style="font-weight:800;color:${ehPri?'#7A5500':'#1A2A5C'};">${p}</div>
         ${a?`<div style="font-size:${compacto?9:10}px;color:#555;">Autor: ${a}</div>`:''}
         ${(!compacto&&rel)?`<div style="font-size:10px;color:#777;">Rel.: ${rel}</div>`:''}
         ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,maxRes)}</div>`:''}
@@ -2953,6 +2955,11 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
   function wrapCard(conteudo){
     return`<div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid #c8d8c8;margin-bottom:10px;">${conteudo}</div>`;
   }
+  function wrapCardCor(cor){
+    return function(conteudo){
+      return`<div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid ${cor};margin-bottom:10px;">${conteudo}</div>`;
+    };
+  }
 
   // ── Decisão de layout ─────────────────────────────────────────────────────
   // Conta itens em cada "lado"
@@ -2968,14 +2975,14 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
   const cardMaterias  = (materias&&materias.length)
     ? wrapCard(cardHeader('📄','Matérias sobre a Mesa','#1A3A2A') + materias.map(itemMateria).join('')) : '';
   const cardUrgencias = (urgencias&&urgencias.length)
-    ? wrapCard(cardHeader('⚡','Requerimentos de Urgência','#1B5C2E') + urgencias.map(itemUrgencia).join('')) : '';
+    ? wrapCardCor('#c8a8a8')(cardHeader('⚡','Requerimentos de Urgência','#7A1A1A') + urgencias.map(itemUrgencia).join('')) : '';
 
   let corpo;
 
   if(!usarLayoutVertical){
     // LAYOUT A: 2 colunas — esquerda matérias+urgências, direita projetos
     const cardProjetos = todosProj.length
-      ? wrapCard(cardHeader('🏛️','Projetos em Discussão','#1B5C2E') + todosProj.map(it=>itemProjeto(it,false)).join('')) : '';
+      ? wrapCardCor('#a8b8d8')(cardHeader('🏛️','Projetos em Discussão','#1A2A5C') + todosProj.map(it=>itemProjeto(it,false)).join('')) : '';
     corpo = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 10px 0;align-items:start;">
       <div style="min-width:0;">${cardMaterias}${cardUrgencias}</div>
       <div style="min-width:0;">${cardProjetos}</div>
@@ -2998,17 +3005,15 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
       <div>${sub2.map(it=>itemProjeto(it,true)).join('')}</div>
     </div>`;
     const cardProjetosLargo = todosProj.length
-      ? wrapCard(cardHeader('🏛️','Projetos em Discussão','#1B5C2E') + projBody) : '';
+      ? wrapCardCor('#a8b8d8')(cardHeader('🏛️','Projetos em Discussão','#1A2A5C') + projBody) : '';
 
-    // Urgências/matérias ficam numa linha de 2 colunas no topo
-    const topoEsq = cardMaterias || cardUrgencias
-      ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 10px 0;align-items:start;">
-          <div>${cardMaterias}</div>
-          <div>${cardUrgencias}</div>
-        </div>` : '';
+    // Urgências/matérias em largura total acima dos projetos
+    const topoCards = [cardMaterias, cardUrgencias].filter(Boolean).join('');
+    const topoBloco = topoCards
+      ? `<div style="padding:10px 10px 0;">${topoCards}</div>` : '';
 
-    corpo = topoEsq
-      + `<div style="padding:${topoEsq?'0':'10px'} 10px 0;">${cardProjetosLargo}</div>`;
+    corpo = topoBloco
+      + `<div style="padding:${topoBloco?'0':'10px'} 10px 0;">${cardProjetosLargo}</div>`;
   }
 
   const rodape=`<div style="background:${C.c};padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
