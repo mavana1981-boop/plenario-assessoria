@@ -616,7 +616,7 @@
 
   <script>
     console.log('[PautaBanner] Template v3 carregado - 2026-06-26');
-    alert('✅ v8 — data+prioridade');
+    alert('✅ v10 — subcolunas internas');
     const quillInstances = {};
 
     // Inicializa Quill quando collapse abre
@@ -2876,7 +2876,6 @@ function _ativarEdicaoPautaBanner(c){c.querySelectorAll('[data-pb-edit]').forEac
 function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64}){
   const C={v:'#1A6B3A',ve:'#0d4a27',a:'#E9B847',c:'#2C3E50',f:'#F4F6F8'};
 
-  // Fundo do cabeçalho: usa <img> absoluta para máxima compatibilidade mobile
   const cabBgColor = 'background:#0d2a0d;';
   const cabFotoEl = imgB64
     ? `<img src="data:${imgMime};base64,${imgB64}"
@@ -2884,7 +2883,6 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
        <div style="position:absolute;top:0;left:0;width:100%;height:100%;background:linear-gradient(to right,rgba(0,0,0,0.72) 0%,rgba(0,0,0,0.20) 40%,rgba(0,0,0,0.20) 60%,rgba(0,0,0,0.72) 100%);z-index:1;"></div>`
     : '';
 
-  // Box branco com logos lado a lado, mesma altura
   const logoBox = (logoOpoB64||logoMinB64) ? `<div style="background:#fff;border-radius:5px;padding:6px 10px;display:flex;align-items:center;gap:8px;flex-shrink:0;">
     ${logoOpoB64?`<img src="${logoOpoB64}" style="height:38px;width:auto;object-fit:contain;">`:''}
     ${logoMinB64?`<img src="${logoMinB64}" style="height:38px;width:auto;object-fit:contain;">`:''}
@@ -2892,48 +2890,98 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
 
   function ePB(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
+  // Threshold: seções com >= N itens recebem sub-colunas internas
+  const SUBCOL_THRESHOLD = 4;
+
+  // Renderiza um único item (sem header)
   function itemHTML(it, compact){
-    const n=String(it.ordem||(0)),p=ePB(it.projeto||'');
+    const n=String(it.ordem);
+    const p=ePB(it.projeto||'');
     const a=ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,60));
     const rel=ePB((it.relator||'').replace('Não atribuído','').substring(0,45));
     const res=ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
     if(compact){
-      return`<div style="display:flex;gap:7px;align-items:flex-start;margin-bottom:8px;font-size:10.5px;color:#222;">
+      return`<div style="padding:8px 12px;border-bottom:1px solid #f0f0f0;display:flex;gap:7px;align-items:flex-start;font-size:10.5px;color:#222;">
         <div style="min-width:20px;height:20px;background:#1A3A2A;color:#fff;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9.5px;flex-shrink:0;">${n}</div>
-        <div data-pb-edit><b>${p}</b>${a?` <span style="color:#666;">(${a})</span>`:''}
-        ${res?`<div style="color:#444;margin-top:1px;font-size:10px;line-height:1.35;">${res.substring(0,110)}</div>`:''}</div>
+        <div data-pb-edit><b>${p}</b>${a?` <span style="color:#666;">(${a})</span>`:''}${res?`<div style="color:#444;margin-top:1px;font-size:10px;line-height:1.35;">${res.substring(0,120)}</div>`:''}</div>
       </div>`;
     }
-    return`<div style="display:flex;gap:9px;align-items:flex-start;margin-bottom:12px;">
-      <div style="min-width:26px;height:26px;background:#1A3A2A;color:#fff;border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;flex-shrink:0;">${n}</div>
+    return`<div style="padding:10px 12px;border-bottom:1px solid #f0f0f0;display:flex;gap:9px;align-items:flex-start;">
+      <div style="min-width:26px;height:26px;background:#1A3A2A;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;flex-shrink:0;">${n}</div>
       <div data-pb-edit style="font-size:11px;color:#1a1a1a;">
-        <div style="font-weight:800;color:${C.v};">${p}</div>
+        <div style="font-weight:800;color:#1A3A2A;">${p}</div>
         ${a?`<div style="font-size:10px;color:#555;">Autor: ${a}</div>`:''}
         ${rel?`<div style="font-size:10px;color:#777;">Rel.: ${rel}</div>`:''}
-        ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,150)}</div>`:''}
+        ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,160)}</div>`:''}
       </div>
     </div>`;
   }
 
-  // break-inside:avoid garante que cada card não é partido entre colunas
-  function card(ico,tit,cor,itens,compact){
+  // Renderiza um card de seção completo.
+  // Se itens.length >= SUBCOL_THRESHOLD: divide os itens em 2 sub-colunas internas
+  // usando greedy por altura estimada para cada item.
+  function cardSecao(ico, titulo, cor, itens, compact){
     if(!itens||!itens.length) return '';
+
+    const H_ITEM = compact ? 52 : 92;
+    const header = `<div style="background:${cor};padding:9px 13px;display:flex;align-items:center;gap:9px;">
+      <div style="width:28px;height:28px;background:rgba(255,255,255,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">${ico}</div>
+      <span style="font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;" data-pb-edit>${titulo}</span>
+    </div>`;
+
+    let corpo;
+    if(itens.length >= SUBCOL_THRESHOLD){
+      // Sub-colunas internas: greedy por altura
+      const c1=[], c2=[];
+      let h1=0, h2=0;
+      itens.forEach(it=>{
+        const h = H_ITEM;
+        if(h1<=h2){c1.push(it);h1+=h;}
+        else       {c2.push(it);h2+=h;}
+      });
+      corpo = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:0;align-items:start;">
+        <div style="border-right:1px solid #e8e8e8;">${c1.map(it=>itemHTML(it,compact)).join('')}</div>
+        <div>${c2.map(it=>itemHTML(it,compact)).join('')}</div>
+      </div>`;
+    } else {
+      corpo = itens.map(it=>itemHTML(it,compact)).join('');
+    }
+
     return`<div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid #c8d8c8;margin-bottom:10px;break-inside:avoid;-webkit-column-break-inside:avoid;">
-      <div style="background:${cor};padding:9px 13px;display:flex;align-items:center;gap:9px;">
-        <div style="width:28px;height:28px;background:rgba(255,255,255,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">${ico}</div>
-        <span style="font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;" data-pb-edit>${tit}</span>
-      </div>
-      <div style="padding:11px 13px;">${itens.map((it,i)=>itemHTML(it,compact)).join('')}</div>
+      ${header}${corpo}
     </div>`;
   }
 
-  const sM  = card('📄','Matérias sobre a Mesa','#1A3A2A',materias,false);
-  const sU  = card('⚡','Requerimentos de Urgência','#1B5C2E',urgencias,true);
-  const sP  = card('🏛️','Projetos em Discussão','#1B5C2E',projetos,false);
-  const sPr = card('⭐','Prioridade','#7A5500',prioridade,false);
-  const todos = sM + sU + sP + sPr;
+  // Monta os cards de seção
+  const cardM  = cardSecao('📄','Matérias sobre a Mesa','#1A3A2A',materias,false);
+  const cardU  = cardSecao('⚡','Requerimentos de Urgência','#1B5C2E',urgencias,true);
+  const cardP  = cardSecao('🏛️','Projetos em Discussão','#1B5C2E',projetos,false);
+  const cardPr = cardSecao('⭐','Prioridade','#7A5500',prioridade,false);
 
-  const rod=`<div style="background:${C.c};padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+  // Estimativa de altura de cada card para distribuição entre colunas externas
+  function alturaCard(itens, compact){
+    if(!itens||!itens.length) return 0;
+    const H = compact ? 52 : 92;
+    const nLinhas = itens.length >= SUBCOL_THRESHOLD ? Math.ceil(itens.length/2) : itens.length;
+    return 44 + nLinhas * H + 10;
+  }
+
+  // Distribui os 4 cards entre 2 colunas externas com greedy
+  const cards = [
+    {html:cardM,  h:alturaCard(materias,false),   label:'M'},
+    {html:cardU,  h:alturaCard(urgencias,true),    label:'U'},
+    {html:cardP,  h:alturaCard(projetos,false),    label:'P'},
+    {html:cardPr, h:alturaCard(prioridade,false),  label:'Pr'},
+  ].filter(c=>c.h>0);
+
+  const col1=[], col2=[];
+  let h1=0, h2=0;
+  for(const c of cards){
+    if(h1<=h2){col1.push(c.html);h1+=c.h;}
+    else       {col2.push(c.html);h2+=c.h;}
+  }
+
+  const rodape=`<div style="background:${C.c};padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
     <div style="display:flex;align-items:center;gap:8px;">
       ${logoOpoB64?`<img src="${logoOpoB64}" style="height:26px;object-fit:contain;">`:''}
       ${logoMinB64?`<img src="${logoMinB64}" style="height:26px;object-fit:contain;">`:''}
@@ -2947,28 +2995,32 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
   return`<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
 <div class="pb-banner" style="width:600px;background:${C.f};font-family:'Source Sans 3',Arial,sans-serif;border-radius:8px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.2);">
 
-  <div style="${cabBgColor}padding:22px 18px 0;position:relative;overflow:hidden;">${cabFotoEl}<div style="position:relative;z-index:2;">
-    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${C.a};"></div>
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-      <div>
-        <div style="font-family:'Barlow Condensed',sans-serif;font-size:56px;font-weight:900;color:#fff;line-height:.85;letter-spacing:-1px;" data-pb-edit>PAUTA<br><span style="color:${C.a}">RESUMIDA</span></div>
-        <div style="font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,.80);letter-spacing:2.5px;text-transform:uppercase;margin-top:7px;" data-pb-edit>Ordem do Dia — Câmara dos Deputados</div>
+  <div style="${cabBgColor}padding:22px 18px 0;position:relative;overflow:hidden;">
+    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${C.a};z-index:3;"></div>
+    ${cabFotoEl}
+    <div style="position:relative;z-index:2;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+        <div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:56px;font-weight:900;color:#fff;line-height:.85;letter-spacing:-1px;" data-pb-edit>PAUTA<br><span style="color:${C.a}">RESUMIDA</span></div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,.80);letter-spacing:2.5px;text-transform:uppercase;margin-top:7px;" data-pb-edit>Ordem do Dia — Câmara dos Deputados</div>
+        </div>
+        ${logoBox}
       </div>
-      ${logoBox}
+      <div style="display:inline-flex;align-items:center;gap:6px;background:${C.v};color:#fff;border-radius:5px;padding:5px 12px;margin-top:12px;">
+        <span>📅</span>
+        <span style="font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;" data-pb-edit>${dataFmt||'—'}</span>
+      </div>
+      <div style="height:14px;background:${C.f};margin:12px -18px 0;border-radius:12px 12px 0 0;"></div>
     </div>
-    <div style="display:inline-flex;align-items:center;gap:6px;background:${C.v};color:#fff;border-radius:5px;padding:5px 12px;margin-top:12px;">
-      <span>📅</span>
-      <span style="font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;" data-pb-edit>${dataFmt||'—'}</span>
-    </div>
-    <div style="height:14px;background:${C.f};margin:12px -18px 0;border-radius:12px 12px 0 0;"></div></div>
   </div>
 
-  <div style="column-count:2;column-gap:10px;padding:10px 10px 0;orphans:1;widows:1;">
-    ${todos}
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 10px 0;align-items:start;">
+    <div style="min-width:0;">${col1.join('')}</div>
+    <div style="min-width:0;">${col2.join('')}</div>
   </div>
 
   <div style="padding:2px 10px 10px;"></div>
-  ${rod}
+  ${rodape}
 </div>`;
 }
 
