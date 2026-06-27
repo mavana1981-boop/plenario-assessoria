@@ -1530,10 +1530,12 @@
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
     try {
+      console.log('[DTQ] Buscando documentos para', idPrincipal);
       const r = await fetch('/listar_documentos/' + idPrincipal);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       const docs = j.documentos || [];
+      console.log('[DTQ] Documentos encontrados:', docs.length, docs.map(d=>d.label));
       if (docs.length === 0) {
         alert('Nenhum documento encontrado.');
         btn.disabled = false;
@@ -2081,10 +2083,12 @@
     }
 
     try {
+      console.log('[DTQ] Buscando documentos para', idPrincipal);
       const r = await fetch('/listar_documentos/' + idPrincipal);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       const docs = j.documentos || [];
+      console.log('[DTQ] Documentos encontrados:', docs.length, docs.map(d=>d.label));
       if (docs.length === 0) {
         // Para 'votação em separado', usa o texto da proposição diretamente
         const ehSeparado = /em separado/i.test(descricao);
@@ -2209,8 +2213,13 @@
       modalEl.appendChild(mDialog);
       document.body.appendChild(modalEl);
 
-      const modal = new bootstrap.Modal(modalEl);
-      modal.show();
+      // Remove qualquer backdrop/modal ativo antes de abrir o novo
+      document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+      document.body.classList.remove('modal-open');
+      document.body.style.removeProperty('overflow');
+      document.body.style.removeProperty('padding-right');
+      const modal = new bootstrap.Modal(modalEl, {backdrop: true, keyboard: true});
+      setTimeout(() => modal.show(), 50);
 
       // === BOTÃO DEBUG ===
       btnDebug.addEventListener('click', async () => {
