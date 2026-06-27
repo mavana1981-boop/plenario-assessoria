@@ -2085,7 +2085,29 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       const docs = j.documentos || [];
-      if (docs.length === 0) { alert('Nenhum documento encontrado.'); return; }
+      if (docs.length === 0) {
+        // Para 'votação em separado', usa o texto da proposição diretamente
+        const ehSeparado = /em separado/i.test(descricao);
+        if (ehSeparado) {
+          // Chama analisar_destaque sem documento específico
+          btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+          const rS = await fetch('/analisar_destaque', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({id_principal: idPrincipal, descricao, numero, projeto})
+          });
+          const jS = await rS.json();
+          if (jS.resumo) {
+            const numKey = numero.replace(/\s/g, '-');
+            let box = document.getElementById('analise-destaque-' + numKey);
+            if (!box) { const tr=btn.closest('tr'); const ntr=tr?tr.nextElementSibling:null; if(ntr) box=ntr.querySelector('[id^="analise-destaque-"]'); }
+            if (!box) { box=document.createElement('div'); box.className='mt-2 p-2 border rounded bg-light'; btn.closest('td')?.appendChild(box); }
+            box.style.display='block'; box.innerHTML=jS.resumo;
+          } else { alert('Erro: ' + (jS.error||'Falha')); }
+          btn.disabled=false; btn.innerHTML='<i class="fas fa-robot"></i>';
+          return;
+        }
+        alert('Nenhum documento encontrado para análise.'); return;
+      }
 
       // === MONTA MODAL VIA DOM (sem innerHTML com dados dinâmicos) ===
       document.getElementById('modal-sel-doc')?.remove();
@@ -2431,6 +2453,7 @@
     } catch(e) {
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-robot"></i>';
+      alert('Erro ao analisar destaque: ' + e.message);
     }
   } // fim _executarAnaliseDestaque
 
