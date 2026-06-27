@@ -616,7 +616,7 @@
 
   <script>
     console.log('[PautaBanner] Template v3 carregado - 2026-06-26');
-    alert('✅ v11 — 3 cards fixos + prioridade destacada');
+    alert('✅ v12 — layout adaptativo');
     const quillInstances = {};
 
     // Inicializa Quill quando collapse abre
@@ -2890,15 +2890,13 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
 
   function ePB(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
-  // IDs dos itens marcados como prioridade
   const priIds = new Set(prioridade.map(it=>String(it.id_principal)));
+  const todosProj = [...prioridade,...projetos].sort((a,b)=>(a.ordem||0)-(b.ordem||0));
 
-  // Todos os projetos (prioridade + projetos regulares), mantendo ordem original
-  const todosProj = [...prioridade, ...projetos].sort((a,b)=>(a.ordem||0)-(b.ordem||0));
+  // ── Renderização dos itens ────────────────────────────────────────────────
 
   function itemUrgencia(it){
-    const n=String(it.ordem);
-    const p=ePB(it.projeto||'');
+    const n=String(it.ordem),p=ePB(it.projeto||'');
     const a=ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,60));
     const res=ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
     return`<div style="padding:8px 12px;border-bottom:1px solid #f0f0f0;display:flex;gap:7px;align-items:flex-start;font-size:10.5px;color:#222;">
@@ -2908,8 +2906,7 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
   }
 
   function itemMateria(it){
-    const n=String(it.ordem);
-    const p=ePB(it.projeto||'');
+    const n=String(it.ordem),p=ePB(it.projeto||'');
     const a=ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,60));
     const res=ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
     return`<div style="padding:10px 12px;border-bottom:1px solid #f0f0f0;display:flex;gap:9px;align-items:flex-start;">
@@ -2922,33 +2919,31 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
     </div>`;
   }
 
-  function itemProjeto(it){
-    const n=String(it.ordem);
-    const p=ePB(it.projeto||'');
-    const a=ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,60));
-    const rel=ePB((it.relator||'').replace('Não atribuído','').substring(0,45));
+  function itemProjeto(it, compacto){
+    const n=String(it.ordem),p=ePB(it.projeto||'');
+    const a=ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,55));
+    const rel=ePB((it.relator||'').replace('Não atribuído','').substring(0,40));
     const res=ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
-    const ehPri = priIds.has(String(it.id_principal));
-
-    // Prioridade: badge âmbar + fundo levemente amarelado + estrela
+    const ehPri=priIds.has(String(it.id_principal));
+    const maxRes = compacto ? 100 : 160;
     const badgeN = ehPri
-      ? `<div style="min-width:26px;height:26px;background:#7A5500;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;flex-shrink:0;">⭐</div>`
-      : `<div style="min-width:26px;height:26px;background:#1A3A2A;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;flex-shrink:0;">${n}</div>`;
-
-    const rowBg = ehPri ? 'background:#FFFBEA;border-left:3px solid #E9B847;' : '';
-
-    return`<div style="padding:10px 12px;border-bottom:1px solid #f0f0f0;${rowBg}display:flex;gap:9px;align-items:flex-start;">
+      ? `<div style="min-width:${compacto?20:26}px;height:${compacto?20:26}px;background:#7A5500;color:#fff;border-radius:${compacto?3:4}px;display:flex;align-items:center;justify-content:center;font-size:${compacto?10:13}px;flex-shrink:0;">⭐</div>`
+      : `<div style="min-width:${compacto?20:26}px;height:${compacto?20:26}px;background:#1A3A2A;color:#fff;border-radius:${compacto?3:4}px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:${compacto?9:11}px;flex-shrink:0;">${n}</div>`;
+    const rowBg=ehPri?'background:#FFFBEA;border-left:3px solid #E9B847;':'';
+    const pad=compacto?'7px 10px':'10px 12px';
+    const gap=compacto?'7px':'9px';
+    return`<div style="padding:${pad};border-bottom:1px solid #f0f0f0;${rowBg}display:flex;gap:${gap};align-items:flex-start;">
       ${badgeN}
-      <div data-pb-edit style="font-size:11px;color:#1a1a1a;">
-        <div style="font-weight:800;color:${ehPri?'#7A5500':'#1A3A2A'};">${ehPri?'⭐ ':''} ${p}</div>
-        ${a?`<div style="font-size:10px;color:#555;">Autor: ${a}</div>`:''}
-        ${rel?`<div style="font-size:10px;color:#777;">Rel.: ${rel}</div>`:''}
-        ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,160)}</div>`:''}
+      <div data-pb-edit style="font-size:${compacto?10:11}px;color:#1a1a1a;">
+        <div style="font-weight:800;color:${ehPri?'#7A5500':'#1A3A2A'};">${p}</div>
+        ${a?`<div style="font-size:${compacto?9:10}px;color:#555;">Autor: ${a}</div>`:''}
+        ${(!compacto&&rel)?`<div style="font-size:10px;color:#777;">Rel.: ${rel}</div>`:''}
+        ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,maxRes)}</div>`:''}
       </div>
     </div>`;
   }
 
-  function cardHeader(ico, titulo, cor){
+  function cardHeader(ico,titulo,cor){
     return`<div style="background:${cor};padding:9px 13px;display:flex;align-items:center;gap:9px;">
       <div style="width:28px;height:28px;background:rgba(255,255,255,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">${ico}</div>
       <span style="font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;" data-pb-edit>${titulo}</span>
@@ -2956,26 +2951,65 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
   }
 
   function wrapCard(conteudo){
-    return`<div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid #c8d8c8;margin-bottom:10px;">
-      ${conteudo}
-    </div>`;
+    return`<div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid #c8d8c8;margin-bottom:10px;">${conteudo}</div>`;
   }
 
-  // CARD 1: Matérias sobre a Mesa (coluna esquerda, topo)
-  const cardMaterias = (materias&&materias.length)
-    ? wrapCard(cardHeader('📄','Matérias sobre a Mesa','#1A3A2A') + materias.map(itemMateria).join(''))
-    : '';
+  // ── Decisão de layout ─────────────────────────────────────────────────────
+  // Conta itens em cada "lado"
+  const nEsq = (materias||[]).length + (urgencias||[]).length;
+  const nDir = todosProj.length;
 
-  // CARD 2: Requerimentos de Urgência (coluna esquerda, abaixo de matérias)
+  // LAYOUT A — 2 colunas simétricas (equilibrado)
+  // LAYOUT B — vertical: urgências/matérias no topo (linha inteira),
+  //            projetos embaixo em 2 sub-colunas side-by-side
+  // Usa B quando projetos > 2× (matérias+urgências)
+  const usarLayoutVertical = nDir > 2 * Math.max(nEsq, 1);
+
+  const cardMaterias  = (materias&&materias.length)
+    ? wrapCard(cardHeader('📄','Matérias sobre a Mesa','#1A3A2A') + materias.map(itemMateria).join('')) : '';
   const cardUrgencias = (urgencias&&urgencias.length)
-    ? wrapCard(cardHeader('⚡','Requerimentos de Urgência','#1B5C2E') + urgencias.map(itemUrgencia).join(''))
-    : '';
+    ? wrapCard(cardHeader('⚡','Requerimentos de Urgência','#1B5C2E') + urgencias.map(itemUrgencia).join('')) : '';
 
-  // CARD 3: Projetos em Discussão — todos os projetos, prioridades destacadas internamente
-  // Ocupa a coluna direita inteira
-  const cardProjetos = (todosProj&&todosProj.length)
-    ? wrapCard(cardHeader('🏛️','Projetos em Discussão','#1B5C2E') + todosProj.map(itemProjeto).join(''))
-    : '';
+  let corpo;
+
+  if(!usarLayoutVertical){
+    // LAYOUT A: 2 colunas — esquerda matérias+urgências, direita projetos
+    const cardProjetos = todosProj.length
+      ? wrapCard(cardHeader('🏛️','Projetos em Discussão','#1B5C2E') + todosProj.map(it=>itemProjeto(it,false)).join('')) : '';
+    corpo = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 10px 0;align-items:start;">
+      <div style="min-width:0;">${cardMaterias}${cardUrgencias}</div>
+      <div style="min-width:0;">${cardProjetos}</div>
+    </div>`;
+
+  } else {
+    // LAYOUT B: linha superior com matérias+urgências, linha inferior com projetos em 2 sub-colunas
+    // Divide projetos em 2 sub-colunas com greedy por altura
+    const H = 80;
+    const sub1=[], sub2=[];
+    let h1=0, h2=0;
+    todosProj.forEach(it=>{
+      if(h1<=h2){sub1.push(it);h1+=H;}
+      else       {sub2.push(it);h2+=H;}
+    });
+
+    // Card de projetos com 2 sub-colunas internas
+    const projBody = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:0;align-items:start;">
+      <div style="border-right:1px solid #e8e8e8;">${sub1.map(it=>itemProjeto(it,true)).join('')}</div>
+      <div>${sub2.map(it=>itemProjeto(it,true)).join('')}</div>
+    </div>`;
+    const cardProjetosLargo = todosProj.length
+      ? wrapCard(cardHeader('🏛️','Projetos em Discussão','#1B5C2E') + projBody) : '';
+
+    // Urgências/matérias ficam numa linha de 2 colunas no topo
+    const topoEsq = cardMaterias || cardUrgencias
+      ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 10px 0;align-items:start;">
+          <div>${cardMaterias}</div>
+          <div>${cardUrgencias}</div>
+        </div>` : '';
+
+    corpo = topoEsq
+      + `<div style="padding:${topoEsq?'0':'10px'} 10px 0;">${cardProjetosLargo}</div>`;
+  }
 
   const rodape=`<div style="background:${C.c};padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
     <div style="display:flex;align-items:center;gap:8px;">
@@ -2990,7 +3024,6 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
 
   return`<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
 <div class="pb-banner" style="width:600px;background:${C.f};font-family:'Source Sans 3',Arial,sans-serif;border-radius:8px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.2);">
-
   <div style="${cabBgColor}padding:22px 18px 0;position:relative;overflow:hidden;">
     <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${C.a};z-index:3;"></div>
     ${cabFotoEl}
@@ -3009,12 +3042,7 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
       <div style="height:14px;background:${C.f};margin:12px -18px 0;border-radius:12px 12px 0 0;"></div>
     </div>
   </div>
-
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 10px 0;align-items:start;">
-    <div style="min-width:0;">${cardMaterias}${cardUrgencias}</div>
-    <div style="min-width:0;">${cardProjetos}</div>
-  </div>
-
+  ${corpo}
   <div style="padding:2px 10px 10px;"></div>
   ${rodape}
 </div>`;
