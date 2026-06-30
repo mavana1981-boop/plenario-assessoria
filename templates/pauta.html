@@ -3352,19 +3352,10 @@ async function gerarBannerIA() {
 
     _bannerHtmlAtual = j.html;
 
-    // Extrai apenas o conteúdo útil do documento HTML completo retornado pelo backend
-    // (descarta <!DOCTYPE>, <head> com <style>/<script> de auto-edição, e a barra/botões
-    // de impressão internos — tudo isso é re-renderizado e re-controlado pelo pauta.html)
-    let htmlUtil = j.html;
-    try {
-      const parser = new DOMParser();
-      const docBanner = parser.parseFromString(j.html, 'text/html');
-      const styleTag = docBanner.querySelector('style');
-      const bannerDiv = docBanner.querySelector('.banner');
-      if (bannerDiv) {
-        htmlUtil = (styleTag ? styleTag.outerHTML : '') + bannerDiv.outerHTML;
-      }
-    } catch (eParse) { /* usa j.html como veio, mesmo assim */ }
+    // Usa o fragmento limpo (style + div.banner, sem doctype/head/scripts) que o backend
+    // já monta separadamente — mesmo padrão usado no Pauta Banner, que funciona corretamente
+    // com html2canvas.
+    const htmlUtil = j.banner_html_fragmento || j.html;
 
     // Renderiza na div (sem iframe — evita cross-origin)
     const inner = document.getElementById('banner-preview-inner');
