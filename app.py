@@ -4664,16 +4664,17 @@ def gerar_banner_proposicao():
     nota_tecnica = request.form.get('nota_tecnica', '')
     resumo_extra = request.form.get('resumo_extra', '')
 
-    # Imagem de fundo do cabecalho
-    imagem_b64_css = ''
+    # Imagem de fundo do cabecalho — guarda base64+mime separados para usar via <img> real
+    # (CSS background com data URL longa falha silenciosamente no html2canvas)
+    imagem_b64 = ''
+    imagem_mime = ''
     if 'imagem' in request.files:
         f = request.files['imagem']
         if f and f.filename:
             raw  = f.read()
             ext  = f.filename.rsplit('.', 1)[-1].lower()
-            mime = {'jpg':'image/jpeg','jpeg':'image/jpeg','png':'image/png','webp':'image/webp'}.get(ext,'image/jpeg')
-            b64  = _b64.b64encode(raw).decode('utf-8')
-            imagem_b64_css = f'url("data:{mime};base64,{b64}")'
+            imagem_mime = {'jpg':'image/jpeg','jpeg':'image/jpeg','png':'image/png','webp':'image/webp'}.get(ext,'image/jpeg')
+            imagem_b64  = _b64.b64encode(raw).decode('utf-8')
 
     def _logo(nome):
         try:
@@ -4888,11 +4889,15 @@ def gerar_banner_proposicao():
             '</div>'
         )
 
-    # Cabecalho — fundo: foto se houver, senao gradiente escuro
-    if imagem_b64_css:
-        cab_bg = 'background:' + imagem_b64_css + ',linear-gradient(135deg,#0A1628 0%,#1B3A5C 100%);background-size:cover,cover;background-position:center,center;'
+    # Cabecalho — fundo: <img> real se houver foto (mais confiavel que CSS background
+    # com data URL longa, que falha silenciosamente no html2canvas), senao gradiente escuro
+    cab_bg_color = 'background:linear-gradient(135deg,#0A1628 0%,#1B3A5C 100%);'
+    if imagem_b64:
+        cab_foto_html = ('<img src="data:' + imagem_mime + ';base64,' + imagem_b64 + '" '
+                          'style="position:absolute;top:0;left:0;width:100%;height:100%;'
+                          'object-fit:cover;object-position:center;display:block;z-index:0;">')
     else:
-        cab_bg = 'background:linear-gradient(135deg,#0A1628 0%,#1B3A5C 100%);'
+        cab_foto_html = ''
 
     data_hoje = _dt.now().strftime('%d/%m/%Y')
 
@@ -4905,7 +4910,7 @@ def gerar_banner_proposicao():
 
         # Cabecalho
         '.cab{position:relative;overflow:hidden;min-height:200px;}'
-        '.cab-overlay{position:absolute;inset:0;background:rgba(10,22,40,0.62);}'
+        '.cab-overlay{position:absolute;inset:0;background:rgba(10,22,40,0.62);z-index:1;}'
         '.cab-inner{position:relative;z-index:2;padding:22px 24px 0;display:flex;flex-direction:column;gap:0;}'
         '.cab-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}'
         '.cab-logos{display:flex;gap:6px;align-items:center;flex-shrink:0;background:rgba(255,255,255,0.12);border-radius:6px;padding:5px 8px;}'
@@ -5015,7 +5020,8 @@ def gerar_banner_proposicao():
         '<div class="banner">'
 
         # CABECALHO
-        '<div class="cab" style="' + cab_bg + '">'
+        '<div class="cab" style="' + cab_bg_color + '">'
+        + cab_foto_html +
         '<div class="cab-overlay"></div>'
         '<div class="cab-inner">'
         '<div class="cab-top">'
