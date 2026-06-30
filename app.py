@@ -5016,6 +5016,125 @@ def gerar_banner_proposicao():
         '</svg>'
     )
 
+    # Fragmento style+div, sem doctype/head/scripts — mesmo padrao do Pauta Banner.
+    # E isso que o frontend injeta na preview e captura com html2canvas para o PNG.
+    banner_html_fragmento = (
+        '<style>' + css + '</style>'
+        '<div class="banner">'
+
+        # CABECALHO
+        '<div class="cab" style="' + cab_bg_color + '">'
+        + cab_foto_html +
+        '<div class="cab-overlay"></div>'
+        '<div class="cab-inner">'
+        '<div class="cab-top">'
+        '<div class="cab-logos">' + logos_cab + '</div>'
+        '</div>'
+        '<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;">'
+        '<div style="flex:1;">'
+        '<div class="cab-titulo">' + _e(d.get('titulo_curto', proposicao)) + '</div>'
+        '<div class="cab-subtitulo">' + _e(d.get('subtitulo','')) + '</div>'
+        '<div class="cab-desc">' + _e(d.get('descricao_curta', ementa[:120])) + '</div>'
+        '</div>'
+        + dado_block +
+        '</div>'
+        '</div>'
+        '</div>'
+
+        # META BAR
+        '<div class="meta-bar">'
+        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24">' + ico_autor[23:] + '</div>'
+        '<div><div class="mc-label">Autor</div><div class="mc-val">' + _e(autor[:55] or '—') + '</div></div></div>'
+
+        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24" fill="none">' + ico_regime[28:] + '</div>'
+        '<div><div class="mc-label">Regime</div><div class="mc-val">' + _e(regime or 'Ordinario') + '</div></div></div>'
+
+        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24" fill="none">' + ico_comissao[28:] + '</div>'
+        '<div><div class="mc-label">Comissões</div><div class="mc-val">' + _e(comissoes or 'Plenario') + '</div></div></div>'
+
+        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24" fill="none">' + ico_relator[28:] + '</div>'
+        '<div><div class="mc-label">Relator</div><div class="mc-val">' + _e(relator[:55] or '—') + '</div></div></div>'
+        '</div>'
+
+        # RESUMO
+        '<div class="resumo">' + _e(d.get('resumo_executivo', ementa)) + '</div>'
+
+        # GRADE: O QUE PREVE | CRITICAS
+        '<div class="grade">'
+
+        # O que preve
+        '<div style="background:#F0F0F0;">'
+        '<div class="card card-verde">'
+        '<div class="card-header">'
+        '<div class="card-header-ico">&#10003;</div>'
+        '<div class="card-header-txt">O que o projeto prev&ecirc;</div>'
+        '</div>'
+        '<div class="card-body">'
+        + _preve_items(d.get('o_que_preve',[])) +
+        '</div></div></div>'
+
+        # Criticas
+        '<div style="background:#F0F0F0;">'
+        '<div class="card card-verm">'
+        '<div class="card-header">'
+        '<div class="card-header-ico">&#10007;</div>'
+        '<div class="card-header-txt">Cr&iacute;ticas e pontos de aten&ccedil;&atilde;o</div>'
+        '</div>'
+        '<div class="card-body">'
+        + _critica_items(d.get('criticas',[])) +
+        '</div></div></div>'
+        '</div>'
+
+        # GRADE: JUSTIFICATIVA | ORIENTACAO
+        '<div class="grade" style="border-top:1px solid #E0E0E0;">'
+
+        # Justificativa
+        '<div style="background:#F0F0F0;">'
+        '<div class="card card-escuro">'
+        '<div class="card-header">'
+        '<div class="card-header-ico">&#9878;</div>'
+        '<div class="card-header-txt">Justificativa oficial</div>'
+        '</div>'
+        '<div class="card-body">'
+        '<div class="just-inner">'
+        '<div class="just-ico">' + ico_balanca + '</div>'
+        '<div class="just-txt">' + _e(d.get('justificativa_oficial','')) + '</div>'
+        '</div>'
+        '</div></div></div>'
+
+        # Orientacao
+        '<div style="background:#F0F0F0;">'
+        '<div class="card card-ori">'
+        '<div class="card-header">'
+        '<div class="card-header-ico">&#127885;</div>'
+        '<div class="card-header-txt">Orienta&ccedil;&atilde;o da Minoria</div>'
+        '</div>'
+        '<div class="ori-badge"><div class="ori-badge-txt">' + ORI_EMOJI + ' ' + ORI_LABEL + '</div></div>'
+        + (
+            '<div class="arg-header"><div class="arg-header-txt">Discurso Sugerido — Tribuna (30 segundos)</div></div>'
+            '<div class="arg-body"><div class="arg-body-txt">' + _e(d.get('argumento_chave','')) + '</div></div>'
+            if d.get('argumento_chave') else ''
+        ) +
+        '</div></div>'
+        '</div>'
+
+        # NA PRATICA
+        '<div style="background:#F0F0F0;padding:0 0 14px;">'
+        '<div class="np-card">'
+        '<div class="np-header">'
+        '<div class="np-ico">' + ico_grupo + '</div>'
+        '<div class="np-header-txt">Na pr&aacute;tica</div>'
+        '</div>'
+        '<div class="np-grid">'
+        + _pratica_items(d.get('na_pratica',[])) +
+        '</div></div></div>'
+
+        # RODAPE
+        '<div class="rodape"><span class="rodape-txt">Publicado em: ' + data_hoje + '</span></div>'
+
+        '</div>'
+    )
+
     html = (
         '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Banner ' + _e(proposicao) + '</title>'
         '<style>' + css + '</style></head><body>'
@@ -5177,7 +5296,7 @@ def gerar_banner_proposicao():
         '</body></html>'
     )
 
-    return jsonify({'success': True, 'html': html, 'fonte': fonte})
+    return jsonify({'success': True, 'html': html, 'banner_html_fragmento': banner_html_fragmento, 'fonte': fonte})
 
 
 
