@@ -122,7 +122,7 @@ def cloudflare_post(prompt, max_tokens=1500, temperatura=0.3):
         headers={"Authorization": f"Bearer {cf_token}", "Content-Type": "application/json"},
         json={"messages": [{"role": "user", "content": prompt}],
               "max_tokens": max_tokens, "temperature": temperatura},
-        timeout=15
+        timeout=30
     )
     r.raise_for_status()
     return r.json()['result']['response']
@@ -4778,11 +4778,18 @@ def gerar_banner_proposicao():
     if not texto_ia:
         groq_key = os.environ.get('GROQ_API_KEY', '')
         if groq_key:
-            try:
-                texto_ia = groq_post(prompt, max_tokens=1500, temperatura=0.3)
-                fonte = 'groq'
-            except Exception as e:
-                logger.warning('gerar_banner: Groq falhou — ' + str(e))
+            import time as _t2
+            for _tentativa in range(2):
+                try:
+                    texto_ia = groq_post(prompt, max_tokens=1500, temperatura=0.3)
+                    fonte = 'groq'
+                    break
+                except Exception as e:
+                    logger.warning('gerar_banner: Groq falhou (tentativa ' + str(_tentativa+1) + ') — ' + str(e))
+                    if '429' in str(e) and _tentativa == 0:
+                        _t2.sleep(8)
+                        continue
+                    break
 
     if not texto_ia:
         try:
