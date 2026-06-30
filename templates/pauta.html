@@ -3150,21 +3150,40 @@ function _ativarEdicaoBanner(c){
   const av=document.getElementById('banner-edit-aviso');if(av)av.style.display='flex';
 }
 async function exportarBannerPNG(btn){
-  if(!window._bannerHtmlAtual)return;
-  const orig=btn?btn.innerHTML:'';if(btn){btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Gerando PNG...';}
+  console.log('[BannerPNG] clique recebido. _bannerHtmlAtual existe?', !!window._bannerHtmlAtual);
+  const orig=btn?btn.innerHTML:'';
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Gerando PNG...';}
   try{
-    const el=document.querySelector('#banner-preview-inner .banner');
-    if(!el){alert('Banner não encontrado. Gere o banner primeiro.');return;}
     const inner=document.getElementById('banner-preview-inner');
+    console.log('[BannerPNG] inner encontrado?', !!inner, 'innerHTML length:', inner?inner.innerHTML.length:0);
+    const el=inner ? inner.querySelector('.banner') : null;
+    console.log('[BannerPNG] .banner encontrado dentro de inner?', !!el);
+    if(!el){
+      alert('Banner não encontrado no preview. Gere o banner primeiro e aguarde ele aparecer na tela antes de clicar em Baixar PNG.');
+      return;
+    }
     const sc=inner.style.transform;
     inner.style.transform='none';
     void el.offsetHeight;
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     await new Promise(r=>setTimeout(r,150));
-    const canvas=await html2canvas(el,{scale:2,useCORS:true,allowTaint:true,backgroundColor:'#ffffff',logging:false,width:el.scrollWidth,height:el.scrollHeight,windowWidth:el.scrollWidth,windowHeight:el.scrollHeight});
+    console.log('[BannerPNG] dimensões do elemento:', el.scrollWidth, 'x', el.scrollHeight);
+    const canvas=await html2canvas(el,{scale:2,useCORS:true,allowTaint:true,backgroundColor:'#ffffff',logging:true,width:el.scrollWidth,height:el.scrollHeight,windowWidth:el.scrollWidth,windowHeight:el.scrollHeight});
     inner.style.transform=sc;
-    const a=document.createElement('a');a.download='banner_plenario.png';a.href=canvas.toDataURL('image/png',1.0);document.body.appendChild(a);a.click();document.body.removeChild(a);
-  }catch(e){alert('Erro ao gerar PNG: '+e.message);}finally{if(btn){btn.disabled=false;btn.innerHTML=orig;}}
+    console.log('[BannerPNG] canvas gerado:', canvas.width, 'x', canvas.height);
+    const a=document.createElement('a');
+    a.download='banner_plenario.png';
+    a.href=canvas.toDataURL('image/png',1.0);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    console.log('[BannerPNG] download disparado');
+  }catch(e){
+    console.error('[BannerPNG] ERRO:', e);
+    alert('Erro ao gerar PNG: '+e.message);
+  }finally{
+    if(btn){btn.disabled=false;btn.innerHTML=orig;}
+  }
 }
 </script>
 
