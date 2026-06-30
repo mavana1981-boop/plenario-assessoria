@@ -3092,8 +3092,14 @@ async function baixarPautaBannerPNG(btn){
   try{
     const el=document.querySelector('#pb-preview-inner .pb-banner');
     if(!el){alert('Gere o banner primeiro.');return;}
-    const inner=document.getElementById('pb-preview-inner');const sc=inner.style.transform;inner.style.transform='none';
-    const canvas=await html2canvas(el,{scale:2,useCORS:true,allowTaint:true,backgroundColor:'#ffffff',logging:false,width:el.scrollWidth,height:el.scrollHeight});
+    const inner=document.getElementById('pb-preview-inner');
+    const sc=inner.style.transform;
+    inner.style.transform='none';
+    // Força reflow e espera o browser repintar o layout sem o scale
+    void el.offsetHeight;
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    await new Promise(r=>setTimeout(r,150));
+    const canvas=await html2canvas(el,{scale:2,useCORS:true,allowTaint:true,backgroundColor:'#ffffff',logging:false,width:el.scrollWidth,height:el.scrollHeight,windowWidth:el.scrollWidth,windowHeight:el.scrollHeight});
     inner.style.transform=sc;
     const a=document.createElement('a');a.download='pauta_banner.png';a.href=canvas.toDataURL('image/png',1.0);document.body.appendChild(a);a.click();document.body.removeChild(a);
   }catch(e){alert('Erro: '+e.message);}finally{btn.disabled=false;btn.innerHTML=orig;}
@@ -3111,8 +3117,13 @@ async function exportarBannerPNG(btn){
   try{
     const el=document.querySelector('#banner-preview-inner .banner');
     if(!el){alert('Banner não encontrado. Gere o banner primeiro.');return;}
-    const inner=document.getElementById('banner-preview-inner');const sc=inner.style.transform;inner.style.transform='none';
-    const canvas=await html2canvas(el,{scale:2,useCORS:true,allowTaint:true,backgroundColor:'#ffffff',logging:false,width:el.scrollWidth,height:el.scrollHeight});
+    const inner=document.getElementById('banner-preview-inner');
+    const sc=inner.style.transform;
+    inner.style.transform='none';
+    void el.offsetHeight;
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    await new Promise(r=>setTimeout(r,150));
+    const canvas=await html2canvas(el,{scale:2,useCORS:true,allowTaint:true,backgroundColor:'#ffffff',logging:false,width:el.scrollWidth,height:el.scrollHeight,windowWidth:el.scrollWidth,windowHeight:el.scrollHeight});
     inner.style.transform=sc;
     const a=document.createElement('a');a.download='banner_plenario.png';a.href=canvas.toDataURL('image/png',1.0);document.body.appendChild(a);a.click();document.body.removeChild(a);
   }catch(e){alert('Erro ao gerar PNG: '+e.message);}finally{if(btn){btn.disabled=false;btn.innerHTML=orig;}}
