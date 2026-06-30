@@ -1766,6 +1766,18 @@
     btn.disabled = true;
     btn.innerHTML = '⏳ Gerando quadro...';
 
+    // Abre a janela IMEDIATAMENTE (de forma síncrona, no gesto de clique do usuário)
+    // para evitar bloqueio de popup pelo browser. Preenche o conteúdo depois.
+    const popup = window.open('', '_blank', 'width=900,height=700,scrollbars=yes,resizable=yes');
+    if (!popup) {
+      alert('O navegador bloqueou a janela de pop-up. Permita pop-ups para este site e tente novamente.');
+      btn.disabled = false;
+      btn.innerHTML = '🖼️ Criar Quadro do DTQ';
+      return;
+    }
+    const pd = popup.document;
+    pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Quadro DTQ</title></head><body><p style="font-family:Arial,sans-serif;padding:30px;color:#666;">⏳ Gerando quadro...</p></body></html>'); pd.close();
+
     try {
       const r = await fetch('/gerar_quadro_dtq', {
         method: 'POST',
@@ -1773,12 +1785,10 @@
         body: JSON.stringify({ projeto, numero, descricao, analise_html: analise, url_documento: urlDoc, label_documento: labelDoc })
       });
       const j = await r.json();
-      if (!j.ok) { alert('Erro: ' + j.error); return; }
+      if (!j.ok) { alert('Erro: ' + j.error); popup.close(); return; }
       const d = j.dados;
 
-      // Constrói popup via DOM — sem document.write com template literal
-      const popup = window.open('', '_blank', 'width=900,height=700,scrollbars=yes,resizable=yes');
-      const pd = popup.document;
+      // Limpa o "carregando" e reconstrói o documento do popup já aberto
       pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Quadro DTQ</title></head><body></body></html>'); pd.close();
 
       const st = pd.createElement('style');
@@ -1893,6 +1903,7 @@
 
     } catch(e) {
       alert('Erro: ' + e.message);
+      if (popup && !popup.closed) popup.close();
     } finally {
       btn.disabled = false;
       btn.innerHTML = '🖼️ Criar Quadro do DTQ';
