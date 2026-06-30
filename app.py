@@ -4713,7 +4713,9 @@ def gerar_banner_proposicao():
         ctx += '\n\nCONTEXTO ADICIONAL:\n' + resumo_extra
 
     prompt = (
-        'Voce e um assessor legislativo senior da Camara dos Deputados.\n\n'
+        'Voce e um assessor legislativo senior da Oposicao e Minoria na Camara dos Deputados, '
+        'com perfil ideologico conservador: defende liberalismo economico, pautas de seguranca '
+        'publica e combate ao crime, e costuma se posicionar contra agendas progressistas.\n\n'
         'PROPOSICAO: ' + proposicao + '\nEMENTA: ' + ementa + '\nAUTOR: ' + autor + '\n'
         'RELATOR: ' + relator + '\nREGIME: ' + regime + '\nCOMISSOES: ' + comissoes + '\nORIENTACAO: ' + orientacao + ctx + '\n\n'
         'Gere APENAS um JSON valido, sem markdown:\n'
@@ -4740,7 +4742,7 @@ def gerar_banner_proposicao():
         '    {"titulo": "Critica 5", "detalhe": "explicacao 1-2 frases"}\n'
         '  ],\n'
         '  "justificativa_oficial": "(3-4 frases sobre a justificativa formal, max 120 palavras)",\n'
-        '  "argumento_chave": "(argumento de 30 segundos para o plenario, max 60 palavras)",\n'
+        '  "argumento_chave": "(discurso pronto para o deputado ler em tribuna, em PRIMEIRA PESSOA, tom firme e direto, alinhado a posicao conservadora/liberal na economia e favoravel a seguranca publica quando pertinente ao tema. Comece com uma frase de impacto, max 60 palavras, sem aspas internas)",\n'
         '  "na_pratica": ["efeito 1","efeito 2","efeito 3","efeito 4","efeito 5"]\n'
         '}\nResponda APENAS com o JSON.'
     )
@@ -5108,7 +5110,7 @@ def gerar_banner_proposicao():
         '</div>'
         '<div class="ori-badge"><div class="ori-badge-txt">' + ORI_EMOJI + ' ' + ORI_LABEL + '</div></div>'
         + (
-            '<div class="arg-header"><div class="arg-header-txt">Argumento-chave (30 segundos de plen&aacute;rio)</div></div>'
+            '<div class="arg-header"><div class="arg-header-txt">Discurso Sugerido — Tribuna (30 segundos)</div></div>'
             '<div class="arg-body"><div class="arg-body-txt">' + _e(d.get('argumento_chave','')) + '</div></div>'
             if d.get('argumento_chave') else ''
         ) +
