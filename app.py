@@ -4742,7 +4742,7 @@ def gerar_banner_proposicao():
         '    {"titulo": "Critica 5", "detalhe": "explicacao 1-2 frases"}\n'
         '  ],\n'
         '  "justificativa_oficial": "(3-4 frases sobre a justificativa formal, max 120 palavras)",\n'
-        '  "argumento_chave": "(discurso pronto para o deputado ler em tribuna, em PRIMEIRA PESSOA, tom firme e direto, alinhado a posicao conservadora/liberal na economia e favoravel a seguranca publica quando pertinente ao tema. Comece com uma frase de impacto, max 60 palavras, sem aspas internas)",\n'
+        '  "argumento_chave": "(discurso pronto para o deputado ler em tribuna, em PRIMEIRA PESSOA, tom firme e direto, alinhado a posicao conservadora/liberal na economia e favoravel a seguranca publica quando pertinente ao tema. OBRIGATORIO: o discurso deve ser logicamente coerente com o campo ORIENTACAO informado acima — se SIM ou LIBERADO, defenda o voto favoravel ao projeto; se NAO ou OBSTRUCAO, ataque e justifique o voto contrario ao projeto; se NEGOCIACAO ou ABSTENCAO, adote tom ponderado pedindo ajustes antes de apoiar. Nunca contradiga a orientacao informada. Comece com uma frase de impacto, max 60 palavras, sem aspas internas)",\n'
         '  "na_pratica": ["efeito 1","efeito 2","efeito 3","efeito 4","efeito 5"]\n'
         '}\nResponda APENAS com o JSON.'
     )
