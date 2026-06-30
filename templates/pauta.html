@@ -1701,8 +1701,10 @@
       const autoria    = btnOrigem ? btnOrigem.dataset.autoria   : '';
       const projeto    = btnOrigem ? btnOrigem.dataset.projeto   : (projetoFiltro || '');
 
-      // O texto da análise está no <div> interno (class p-2 border rounded bg-light)
-      const innerDiv = box.querySelector('div');
+      // O texto da análise está sempre num <div class="analise-texto">,
+      // criado separadamente do botão "Criar Quadro do DTQ" em todos os fluxos
+      // de analisarDestaque/_executarAnaliseDestaque.
+      const innerDiv = box.querySelector('.analise-texto') || box.querySelector('div');
       const analise  = (innerDiv ? innerDiv.innerText : box.innerText).trim();
 
       if (numero && analise) destaques.push({ numero, descricao, autoria, projeto, analise });
@@ -2084,7 +2086,14 @@
             btn.closest('td')?.appendChild(box);
           }
           box.style.display = 'block';
-          box.innerHTML = j.resumo;
+          box.innerHTML = '';
+          // Texto da análise SEMPRE num <div class="analise-texto"> próprio,
+          // separado do botão "Criar Quadro", para gerarTabelaDestaques conseguir
+          // localizar o texto de forma inequívoca.
+          const divAnalise = document.createElement('div');
+          divAnalise.className = 'analise-texto';
+          divAnalise.innerHTML = j.resumo;
+          box.appendChild(divAnalise);
           // Botão criar quadro
           const dBtn = document.createElement('div'); dBtn.className = 'mt-2 d-flex gap-2 flex-wrap';
           const bq = document.createElement('button'); bq.className = 'btn btn-sm btn-dark';
@@ -2344,7 +2353,7 @@
             // Monta o conteúdo com botões
             const inner = box.querySelector('div') || (() => { const d = window.document.createElement('div'); box.appendChild(d); return d; })();
             inner.innerHTML = '';
-            const dRes = window.document.createElement('div'); dRes.innerHTML = analiseHtml; inner.appendChild(dRes);
+            const dRes = window.document.createElement('div'); dRes.className = 'analise-texto'; dRes.innerHTML = analiseHtml; inner.appendChild(dRes);
             // Botões criar quadro + editar análise + tabela
             const dBtn = window.document.createElement('div'); dBtn.className = 'mt-2 d-flex gap-2 flex-wrap';
             const bq = window.document.createElement('button'); bq.className = 'btn btn-sm btn-dark';
@@ -2413,6 +2422,7 @@
             const inner = box.querySelector('div') || box;
             inner.innerHTML = '';
             const dRes = document.createElement('div');
+            dRes.className = 'analise-texto';
             dRes.innerHTML = j2.resumo;
             inner.appendChild(dRes);
             // Botão criar quadro + editar análise + tabela global
