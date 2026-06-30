@@ -2929,13 +2929,32 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
 
   // ── Renderização dos itens ────────────────────────────────────────────────
 
+  function badgeOrientacao(it){
+    const ori=(it.orientacao||'').toUpperCase().trim();
+    if(!ori) return '';
+    const cores={
+      'SIM':         {bg:'#1A6B3A',fg:'#fff'},
+      'NÃO':         {bg:'#B91C1C',fg:'#fff'},
+      'NAO':         {bg:'#B91C1C',fg:'#fff'},
+      'LIBERADO':    {bg:'#5B6470',fg:'#fff'},
+      'OBSTRUÇÃO':   {bg:'#7A1A1A',fg:'#fff'},
+      'OBSTRUCAO':   {bg:'#7A1A1A',fg:'#fff'},
+      'ABSTENÇÃO':   {bg:'#8A6D00',fg:'#fff'},
+      'ABSTENCAO':   {bg:'#8A6D00',fg:'#fff'},
+      'NEGOCIAÇÃO':  {bg:'#1E5C8A',fg:'#fff'},
+      'NEGOCIACAO':  {bg:'#1E5C8A',fg:'#fff'},
+    };
+    const c=cores[ori]||{bg:'#6c757d',fg:'#fff'};
+    return`<span style="display:inline-block;background:${c.bg};color:${c.fg};font-size:8.5px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;padding:2px 6px;border-radius:3px;margin-left:6px;vertical-align:middle;">${ePB(ori)}</span>`;
+  }
+
   function itemUrgencia(it){
     const n=String(it.ordem),p=ePB(it.projeto||'');
     const a=ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,60));
     const res=ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
     return`<div style="padding:8px 12px;border-bottom:1px solid #f0f0f0;display:flex;gap:7px;align-items:flex-start;font-size:10.5px;color:#222;">
       <div style="min-width:20px;height:20px;background:#7A1A1A;color:#fff;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9.5px;flex-shrink:0;">${n}</div>
-      <div data-pb-edit><b>${p}</b>${a?` <span style="color:#666;">(${a})</span>`:''}${res?`<div style="color:#444;margin-top:1px;font-size:10px;line-height:1.35;">${res.substring(0,120)}</div>`:''}</div>
+      <div data-pb-edit><b>${p}</b>${badgeOrientacao(it)}${a?` <span style="color:#666;">(${a})</span>`:''}${res?`<div style="color:#444;margin-top:1px;font-size:10px;line-height:1.35;">${res.substring(0,120)}</div>`:''}</div>
     </div>`;
   }
 
@@ -2946,7 +2965,7 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
     return`<div style="padding:10px 12px;border-bottom:1px solid #f0f0f0;display:flex;gap:9px;align-items:flex-start;">
       <div style="min-width:26px;height:26px;background:#1A3A2A;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;flex-shrink:0;">${n}</div>
       <div data-pb-edit style="font-size:11px;color:#1a1a1a;">
-        <div style="font-weight:800;color:#1A3A2A;">${p}</div>
+        <div style="font-weight:800;color:#1A3A2A;">${p}${badgeOrientacao(it)}</div>
         ${a?`<div style="font-size:10px;color:#555;">Autor: ${a}</div>`:''}
         ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,160)}</div>`:''}
       </div>
@@ -2971,7 +2990,7 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
     return`<div style="padding:${pad};border-bottom:1px solid #f0f0f0;${rowBg}display:flex;gap:${gap};align-items:flex-start;">
       ${badgeN}
       <div data-pb-edit style="font-size:${compacto?10:11}px;color:#1a1a1a;">
-        <div style="font-weight:800;color:${ehPri?'#7A5500':'#1A2A5C'};">${p}</div>
+        <div style="font-weight:800;color:${ehPri?'#7A5500':'#1A2A5C'};">${p}${badgeOrientacao(it)}</div>
         ${a?`<div style="font-size:${compacto?9:10}px;color:#555;">Autor: ${a}</div>`:''}
         ${(!compacto&&rel)?`<div style="font-size:10px;color:#777;">Rel.: ${rel}</div>`:''}
         ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,maxRes)}</div>`:''}
