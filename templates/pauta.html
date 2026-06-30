@@ -3185,6 +3185,14 @@ async function exportarBannerPNG(btn){
     if(btn){btn.disabled=false;btn.innerHTML=orig;}
   }
 }
+// Listener robusto via delegação de evento — funciona mesmo se o botão for recriado/clonado
+document.addEventListener('click', function(ev){
+  const btnPng = ev.target.closest('#btn-exportar-banner-png');
+  if(btnPng){
+    console.log('[BannerPNG] clique detectado via delegação');
+    exportarBannerPNG(btnPng);
+  }
+});
 </script>
 
 <div class="modal fade" id="modalGerarBanner" tabindex="-1" aria-hidden="true">
@@ -3250,7 +3258,7 @@ async function exportarBannerPNG(btn){
             <label class="fw-bold small mb-0">
               <i class="fas fa-check-circle text-success me-1"></i>Banner gerado
             </label>
-            <button class="btn btn-outline-primary btn-sm" onclick="exportarBannerPNG(this)">
+            <button class="btn btn-outline-primary btn-sm" id="btn-exportar-banner-png" type="button">
               <i class="fas fa-image me-1"></i>Baixar PNG
             </button>
           </div>
