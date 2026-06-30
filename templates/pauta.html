@@ -2845,13 +2845,14 @@ window._abrirPautaBanner=function(){
     lista.innerHTML='<div class="text-muted small fst-italic">Nenhum item disponível.</div>';
   } else {
     lista.innerHTML=itens.map(it=>{
-      const jaEPrioridade=(it.orientacao||'').toUpperCase()==='SIM';
+      const temOrientacaoSim=(it.orientacao||'').toUpperCase()==='SIM';
+      // Por padrão nenhum item vem marcado como prioridade no Pauta Banner
       return `<div class="form-check py-1" style="border-bottom:1px solid #f0f0f0;">`
         +`<input class="form-check-input" type="checkbox" id="pb-pri-${it.id_principal}"
-           value="${it.id_principal}" ${jaEPrioridade?'checked':''}>`
+           value="${it.id_principal}">`
         +`<label class="form-check-label small" for="pb-pri-${it.id_principal}">`
         +`<strong>Item ${it.ordem}</strong> — ${it.projeto}`
-        +`${jaEPrioridade?' <span class="badge" style="background:#DAA520;font-size:0.65rem;">SIM</span>':''}`
+        +`${temOrientacaoSim?' <span class="badge" style="background:#DAA520;font-size:0.65rem;">SIM</span>':''}`
         +`</label></div>`;
     }).join('');
   }
@@ -2887,11 +2888,9 @@ async function gerarPautaBanner(){
     }
     const urgencias=itens.filter(it=>/^REQ\s|^RQS\s|^RQU\s|^REC\s/i.test((it.projeto_original||it.projeto||'')));
     const materias=itens.filter(it=>/Reda[cç][aã]o Final/i.test(it.projeto)&&!urgencias.includes(it));
-    // Prioridade: usa checkboxes selecionados pelo usuário
+    // Prioridade: exclusivamente os checkboxes marcados pelo usuário (nenhuma marcação por padrão)
     const checksSel=Array.from(document.querySelectorAll('#pb-lista-prioridade input[type=checkbox]:checked')).map(cb=>String(cb.value));
-    const prioridade=checksSel.length>0
-      ? itens.filter(it=>checksSel.includes(String(it.id_principal))&&!urgencias.includes(it)&&!materias.includes(it))
-      : itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)&&(it.orientacao||'').toUpperCase()==='SIM');
+    const prioridade=itens.filter(it=>checksSel.includes(String(it.id_principal))&&!urgencias.includes(it)&&!materias.includes(it));
     const projetos=itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)&&!prioridade.includes(it));
     const html=_buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64});
     const inner=document.getElementById('pb-preview-inner');
