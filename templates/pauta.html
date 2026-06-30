@@ -1683,29 +1683,43 @@
   }
 
   function gerarTabelaDestaques(projetoFiltro) {
-    // Coleta todos os destaques analisados na página
+    // Coleta todos os destaques analisados na página.
+    // Estrutura HTML real: o botão com data-numero fica numa <tr>, e o box de
+    // análise (id="analise-destaque-...") fica na <tr> SEGUINTE, dentro de um
+    // <td colspan>. Por isso usamos a <tr> ANTERIOR (previousElementSibling)
+    // para localizar o botão de origem, em vez de closest('tr').
     const destaques = [];
     document.querySelectorAll('[id^="analise-destaque-"]').forEach(box => {
       if (box.style.display === 'none' || !box.innerHTML.trim()) return;
-      const tr = box.closest('tr');
-      const btnOrigem = tr ? tr.querySelector('[data-numero]') : null;
+
+      const trAnalise = box.closest('tr');
+      const trBotao    = trAnalise ? trAnalise.previousElementSibling : null;
+      const btnOrigem  = trBotao ? trBotao.querySelector('[data-numero]') : null;
+
       const numero    = btnOrigem ? btnOrigem.dataset.numero    : '';
       const descricao = btnOrigem ? btnOrigem.dataset.descricao : '';
-      const autoria   = btnOrigem ? btnOrigem.dataset.autoria   : '';
-      const projeto   = btnOrigem ? btnOrigem.dataset.projeto   : (projetoFiltro || '');
-      const analise   = box.querySelector('div') ? box.querySelector('div').innerText : box.innerText;
-      if (numero) destaques.push({ numero, descricao, autoria, projeto, analise });
+      const autoria    = btnOrigem ? btnOrigem.dataset.autoria   : '';
+      const projeto    = btnOrigem ? btnOrigem.dataset.projeto   : (projetoFiltro || '');
+
+      // O texto da análise está no <div> interno (class p-2 border rounded bg-light)
+      const innerDiv = box.querySelector('div');
+      const analise  = (innerDiv ? innerDiv.innerText : box.innerText).trim();
+
+      if (numero && analise) destaques.push({ numero, descricao, autoria, projeto, analise });
     });
 
-    // Se não encontrou pela div, coleta pelos botões de quadro
+    // Fallback: se nenhuma análise foi localizada via box, tenta pelos botões "Criar Quadro do DTQ",
+    // usando o dataset.analise (texto da IA já salvo no próprio botão) sem cortar em 200 chars.
     if (destaques.length === 0) {
       document.querySelectorAll('[data-numero][onclick*="gerarQuadroDTQ"], .btn-dark[data-numero]').forEach(bq => {
+        const analiseTxt = bq.dataset.analise ? bq.dataset.analise.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim() : '';
+        if (!analiseTxt) return;
         destaques.push({
           numero:    bq.dataset.numero    || '',
           descricao: bq.dataset.descricao || '',
           autoria:   bq.dataset.autoria   || '',
           projeto:   bq.dataset.projeto   || '',
-          analise:   bq.dataset.analise   ? bq.dataset.analise.replace(/<[^>]+>/g,'').substring(0,200) : '',
+          analise:   analiseTxt,
         });
       });
     }
