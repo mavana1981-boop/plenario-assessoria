@@ -562,13 +562,17 @@
 
               <!-- DESTAQUES -->
               <div class="mt-4">
-                <div class="d-flex align-items-center gap-2 mb-2">
+                <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
                   <h6 class="mb-0"><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
                   <button class="btn btn-outline-warning btn-sm btn-buscar-destaques"
                           data-id-proposicao="{{ item.id_principal }}"
                           data-ordem="{{ item.ordem }}"
                           data-projeto="{{ item.projeto }}">
                     <i class="fas fa-search me-1"></i>Buscar Destaques
+                  </button>
+                  <button class="btn btn-outline-primary btn-sm"
+                          onclick="window.gerarTabelaDestaques('{{ item.projeto }}')">
+                    <i class="fas fa-table me-1"></i>Tabela de Destaques
                   </button>
                   <span class="spinner-busca-{{ item.ordem }}" style="display:none;">
                     <span class="spinner-border spinner-border-sm text-warning"></span>
@@ -3348,9 +3352,23 @@ async function gerarBannerIA() {
 
     _bannerHtmlAtual = j.html;
 
+    // Extrai apenas o conteúdo útil do documento HTML completo retornado pelo backend
+    // (descarta <!DOCTYPE>, <head> com <style>/<script> de auto-edição, e a barra/botões
+    // de impressão internos — tudo isso é re-renderizado e re-controlado pelo pauta.html)
+    let htmlUtil = j.html;
+    try {
+      const parser = new DOMParser();
+      const docBanner = parser.parseFromString(j.html, 'text/html');
+      const styleTag = docBanner.querySelector('style');
+      const bannerDiv = docBanner.querySelector('.banner');
+      if (bannerDiv) {
+        htmlUtil = (styleTag ? styleTag.outerHTML : '') + bannerDiv.outerHTML;
+      }
+    } catch (eParse) { /* usa j.html como veio, mesmo assim */ }
+
     // Renderiza na div (sem iframe — evita cross-origin)
     const inner = document.getElementById('banner-preview-inner');
-    inner.innerHTML = j.html;
+    inner.innerHTML = htmlUtil;
     const outerW = document.getElementById('banner-preview-outer').offsetWidth || 700;
     const scale  = Math.min(1, (outerW - 8) / 850);
     inner.style.transform = 'scale(' + scale + ')';
