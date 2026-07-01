@@ -4734,6 +4734,86 @@ def excluir_extra_pauta(evento_id, id_proposicao):
     finally:
         conn.close()
 
+
+
+@app.route('/nota_proposicao/<id_proposicao>', methods=['GET'])
+@login_required
+def get_nota_proposicao(id_proposicao):
+    """Busca a nota técnica salva de uma proposição, por id_principal.
+    Tenta também ids de REQs de urgência relacionados ao mesmo PL."""
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        # Busca direta pelo id
+        prop_key = f"PROP_{id_proposicao}"
+        c.execute(
+            "SELECT resumo_materia, orientacao, saved_by, saved_at FROM notas "
+            "WHERE item_key=? AND (resumo_materia IS NOT NULL AND resumo_materia != '') "
+            "ORDER BY saved_at DESC LIMIT 1",
+            (prop_key,)
+        )
+        row = c.fetchone()
+        if row:
+            return jsonify({
+                'found': True,
+                'resumo': row[0], 'orientacao': row[1],
+                'saved_by': row[2], 'saved_at': row[3],
+                'fonte': 'banco'
+            })
+
+        # Não encontrou — retorna not found (sem erro)
+        return jsonify({'found': False})
+    except Exception as e:
+        logger.error(f'get_nota_proposicao: {e}')
+        return jsonify({'found': False, 'error': str(e)})
+    finally:
+        conn.close()
+
+
+@app.route('/notas_por_proposicao/<id_proposicao>', methods=['GET'])
+@login_required
+def notas_por_proposicao(id_proposicao):
+    """Busca nota de um PL E de todos os REQs de urgência relacionados a ele
+    em qualquer evento. Retorna lista ordenada por data desc."""
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        prop_key = f"PROP_{id_proposicao}"
+        # Nota direta do PL
+        c.execute(
+            "SELECT n.resumo_materia, n.orientacao, n.saved_by, n.saved_at, e.descricao "
+            "FROM notas n "
+            "LEFT JOIN eventos e ON n.evento_id = e.id "
+            "WHERE n.item_key=? AND (n.resumo_materia IS NOT NULL AND n.resumo_materia != '') "
+            "ORDER BY n.saved_at DESC LIMIT 5",
+            (prop_key,)
+        )
+        rows = c.fetchall()
+        resultado = [{'resumo': r[0], 'orientacao': r[1], 'saved_by': r[2],
+                      'saved_at': r[3], 'evento': r[4] or '', 'tipo': 'nota_direta'} for r in rows]
+
+        # Notas de REQs de urgência que mencionam este PL no campo resumo_parecer
+        # (quando o REQ é analisado junto ao PL)
+        if not resultado:
+            c.execute(
+                "SELECT n.resumo_materia, n.orientacao, n.saved_by, n.saved_at "
+                "FROM notas n "
+                "WHERE (n.resumo_parecer LIKE ? OR n.resumo_materia LIKE ?) "
+                "AND (n.resumo_materia IS NOT NULL AND n.resumo_materia != '') "
+                "ORDER BY n.saved_at DESC LIMIT 3",
+                (f'%{id_proposicao}%', f'%{id_proposicao}%')
+            )
+            rows2 = c.fetchall()
+            resultado += [{'resumo': r[0], 'orientacao': r[1], 'saved_by': r[2],
+                           'saved_at': r[3], 'evento': '', 'tipo': 'nota_req'} for r in rows2]
+
+        return jsonify({'found': bool(resultado), 'notas': resultado})
+    except Exception as e:
+        logger.error(f'notas_por_proposicao: {e}')
+        return jsonify({'found': False, 'notas': [], 'error': str(e)})
+    finally:
+        conn.close()
+
 @app.errorhandler(500)
 def handle_500(e):
     logger.error(f"500 error: {e}")
