@@ -2979,7 +2979,7 @@ Com base na descrição e análise acima, gere APENAS um JSON válido (sem markd
 Responda APENAS com o JSON, sem ```json, sem comentários."""
 
     try:
-        texto, fonte = ia_chain(prompt, max_tokens=512, temperatura=0.2, contexto="gerar_quadro_dtq")
+        texto, fonte = ia_chain(prompt, temperatura=0.2, contexto="gerar_quadro_dtq")
         texto = re.sub(r'```(?:json)?|```', '', texto).strip()
         dados = json.loads(texto)
         return jsonify({'ok': True, 'dados': dados, 'fonte': fonte})
@@ -3398,7 +3398,7 @@ Gere análise em HTML:
 Não use ### ou ** fora do HTML."""
 
             try:
-                    texto_resp, fonte = ia_chain(prompt_emenda, max_tokens=512, contexto="destaque_emenda_pdf")
+                    texto_resp, fonte = ia_chain(prompt_emenda, contexto="destaque_emenda_pdf")
                     aviso = '<p><em style="color:#cc6600;">⚠️ Analisado via fallback IA.</em></p><br>' if fonte != 'groq' else ''
                     return jsonify({'resumo': aviso + texto_resp, 'doc_usado': tipo_doc})
             except Exception as e:
@@ -3445,7 +3445,7 @@ Gere análise HTML específica para a **Emenda nº {num_emenda_desc}** ({numero}
 Não use ### ou ** fora do HTML. Não repita análise de outras emendas."""
 
             try:
-                    texto_resp, fonte = ia_chain(prompt_emenda, max_tokens=600, contexto="destaque_emenda_sem_pdf")
+                    texto_resp, fonte = ia_chain(prompt_emenda, contexto="destaque_emenda_sem_pdf")
                     aviso = '<p><em style="color:#cc6600;">⚠️ Analisado via fallback IA.</em></p><br>' if fonte != 'groq' else ''
                     return jsonify({'resumo': aviso + texto_resp, 'doc_usado': tipo_doc})
             except Exception as e:
@@ -3553,7 +3553,7 @@ Gere a análise em HTML com EXATAMENTE este formato:
 Não use ### ou ** fora do HTML."""
 
     try:
-        texto, fonte = ia_chain(prompt, max_tokens=512, contexto="destaque_normal")
+        texto, fonte = ia_chain(prompt, contexto="destaque_normal")
         aviso = '<p><em style="color:#cc6600;">⚠️ Analisado via fallback IA.</em></p><br>' if fonte != 'groq' else ''
         return jsonify({'resumo': aviso + texto, 'doc_usado': tipo_doc})
     except Exception as e:
@@ -4320,7 +4320,7 @@ Responda APENAS com o resumo, sem introdução, sem aspas."""
 
     # Usa ia_chain: Groq → Cloudflare → Gemini
     try:
-        texto, fonte = ia_chain(prompt, max_tokens=120, temperatura=0.4, contexto="resumo_ementa")
+        texto, fonte = ia_chain(prompt, temperatura=0.4, contexto="resumo_ementa")
         texto = texto.strip()
         # Rejeita se for igual ou muito similar à ementa
         ementa_norm = re.sub(r'\s+', ' ', ementa.strip().lower())
