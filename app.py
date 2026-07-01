@@ -2251,7 +2251,7 @@ def analisar_ia():
     cabecalho = "Voce e um assessor legislativo da Camara dos Deputados, trabalhando para a Oposicao e Minoria.\n\n"
     dados = "Proposicao: %s\nAutores: %s\nRelator: %s\nEmenta: %s\n%s\n\n" % (str(projeto), str(autor), str(relator), str(ementa), str(contexto_doc))
     instrucao = "Gere uma nota tecnica em texto puro com esta estrutura. Cada titulo com emoji deve estar sozinho na linha, seguido de linha em branco.\n\n"
-    regras = "Regras: sem HTML, sem asteriscos, sem markdown. Maximo 500 palavras.\n"
+    regras = "Regras: sem HTML, sem asteriscos, sem markdown. Seja completo e nao corte a analise.\n"
 
     prompt = cabecalho + dados + instrucao + estrutura + regras + secao_criticas
 
@@ -4295,7 +4295,7 @@ def resumo_ementa_impl(data):
 
     if contexto_pl and eh_req:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo PRÓPRIO (máximo 2-3 linhas, máximo 180 caracteres) do que este REQUERIMENTO pede.
+Gere um resumo PRÓPRIO (2-3 linhas) do que este REQUERIMENTO pede.
 NÃO copie a ementa. Escreva com suas próprias palavras.
 - Se for urgência: comece com "Urgência para o PL que (explique o PL em poucas palavras)"
 - Se for adiamento/retirada: comece com "Adiamento/Retirada do PL que..."
@@ -4307,7 +4307,7 @@ Ementa: {ementa}{contexto_pl}
 Responda APENAS com o resumo, sem introdução, sem aspas."""
     else:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo PRÓPRIO (máximo 2-3 linhas, máximo 180 caracteres) do que esta proposição trata na prática.
+Gere um resumo PRÓPRIO (2-3 linhas) do que esta proposição trata na prática.
 NÃO copie a ementa. Escreva com suas próprias palavras, de forma simples e direta.
 - Explique o efeito prático para o cidadão ou para o parlamento
 - Não repita o número da proposição
@@ -4374,7 +4374,7 @@ def enriquecer_ementa():
                 pass
 
             if ementa_pl:
-                prompt = f"""Você é um especialista legislativo. Explique em UMA frase direta (máx 20 palavras) o objeto deste requerimento para os parlamentares.
+                prompt = f"""Você é um especialista legislativo. Explique em UMA frase direta o objeto deste requerimento para os parlamentares.
 
 Requerimento: {projeto}
 Ementa do requerimento: {ementa}
@@ -4422,7 +4422,7 @@ Responda APENAS com a frase, sem introdução, sem aspas, sem ponto final."""
     if not ementa_e_vaga(ementa):
         return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
 
-    prompt = f"""Você é um especialista legislativo. Em UMA frase direta (máximo 20 palavras), explique de forma simples o que esta proposição trata na prática para os cidadãos.
+    prompt = f"""Você é um especialista legislativo. Em UMA frase direta, explique de forma simples o que esta proposição trata na prática para os cidadãos.
 Não repita o número da lei. Use linguagem clara e objetiva.
 
 Proposição: {projeto}
@@ -4453,7 +4453,7 @@ def complementar_ementa():
     if not groq_key:
         return jsonify({'complemento': ementa})
 
-    prompt = f"""Você é um especialista legislativo. Sobre a proposição abaixo, escreva em UMA frase direta (máximo 30 palavras) o que ela trata, de forma clara para leigos.
+    prompt = f"""Você é um especialista legislativo. Sobre a proposição abaixo, escreva em UMA frase direta o que ela trata, de forma clara para leigos.
 Se a ementa já for clara, retorne ela resumida.
 
 Proposição: {projeto}
