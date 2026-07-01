@@ -4331,7 +4331,7 @@ def resumo_ementa_impl(data):
 
     if contexto_pl and eh_req:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo PRÓPRIO do que este REQUERIMENTO pede. Escreva quantas linhas forem necessárias para explicar bem, sem cortar.
+Gere um resumo PRÓPRIO do que este REQUERIMENTO pede em UMA linha (máximo 120 caracteres). Seja direto e objetivo.
 NÃO copie a ementa. Escreva com suas próprias palavras.
 - Se for urgência: comece com "Urgência para o PL que (explique o PL em poucas palavras)"
 - Se for adiamento/retirada: comece com "Adiamento/Retirada do PL que..."
@@ -4343,7 +4343,7 @@ Ementa: {ementa}{contexto_pl}
 Responda APENAS com o resumo, sem introdução, sem aspas."""
     else:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo PRÓPRIO do que esta proposição trata na prática. Escreva quantas linhas forem necessárias para explicar bem, sem cortar.
+Gere um resumo PRÓPRIO do que esta proposição trata na prática em UMA linha (máximo 120 caracteres). Seja direto e objetivo.
 NÃO copie a ementa. Escreva com suas próprias palavras, de forma simples e direta.
 - Explique o efeito prático para o cidadão ou para o parlamento
 - Não repita o número da proposição
@@ -4356,7 +4356,7 @@ Responda APENAS com o resumo, sem introdução, sem aspas."""
 
     # Usa ia_chain: Groq → Cloudflare → Gemini
     try:
-        texto, fonte = ia_chain(prompt, temperatura=0.4, contexto="resumo_ementa")
+        texto, fonte = ia_chain(prompt, max_tokens=80, temperatura=0.4, contexto="resumo_ementa")
         texto = texto.strip()
         # Rejeita se for igual ou muito similar à ementa
         ementa_norm = re.sub(r'\s+', ' ', ementa.strip().lower())
