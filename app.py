@@ -4807,6 +4807,7 @@ def notas_por_proposicao(id_proposicao):
                           'saved_at': r[3], 'tipo': 'nota_like'} for r in rows2]
 
         # 3. REQs de urgência: busca notas de outros itens que mencionam este id
+        #    A nota do REQ pode referenciar o PL no texto, então buscamos pelo id E pelo nome
         if not resultado:
             c.execute(
                 "SELECT n.resumo_materia, n.orientacao, n.saved_by, n.saved_at "
@@ -4819,6 +4820,43 @@ def notas_por_proposicao(id_proposicao):
             rows3 = c.fetchall()
             resultado += [{'resumo': r[0], 'orientacao': r[1], 'saved_by': r[2],
                            'saved_at': r[3], 'tipo': 'nota_req'} for r in rows3]
+
+        # 4. Busca REQs de urgência pelo nome do projeto via pauta_cache_db
+        #    Encontra os id_principais de REQs que apontam para este PL
+        #    e verifica se há nota salva para eles
+        if not resultado:
+            try:
+                import json as _json
+                c.execute(
+                    "SELECT json_pauta FROM pauta_cache_db ORDER BY last_updated DESC LIMIT 20"
+                )
+                for (jp,) in c.fetchall():
+                    if not jp: continue
+                    itens = _json.loads(jp) if isinstance(jp, str) else jp
+                    if not isinstance(itens, list): continue
+                    for it in itens:
+                        proj = str(it.get('projeto_original') or it.get('projeto') or '')
+                        ref_id = str(it.get('id_principal') or '')
+                        # REQ que menciona o PL buscado no campo projeto
+                        if str(id_proposicao) in proj or str(id_proposicao) in str(it):
+                            if ref_id and ref_id != str(id_proposicao):
+                                req_key = f"PROP_{ref_id}"
+                                c.execute(
+                                    "SELECT resumo_materia, orientacao, saved_by, saved_at FROM notas "
+                                    "WHERE item_key=? AND resumo_materia IS NOT NULL AND TRIM(resumo_materia) != '' "
+                                    "ORDER BY saved_at DESC LIMIT 1",
+                                    (req_key,)
+                                )
+                                row_req = c.fetchone()
+                                if row_req:
+                                    resultado.append({
+                                        'resumo': row_req[0], 'orientacao': row_req[1],
+                                        'saved_by': row_req[2], 'saved_at': row_req[3],
+                                        'tipo': 'nota_req_pauta'
+                                    })
+                    if resultado: break
+            except Exception as _e:
+                logger.warning(f'Busca REQ via pauta_cache_db falhou: {_e}')
 
         # Debug: loga chaves existentes no banco para diagnóstico
         try:
