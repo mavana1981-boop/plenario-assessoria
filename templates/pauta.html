@@ -3877,10 +3877,42 @@ async function buscarProposicaoBP(){
     document.getElementById('bp-nota').innerHTML = '<span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>';
     document.getElementById('bp-resultado').style.display = 'block';
 
+    // Busca nota técnica no banco (inclui REQs de urgência relacionados)
+    buscarNotaBancoBP(_bpDados.id);
+
   }catch(e){
     alert('Erro: ' + e.message);
   }finally{
     document.getElementById('bp-loading').style.display = 'none';
+  }
+}
+
+async function buscarNotaBancoBP(idProposicao){
+  const nota = document.getElementById('bp-nota');
+  nota.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando nota técnica no banco...';
+  try{
+    const r = await fetch('/notas_por_proposicao/' + idProposicao);
+    const j = await r.json();
+    if(j.found && j.notas && j.notas.length > 0){
+      const n = j.notas[0];
+      const dataStr = n.saved_at ? ' · Salvo em ' + n.saved_at.substring(0,10).split('-').reverse().join('/') + ' por ' + (n.saved_by||'') : '';
+      const tipoStr = n.tipo === 'nota_req' ? ' <span class="badge bg-warning text-dark">Via REQ</span>' : '';
+      nota.style.whiteSpace = 'normal';
+      nota.innerHTML =
+        '<div class="alert alert-success py-1 px-2 mb-2 small">' +
+        '<i class="fas fa-check-circle me-1"></i><strong>Nota encontrada no banco</strong>' + tipoStr + dataStr +
+        '</div>' + n.resumo;
+      _bpDados.nota = n.resumo;
+      // Se há mais de uma nota, mostra aviso
+      if(j.notas.length > 1){
+        nota.innerHTML += '<div class="text-muted small mt-2">(' + j.notas.length + ' notas encontradas — exibindo a mais recente)</div>';
+      }
+    } else {
+      nota.innerHTML = '<span class="text-muted fst-italic">Nenhuma nota técnica no banco. Clique em "Gerar com IA" para gerar.</span>';
+    }
+  }catch(e){
+    nota.innerHTML = '<span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>';
+    console.warn('buscarNotaBancoBP:', e);
   }
 }
 
