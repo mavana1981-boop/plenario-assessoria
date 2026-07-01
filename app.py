@@ -105,7 +105,7 @@ def groq_post(prompt, max_tokens=1500, temperatura=0.3):
         json={"model": "llama-3.3-70b-versatile",
               "messages": [{"role": "user", "content": prompt}],
               "max_tokens": max_tokens, "temperature": temperatura},
-        timeout=15
+        timeout=30
     )
     r.raise_for_status()
     return r.json()['choices'][0]['message']['content']
@@ -139,22 +139,7 @@ def ia_chain(prompt, max_tokens=1500, temperatura=0.3, contexto=""):
     gem_ok  = bool(os.environ.get('GEMINI_API_KEY', ''))
     logger.info(f"ia_chain [{contexto}] chaves: GEMINI={'✅' if gem_ok else '❌'} GROQ={'✅' if groq_ok else '❌'} CF={'✅' if cf_ok else '❌'}")
 
-    # 1. Gemini (modelo detectado automaticamente)
-    gemini_key = os.environ.get('GEMINI_API_KEY', '')
-    if gemini_key:
-        try:
-            texto = gemini_post(gemini_key, prompt, max_tokens=max_tokens,
-                                temperatura=temperatura, tentativas=1)
-            if texto and texto.strip():
-                logger.info(f"ia_chain [{contexto}]: Gemini OK ({_gemini_modelo_cache.get('modelo','?')})")
-                return texto, 'gemini'
-        except Exception as e:
-            logger.warning(f"ia_chain [{contexto}]: Gemini falhou — {e}")
-            # Limpa cache para tentar detectar novo modelo na próxima chamada
-            _gemini_modelo_cache["modelo"] = None
-            erros.append(f"Gemini: {e}")
-
-    # 2. Groq (llama-3.3-70b, 30 RPM gratuito)
+    # 1. Groq (llama-3.3-70b, 30 RPM gratuito) — primeiro por ser mais rápido e confiável
     groq_key = os.environ.get('GROQ_API_KEY', '')
     if groq_key:
         try:
@@ -165,6 +150,20 @@ def ia_chain(prompt, max_tokens=1500, temperatura=0.3, contexto=""):
         except Exception as e:
             logger.warning(f"ia_chain [{contexto}]: Groq falhou — {e}")
             erros.append(f"Groq: {e}")
+
+    # 2. Gemini (fallback)
+    gemini_key = os.environ.get('GEMINI_API_KEY', '')
+    if gemini_key:
+        try:
+            texto = gemini_post(gemini_key, prompt, max_tokens=max_tokens,
+                                temperatura=temperatura, tentativas=1)
+            if texto and texto.strip():
+                logger.info(f"ia_chain [{contexto}]: Gemini OK ({_gemini_modelo_cache.get('modelo','?')})")
+                return texto, 'gemini'
+        except Exception as e:
+            logger.warning(f"ia_chain [{contexto}]: Gemini falhou — {e}")
+            _gemini_modelo_cache["modelo"] = None
+            erros.append(f"Gemini: {e}")
 
     # 3. Cloudflare Workers AI (llama-3.1-70b, 500 RPM gratuito)
     cf_account = os.environ.get('CF_ACCOUNT_ID', '')
@@ -2257,7 +2256,44 @@ def analisar_ia():
 
     # ── Cadeia tripla: Groq → Cloudflare → Gemini ───────────────────────────
     try:
-        texto, fonte = ia_chain(prompt, max_tokens=1500, contexto="analisar_ia")
+        # Para análise técnica completa, usa Gemini primeiro (melhor para textos longos)
+        # Groq pode truncar por limite de tokens/minuto no plano gratuito
+        texto = None
+        fonte = None
+        _erros_ia = []
+
+        # 1. Gemini
+        _gkey = os.environ.get('GEMINI_API_KEY', '')
+        if _gkey:
+            try:
+                texto = gemini_post(_gkey, prompt, max_tokens=1500, temperatura=0.3, tentativas=2)
+                if texto and texto.strip():
+                    fonte = 'gemini'
+            except Exception as _e:
+                _erros_ia.append(f'Gemini: {_e}')
+                logger.warning(f'analisar_ia: Gemini falhou — {_e}')
+
+        # 2. Groq
+        if not texto:
+            _grok = os.environ.get('GROQ_API_KEY', '')
+            if _grok:
+                try:
+                    texto = groq_post(prompt, max_tokens=1500, temperatura=0.3)
+                    if texto and texto.strip():
+                        fonte = 'groq'
+                except Exception as _e:
+                    _erros_ia.append(f'Groq: {_e}')
+                    logger.warning(f'analisar_ia: Groq falhou — {_e}')
+
+        # 3. Cloudflare
+        if not texto:
+            try:
+                texto, fonte = ia_chain(prompt, max_tokens=1500, contexto="analisar_ia")
+            except Exception as _e:
+                _erros_ia.append(f'Cloudflare: {_e}')
+
+        if not texto:
+            raise Exception('; '.join(_erros_ia))
     except Exception as e:
         import traceback
         logger.error(f"ia_chain falhou em analisar_ia: {e}\n{traceback.format_exc()[-300:]}")
@@ -4295,7 +4331,7 @@ def resumo_ementa_impl(data):
 
     if contexto_pl and eh_req:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo PRÓPRIO (2-3 linhas) do que este REQUERIMENTO pede.
+Gere um resumo PRÓPRIO do que este REQUERIMENTO pede. Escreva quantas linhas forem necessárias para explicar bem, sem cortar.
 NÃO copie a ementa. Escreva com suas próprias palavras.
 - Se for urgência: comece com "Urgência para o PL que (explique o PL em poucas palavras)"
 - Se for adiamento/retirada: comece com "Adiamento/Retirada do PL que..."
@@ -4307,7 +4343,7 @@ Ementa: {ementa}{contexto_pl}
 Responda APENAS com o resumo, sem introdução, sem aspas."""
     else:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo PRÓPRIO (2-3 linhas) do que esta proposição trata na prática.
+Gere um resumo PRÓPRIO do que esta proposição trata na prática. Escreva quantas linhas forem necessárias para explicar bem, sem cortar.
 NÃO copie a ementa. Escreva com suas próprias palavras, de forma simples e direta.
 - Explique o efeito prático para o cidadão ou para o parlamento
 - Não repita o número da proposição
