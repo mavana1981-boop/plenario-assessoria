@@ -4773,40 +4773,60 @@ def get_nota_proposicao(id_proposicao):
 @app.route('/notas_por_proposicao/<id_proposicao>', methods=['GET'])
 @login_required
 def notas_por_proposicao(id_proposicao):
-    """Busca nota de um PL E de todos os REQs de urgência relacionados a ele
-    em qualquer evento. Retorna lista ordenada por data desc."""
+    """Busca nota de um PL E de REQs de urgência relacionados, em qualquer evento."""
     conn = get_conn()
     c = conn.cursor()
     try:
         prop_key = f"PROP_{id_proposicao}"
-        # Nota direta do PL
+
+        # 1. Busca direta pela chave PROP_{id} em TODOS os eventos
         c.execute(
-            "SELECT n.resumo_materia, n.orientacao, n.saved_by, n.saved_at, e.descricao "
+            "SELECT n.resumo_materia, n.orientacao, n.saved_by, n.saved_at, n.evento_id "
             "FROM notas n "
-            "LEFT JOIN eventos e ON n.evento_id = e.id "
-            "WHERE n.item_key=? AND (n.resumo_materia IS NOT NULL AND n.resumo_materia != '') "
+            "WHERE n.item_key = ? "
+            "AND n.resumo_materia IS NOT NULL AND TRIM(n.resumo_materia) != '' "
             "ORDER BY n.saved_at DESC LIMIT 5",
             (prop_key,)
         )
         rows = c.fetchall()
         resultado = [{'resumo': r[0], 'orientacao': r[1], 'saved_by': r[2],
-                      'saved_at': r[3], 'evento': r[4] or '', 'tipo': 'nota_direta'} for r in rows]
+                      'saved_at': r[3], 'tipo': 'nota_direta'} for r in rows]
 
-        # Notas de REQs de urgência que mencionam este PL no campo resumo_parecer
-        # (quando o REQ é analisado junto ao PL)
+        # 2. Fallback: LIKE no item_key (cobre variações int/str do id)
         if not resultado:
             c.execute(
                 "SELECT n.resumo_materia, n.orientacao, n.saved_by, n.saved_at "
                 "FROM notas n "
-                "WHERE (n.resumo_parecer LIKE ? OR n.resumo_materia LIKE ?) "
-                "AND (n.resumo_materia IS NOT NULL AND n.resumo_materia != '') "
+                "WHERE n.item_key LIKE ? "
+                "AND n.resumo_materia IS NOT NULL AND TRIM(n.resumo_materia) != '' "
+                "ORDER BY n.saved_at DESC LIMIT 5",
+                (f'%{id_proposicao}%',)
+            )
+            rows2 = c.fetchall()
+            resultado = [{'resumo': r[0], 'orientacao': r[1], 'saved_by': r[2],
+                          'saved_at': r[3], 'tipo': 'nota_like'} for r in rows2]
+
+        # 3. REQs de urgência: busca notas de outros itens que mencionam este id
+        if not resultado:
+            c.execute(
+                "SELECT n.resumo_materia, n.orientacao, n.saved_by, n.saved_at "
+                "FROM notas n "
+                "WHERE (n.resumo_materia LIKE ? OR n.resumo_parecer LIKE ?) "
+                "AND n.resumo_materia IS NOT NULL AND TRIM(n.resumo_materia) != '' "
                 "ORDER BY n.saved_at DESC LIMIT 3",
                 (f'%{id_proposicao}%', f'%{id_proposicao}%')
             )
-            rows2 = c.fetchall()
+            rows3 = c.fetchall()
             resultado += [{'resumo': r[0], 'orientacao': r[1], 'saved_by': r[2],
-                           'saved_at': r[3], 'evento': '', 'tipo': 'nota_req'} for r in rows2]
+                           'saved_at': r[3], 'tipo': 'nota_req'} for r in rows3]
 
+        # Debug: loga chaves existentes no banco para diagnóstico
+        try:
+            c.execute("SELECT DISTINCT item_key FROM notas WHERE item_key LIKE 'PROP_%' ORDER BY item_key LIMIT 20")
+            chaves = [r[0] for r in c.fetchall()]
+            logger.info(f'notas_por_proposicao id={id_proposicao}: {len(resultado)} nota(s). Chaves no banco: {chaves}')
+        except Exception:
+            logger.info(f'notas_por_proposicao id={id_proposicao}: {len(resultado)} nota(s)')
         return jsonify({'found': bool(resultado), 'notas': resultado})
     except Exception as e:
         logger.error(f'notas_por_proposicao: {e}')
