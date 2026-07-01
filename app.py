@@ -396,6 +396,18 @@ with app.app_context():
             last_updated TEXT,
             last_saved_by TEXT)''')
 
+        c.execute('''CREATE TABLE IF NOT EXISTS extra_pauta (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            evento_id INTEGER NOT NULL,
+            id_proposicao TEXT NOT NULL,
+            projeto TEXT,
+            ementa TEXT,
+            autor TEXT,
+            relator TEXT,
+            created_by TEXT,
+            created_at TEXT,
+            UNIQUE(evento_id, id_proposicao))''')
+
         c.execute('''CREATE TABLE IF NOT EXISTS resumos_ia (
             evento_id INTEGER,
             id_proposicao TEXT,
@@ -4596,6 +4608,95 @@ def delete_usuario(user_id):
     except Exception as e:
         logger.error(f"Erro delete_usuario: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+
+@app.route('/extra_pauta/<int:evento_id>', methods=['GET'])
+@login_required
+def listar_extra_pauta(evento_id):
+    """Lista todas as proposições extra pauta de um evento."""
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS extra_pauta (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            evento_id INTEGER NOT NULL,
+            id_proposicao TEXT NOT NULL,
+            projeto TEXT, ementa TEXT, autor TEXT, relator TEXT,
+            created_by TEXT, created_at TEXT,
+            UNIQUE(evento_id, id_proposicao))''')
+        c.execute('SELECT id_proposicao, projeto, ementa, autor, relator, created_by, created_at FROM extra_pauta WHERE evento_id=? ORDER BY created_at', (evento_id,))
+        rows = c.fetchall()
+        return jsonify([{
+            'id_principal': r[0], 'projeto': r[1], 'ementa': r[2],
+            'autor': r[3], 'relator': r[4],
+            'created_by': r[5], 'created_at': r[6], 'eh_extra_pauta': True,
+        } for r in rows])
+    except Exception as e:
+        logger.error(f'listar_extra_pauta: {e}')
+        return jsonify([])
+    finally:
+        conn.close()
+
+
+@app.route('/extra_pauta/<int:evento_id>', methods=['POST'])
+@login_required
+def salvar_extra_pauta(evento_id):
+    """Salva (ou atualiza) uma proposição extra pauta."""
+    data = request.get_json()
+    id_prop = str(data.get('id_principal', ''))
+    if not id_prop:
+        return jsonify({'error': 'id_principal obrigatório'}), 400
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute('''CREATE TABLE IF NOT EXISTS extra_pauta (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            evento_id INTEGER NOT NULL,
+            id_proposicao TEXT NOT NULL,
+            projeto TEXT, ementa TEXT, autor TEXT, relator TEXT,
+            created_by TEXT, created_at TEXT,
+            UNIQUE(evento_id, id_proposicao))''')
+        now_str = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
+        if USE_POSTGRES:
+            c.execute('''INSERT INTO extra_pauta (evento_id, id_proposicao, projeto, ementa, autor, relator, created_by, created_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (evento_id, id_proposicao) DO UPDATE SET
+                  projeto=EXCLUDED.projeto, ementa=EXCLUDED.ementa,
+                  autor=EXCLUDED.autor, relator=EXCLUDED.relator''',
+                (evento_id, id_prop, data.get('projeto',''), data.get('ementa',''),
+                 data.get('autor',''), data.get('relator',''),
+                 current_user.display_name(), now_str))
+        else:
+            c.execute('''INSERT OR REPLACE INTO extra_pauta
+                (evento_id, id_proposicao, projeto, ementa, autor, relator, created_by, created_at)
+                VALUES (?,?,?,?,?,?,?,?)''',
+                (evento_id, id_prop, data.get('projeto',''), data.get('ementa',''),
+                 data.get('autor',''), data.get('relator',''),
+                 current_user.display_name(), now_str))
+        conn.commit()
+        return jsonify({'ok': True, 'created_at': now_str})
+    except Exception as e:
+        logger.error(f'salvar_extra_pauta: {e}')
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/extra_pauta/<int:evento_id>/<id_proposicao>', methods=['DELETE'])
+@login_required
+def excluir_extra_pauta(evento_id, id_proposicao):
+    """Remove uma proposição extra pauta."""
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute('DELETE FROM extra_pauta WHERE evento_id=? AND id_proposicao=?', (evento_id, id_proposicao))
+        conn.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
 
 @app.errorhandler(500)
 def handle_500(e):
