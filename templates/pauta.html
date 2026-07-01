@@ -208,6 +208,18 @@
       </span>
       {% endif %}
       {% endif %}
+      {% if user_categoria != 'restrito' %}
+      <button class="btn btn-sm mb-3 ms-2 text-white"
+        style="background:linear-gradient(135deg,#7B5E00,#B8920A);"
+        onclick="abrirModalAdicionarProposicao()">
+        <i class="fas fa-plus-circle me-2"></i>Extra Pauta
+      </button>
+      <button class="btn btn-sm mb-3 ms-2 text-white"
+        style="background:linear-gradient(135deg,#1A3A5C,#0d2a4a);"
+        onclick="abrirModalBuscarProposicao()">
+        <i class="fas fa-search me-2"></i>Buscar Proposição
+      </button>
+      {% endif %}
       <button class="btn btn-sm mb-3 ms-2 text-white"
         style="background:linear-gradient(135deg,#B8860B,#DAA520);"
         onclick="var m=document.getElementById('modalOrientacoes');var f=typeof carregarOrientacoes;if(m&&f==='function'){carregarOrientacoes();new bootstrap.Modal(m).show();}else{alert('DEBUG Orientações:\nmodal='+(m?'OK':'AUSENTE')+'\ncarregarOrientacoes='+f);}"
@@ -3445,6 +3457,645 @@ function imprimirBanner() {
     setTimeout(() => { popup.print(); }, 400);
   });
   setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+</script>
+
+
+<!-- ═══ MODAL ADICIONAR PROPOSIÇÃO EXTRA PAUTA ═══════════════════════════ -->
+<div class="modal fade" id="modalAdicionarProposicao" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#7B5E00,#B8920A);color:#fff;">
+        <h5 class="modal-title"><i class="fas fa-plus-circle me-2"></i>Adicionar Proposição Extra Pauta</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">Digite a sigla, número e ano da proposição. O sistema buscará os dados na API da Câmara.</p>
+        <div class="row g-2">
+          <div class="col-4">
+            <label class="form-label small fw-bold">Sigla</label>
+            <select class="form-select form-select-sm" id="ep-sigla">
+              <option>PL</option><option>PLP</option><option>PEC</option>
+              <option>MPV</option><option>PDL</option><option>PRC</option>
+              <option>REQ</option><option>PLS</option>
+            </select>
+          </div>
+          <div class="col-4">
+            <label class="form-label small fw-bold">Número</label>
+            <input type="number" class="form-control form-control-sm" id="ep-numero" placeholder="Ex: 1234">
+          </div>
+          <div class="col-4">
+            <label class="form-label small fw-bold">Ano</label>
+            <input type="number" class="form-control form-control-sm" id="ep-ano" placeholder="Ex: 2025">
+          </div>
+        </div>
+        <div id="ep-resultado" class="mt-3" style="display:none;">
+          <div class="alert alert-warning py-2 small mb-0">
+            <i class="fas fa-star me-1" style="color:#B8860B;"></i>
+            <strong>Extra Pauta</strong>
+            <div id="ep-preview" class="mt-1"></div>
+          </div>
+        </div>
+        <div id="ep-erro" class="mt-2 text-danger small" style="display:none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-warning btn-sm" id="ep-btn-buscar" onclick="buscarProposicaoExtra()">
+          <i class="fas fa-search me-1"></i>Buscar
+        </button>
+        <button class="btn btn-sm text-white" id="ep-btn-adicionar" style="background:#7B5E00;display:none;" onclick="adicionarProposicaoExtra()">
+          <i class="fas fa-plus me-1"></i>Adicionar à Pauta
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL BUSCAR PROPOSIÇÃO ══════════════════════════════════════════ -->
+<div class="modal fade" id="modalBuscarProposicao" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width:900px;">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#1A3A5C,#0d2a4a);color:#fff;">
+        <h5 class="modal-title"><i class="fas fa-search me-2"></i>Buscar Proposição</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-2 mb-3">
+          <div class="col-3">
+            <select class="form-select form-select-sm" id="bp-sigla">
+              <option>PL</option><option>PLP</option><option>PEC</option>
+              <option>MPV</option><option>PDL</option><option>PRC</option>
+              <option>REQ</option>
+            </select>
+          </div>
+          <div class="col-3">
+            <input type="number" class="form-control form-control-sm" id="bp-numero" placeholder="Número">
+          </div>
+          <div class="col-3">
+            <input type="number" class="form-control form-control-sm" id="bp-ano" placeholder="Ano">
+          </div>
+          <div class="col-3">
+            <button class="btn btn-primary btn-sm w-100" onclick="buscarProposicaoBP()">
+              <i class="fas fa-search me-1"></i>Buscar
+            </button>
+          </div>
+        </div>
+        <div id="bp-loading" style="display:none;" class="text-center text-muted py-3">
+          <i class="fas fa-spinner fa-spin me-2"></i>Buscando proposição e nota técnica...
+        </div>
+        <div id="bp-resultado" style="display:none;">
+          <div class="card mb-3">
+            <div class="card-header py-2" style="background:#1A3A5C;color:#fff;">
+              <strong id="bp-titulo"></strong>
+            </div>
+            <div class="card-body py-2 small">
+              <div><strong>Ementa:</strong> <span id="bp-ementa"></span></div>
+              <div class="mt-1"><strong>Autor:</strong> <span id="bp-autor"></span> &nbsp; <strong>Relator:</strong> <span id="bp-relator"></span></div>
+              <div class="mt-1"><strong>Situação:</strong> <span id="bp-situacao"></span></div>
+            </div>
+          </div>
+          <div id="bp-nota-container">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <strong class="small">Nota Técnica:</strong>
+              <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-primary" onclick="gerarNotaBP()">
+                  <img src="/static/logo_gemini.svg" style="width:14px;height:14px;vertical-align:middle;" class="me-1">Gerar com IA
+                </button>
+                <button class="btn btn-sm btn-outline-success" onclick="imprimirNotaBP()">
+                  <i class="fas fa-print me-1"></i>Imprimir PDF
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="gerarBannerBP()">
+                  <i class="fas fa-image me-1"></i>Gerar Banner
+                </button>
+              </div>
+            </div>
+            <div id="bp-nota" class="border rounded p-3 bg-light" style="min-height:200px;font-size:0.85rem;white-space:pre-wrap;">
+              <span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════
+// EXTRA PAUTA — Adicionar proposição manualmente
+// ══════════════════════════════════════════════════════════════════════════
+let _epDados = null;  // dados da proposição encontrada
+let _epOrdemCounter = 900;  // ordens extras começam em 900 para não conflitar
+
+function abrirModalAdicionarProposicao(){
+  _epDados = null;
+  document.getElementById('ep-resultado').style.display = 'none';
+  document.getElementById('ep-erro').style.display = 'none';
+  document.getElementById('ep-btn-adicionar').style.display = 'none';
+  document.getElementById('ep-numero').value = '';
+  document.getElementById('ep-ano').value = new Date().getFullYear();
+  new bootstrap.Modal(document.getElementById('modalAdicionarProposicao')).show();
+}
+
+async function buscarProposicaoExtra(){
+  const sigla  = document.getElementById('ep-sigla').value;
+  const numero = document.getElementById('ep-numero').value.trim();
+  const ano    = document.getElementById('ep-ano').value.trim();
+  const errEl  = document.getElementById('ep-erro');
+  const resEl  = document.getElementById('ep-resultado');
+  const btnAdd = document.getElementById('ep-btn-adicionar');
+
+  errEl.style.display = 'none';
+  resEl.style.display = 'none';
+  btnAdd.style.display = 'none';
+  _epDados = null;
+
+  if(!numero || !ano){ errEl.textContent = 'Preencha número e ano.'; errEl.style.display = 'block'; return; }
+
+  const btn = document.getElementById('ep-btn-buscar');
+  btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando...';
+
+  try{
+    const r = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo=${encodeURIComponent(sigla)}&numero=${numero}&ano=${ano}&itens=1`, {headers:{'Accept':'application/json'}});
+    if(!r.ok) throw new Error('Erro HTTP ' + r.status);
+    const dados = (await r.json()).dados || [];
+    if(!dados.length){ errEl.textContent = `${sigla} ${numero}/${ano} não encontrado na API da Câmara.`; errEl.style.display = 'block'; return; }
+
+    const prop = dados[0];
+    // Busca autores
+    let autor = 'N/D';
+    try{
+      const rA = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${prop.id}/autores`,{headers:{'Accept':'application/json'}});
+      if(rA.ok){ const autores = (await rA.json()).dados||[]; autor = autores.slice(0,2).map(a=>a.nome).join(', ') + (autores.length>2?' e outros':''); }
+    }catch(e){}
+
+    _epDados = {
+      id_principal: String(prop.id),
+      projeto: `${prop.siglaTipo} ${prop.numero}/${prop.ano}`,
+      projeto_original: `${prop.siglaTipo} ${prop.numero}/${prop.ano}`,
+      ementa: prop.ementa || '',
+      autor,
+      relator: 'A definir',
+      orientacao: '',
+      situacao: prop.statusProposicao?.descricaoSituacao || 'N/D',
+      eh_extra_pauta: true,
+    };
+
+    document.getElementById('ep-preview').innerHTML =
+      `<strong>${_epDados.projeto}</strong> — ${_epDados.ementa.substring(0,120)}${_epDados.ementa.length>120?'...':''}`;
+    resEl.style.display = 'block';
+    btnAdd.style.display = 'inline-block';
+
+  }catch(e){
+    errEl.textContent = 'Erro: ' + e.message;
+    errEl.style.display = 'block';
+  }finally{
+    btn.disabled = false; btn.innerHTML = '<i class="fas fa-search me-1"></i>Buscar';
+  }
+}
+
+function adicionarProposicaoExtra(){
+  if(!_epDados) return;
+
+  _epOrdemCounter++;
+  const ordem = _epOrdemCounter;
+  const id    = _epDados.id_principal;
+  const item  = {..._epDados, ordem: String(ordem)};
+
+  // Adiciona ao ITENS_DATA global para Mensagens, Pauta Banner, etc.
+  if(!window.ITENS_DATA) window.ITENS_DATA = [];
+  window.ITENS_DATA.push({
+    ordem: String(ordem), id_principal: id,
+    projeto: item.projeto, projeto_original: item.projeto_original,
+    ementa: item.ementa, autor: item.autor, relator: item.relator,
+    orientacao: '', resumo_ia: '', responsavel_username: '',
+    responsavel_nome: '', responsavel_categoria: '', eh_extra_pauta: true,
+  });
+
+  // Monta o card visual igual ao dos itens normais, mas com cor amarelo-escuro
+  const container = document.querySelector('.container.my-4') || document.body;
+  const card = document.createElement('div');
+  card.className = 'item-card mb-3';
+  card.dataset.idPrincipal = id;
+  card.style.cssText = 'border:2px solid #B8860B;border-radius:8px;background:#FFFBEA;';
+  card.id = `extra-pauta-${id}`;
+
+  card.innerHTML = `
+    <div class="card-body">
+      <div class="item-header d-flex align-items-center justify-content-between"
+           data-bs-toggle="collapse" data-bs-target="#col-ep-${id}" aria-expanded="false"
+           style="cursor:pointer;color:#7B5E00;font-weight:600;">
+        <div>
+          <span class="badge me-2" style="background:#B8860B;font-size:0.7rem;">⭐ EXTRA PAUTA</span>
+          <i class="fas fa-file-alt me-2" style="color:#B8860B;"></i>
+          Item ${ordem} — <strong>${item.projeto}</strong>
+          <button class="btn btn-sm btn-outline-danger ms-2 py-0 px-2" style="font-size:0.7rem;"
+            onclick="event.stopPropagation();excluirExtraPauta('${id}',this.closest('.item-card'))">
+            <i class="fas fa-trash-alt"></i> Excluir
+          </button>
+          <div class="item-info mt-1 text-muted fst-italic" style="font-size:0.82rem;">${item.ementa}</div>
+          <div class="item-info mt-1 small"><strong>Autor:</strong> ${item.autor}</div>
+        </div>
+        <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
+      </div>
+
+      <div class="collapse" id="col-ep-${id}">
+        <hr class="mt-2 mb-2">
+
+        <div class="mb-2">
+          <label class="form-label small"><strong>Gerar sugestão de análise:</strong></label>
+          <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
+            <button class="btn btn-outline-primary btn-gerar-analise btn-sm"
+              data-ordem="${ordem}" data-projeto="${item.projeto.replace(/"/g,'')}"
+              data-ementa="${item.ementa.replace(/"/g,'').replace(/'/g,'')}"
+              data-autor="${item.autor.replace(/"/g,'')}" data-relator="${item.relator}"
+              data-id-principal="${id}"
+              onclick="gerarAnalise('${ordem}', this)">
+              <img src="/static/logo_gemini.svg" style="width:16px;height:16px;vertical-align:middle;" class="me-1">Gerar Análise
+            </button>
+            <button class="btn btn-outline-secondary btn-gerar-banner btn-sm"
+              data-ordem="${ordem}" data-proposicao="${item.projeto.replace(/"/g,'')}"
+              data-ementa="${item.ementa.replace(/"/g,'').replace(/'/g,'')}"
+              data-autor="${item.autor.replace(/"/g,'')}" data-relator="${item.relator}"
+              data-id-principal="${id}"
+              onclick="abrirModalBanner(this)">
+              <i class="fas fa-image me-2"></i>Gerar Banner
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-2 position-relative">
+          <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
+          <textarea id="editor-resumo-materia-${ordem}" class="d-none"></textarea>
+          <div id="quill-editor-${ordem}" data-ordem="${ordem}" style="width:100%;background:#fff;min-height:300px;"></div>
+          <div id="overlay-${ordem}" class="editor-overlay" style="display:none;">
+            <div class="editor-spinner"></div>
+            <p>Analisando proposição...</p>
+          </div>
+        </div>
+
+        <div class="mt-2">
+          <label class="form-label small"><strong>Orientação:</strong></label>
+          <select class="form-control editable-field orientacao" data-ordem="${ordem}">
+            <option value="">Selecione</option>
+            <option value="SIM">SIM</option>
+            <option value="NÃO">NÃO</option>
+            <option value="LIBERADO">LIBERADO</option>
+            <option value="OBSTRUÇÃO">OBSTRUÇÃO</option>
+            <option value="ABSTENÇÃO">ABSTENÇÃO</option>
+            <option value="NEGOCIAÇÃO">NEGOCIAÇÃO</option>
+          </select>
+        </div>
+
+        <!-- Destaques -->
+        <div class="mt-4">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <h6 class="mb-0"><i class="fas fa-thumbtack text-warning me-2"></i>Destaques</h6>
+            <button class="btn btn-outline-warning btn-sm btn-buscar-destaques"
+              data-id-proposicao="${id}" data-ordem="${ordem}" data-projeto="${item.projeto}">
+              <i class="fas fa-search me-1"></i>Buscar Destaques
+            </button>
+            <button class="btn btn-outline-primary btn-sm" onclick="window.gerarTabelaDestaques('${item.projeto}')">
+              <i class="fas fa-table me-1"></i>Tabela de Destaques
+            </button>
+          </div>
+          <div id="tabela-destaques-${ordem}" style="display:none;">
+            <div class="table-responsive">
+              <table class="table table-sm table-striped align-middle">
+                <thead class="table-warning"><tr>
+                  <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo</th><th>Situação</th><th>IA</th>
+                </tr></thead>
+                <tbody id="tbody-destaques-${ordem}"></tbody>
+              </table>
+            </div>
+            <div id="sem-destaques-${ordem}" class="alert alert-info py-2" style="display:none;">Nenhum destaque encontrado.</div>
+          </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-3 mt-3">
+          <button class="btn btn-warning btn-sm save-btn" data-ordem="${ordem}" data-id-principal="${id}"
+            style="color:#1a1a1a;">Salvar</button>
+          <small class="text-muted" id="info-salvo-${ordem}"></small>
+        </div>
+      </div>
+    </div>`;
+
+  // Encontra o último item da pauta e insere depois
+  const items = document.querySelectorAll('.item-card');
+  const lastItem = items[items.length - 1];
+  if(lastItem) lastItem.after(card);
+  else container.appendChild(card);
+
+  // Inicializa Quill para o novo item quando o collapse abrir
+  const collapseEl = card.querySelector(`#col-ep-${id}`);
+  collapseEl.addEventListener('shown.bs.collapse', () => {
+    if(window.quillInstances && !window.quillInstances[ordem]){
+      const q = new Quill(`#quill-editor-${ordem}`, {
+        theme:'snow',
+        modules:{toolbar:[['bold','italic','underline'],[{'list':'ordered'},{'list':'bullet'}],['clean']]}
+      });
+      const TEMPLATE = `<p><strong>📘 Resumo Técnico</strong></p><p><br></p><p><strong>🟢 Pontos Positivos</strong></p><p><br></p><p><strong>🔴 Pontos Negativos</strong></p><p><br></p><p><strong>⚖️ Riscos Políticos e de Imagem</strong></p><p><br></p><p><strong>↔️ Orientação Sugerida</strong></p><p><br></p>`;
+      q.clipboard.dangerouslyPasteHTML(TEMPLATE);
+      window.quillInstances[ordem] = q;
+    }
+  });
+
+  // Salva no banco para persistência
+  try{
+    await fetch('/extra_pauta/' + window.EVENTO_ID, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        id_principal: id, projeto: item.projeto,
+        ementa: item.ementa, autor: item.autor, relator: item.relator,
+      })
+    });
+  }catch(e){ console.warn('Erro ao persistir extra pauta:', e); }
+
+  // Fecha o modal e abre o card
+  bootstrap.Modal.getInstance(document.getElementById('modalAdicionarProposicao'))?.hide();
+  setTimeout(() => { new bootstrap.Collapse(collapseEl, {toggle:true}); }, 400);
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// BUSCAR PROPOSIÇÃO — Nota técnica, PDF, Banner
+// ══════════════════════════════════════════════════════════════════════════
+let _bpDados = null;
+
+function abrirModalBuscarProposicao(){
+  _bpDados = null;
+  document.getElementById('bp-resultado').style.display = 'none';
+  document.getElementById('bp-loading').style.display = 'none';
+  document.getElementById('bp-numero').value = '';
+  document.getElementById('bp-ano').value = new Date().getFullYear();
+  document.getElementById('bp-nota').innerHTML = '<span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>';
+  new bootstrap.Modal(document.getElementById('modalBuscarProposicao')).show();
+}
+
+async function buscarProposicaoBP(){
+  const sigla  = document.getElementById('bp-sigla').value;
+  const numero = document.getElementById('bp-numero').value.trim();
+  const ano    = document.getElementById('bp-ano').value.trim();
+  if(!numero || !ano){ alert('Preencha número e ano.'); return; }
+
+  document.getElementById('bp-resultado').style.display = 'none';
+  document.getElementById('bp-loading').style.display = 'block';
+  _bpDados = null;
+
+  try{
+    const r = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo=${encodeURIComponent(sigla)}&numero=${numero}&ano=${ano}&itens=1`,{headers:{'Accept':'application/json'}});
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const dados = (await r.json()).dados||[];
+    if(!dados.length) throw new Error(`${sigla} ${numero}/${ano} não encontrado.`);
+    const prop = dados[0];
+
+    let autor = 'N/D';
+    try{
+      const rA = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${prop.id}/autores`,{headers:{'Accept':'application/json'}});
+      if(rA.ok){ const as=(await rA.json()).dados||[]; autor=as.slice(0,2).map(a=>a.nome).join(', ')+(as.length>2?' e outros':''); }
+    }catch(e){}
+
+    let relator = 'Não atribuído';
+    try{
+      const rT = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${prop.id}/tramitacoes?itens=10&ordem=DESC`,{headers:{'Accept':'application/json'}});
+      if(rT.ok){
+        const trams=(await rT.json()).dados||[];
+        for(const t of trams){ if((t.despacho||'').toLowerCase().includes('relator')){ const m=t.despacho.match(/Dep\.\s+\S+(?:\s+\S+)?/); if(m) relator=m[0]; break; } }
+      }
+    }catch(e){}
+
+    _bpDados = {
+      id: String(prop.id), projeto: `${prop.siglaTipo} ${prop.numero}/${prop.ano}`,
+      ementa: prop.ementa||'', autor, relator,
+      situacao: prop.statusProposicao?.descricaoSituacao||'N/D',
+    };
+
+    document.getElementById('bp-titulo').textContent = _bpDados.projeto;
+    document.getElementById('bp-ementa').textContent = _bpDados.ementa;
+    document.getElementById('bp-autor').textContent   = _bpDados.autor;
+    document.getElementById('bp-relator').textContent = _bpDados.relator;
+    document.getElementById('bp-situacao').textContent= _bpDados.situacao;
+    document.getElementById('bp-nota').innerHTML = '<span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>';
+    document.getElementById('bp-resultado').style.display = 'block';
+
+  }catch(e){
+    alert('Erro: ' + e.message);
+  }finally{
+    document.getElementById('bp-loading').style.display = 'none';
+  }
+}
+
+async function gerarNotaBP(){
+  if(!_bpDados){ alert('Busque uma proposição primeiro.'); return; }
+  const nota = document.getElementById('bp-nota');
+  nota.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Gerando análise com IA...';
+  try{
+    const r = await fetch('/analisar_ia', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        projeto: _bpDados.projeto, ementa: _bpDados.ementa,
+        autor: _bpDados.autor, relator: _bpDados.relator,
+        id_principal: _bpDados.id,
+      })
+    });
+    const j = await r.json();
+    if(j.resumo){
+      nota.innerHTML = j.resumo;
+      nota.style.whiteSpace = 'normal';
+      _bpDados.nota = j.resumo;
+    } else {
+      nota.innerHTML = '<span class="text-danger">Erro: ' + (j.error||'Falha na IA') + '</span>';
+    }
+  }catch(e){
+    nota.innerHTML = '<span class="text-danger">Erro: ' + e.message + '</span>';
+  }
+}
+
+function imprimirNotaBP(){
+  if(!_bpDados){ alert('Busque uma proposição primeiro.'); return; }
+  const nota = document.getElementById('bp-nota').innerHTML;
+  const popup = window.open('', '_blank', 'width=800,height=700,scrollbars=yes');
+  const pd = popup.document;
+  pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Nota Técnica</title><style>body{font-family:Arial,sans-serif;padding:30px;color:#222;line-height:1.6;}h2{color:#1A3A5C;border-bottom:2px solid #1A3A5C;padding-bottom:8px;}@media print{.no-print{display:none}}</style></head><body></body></html>'); pd.close();
+  const h2 = pd.createElement('h2'); h2.textContent = _bpDados.projeto; pd.body.appendChild(h2);
+  const sub = pd.createElement('p'); sub.style.color='#555'; sub.style.fontSize='13px'; sub.textContent = 'Ementa: ' + _bpDados.ementa; pd.body.appendChild(sub);
+  const hr = pd.createElement('hr'); pd.body.appendChild(hr);
+  const div = pd.createElement('div'); div.innerHTML = nota; pd.body.appendChild(div);
+  const btnP = pd.createElement('button'); btnP.className='no-print'; btnP.style.cssText='margin-top:20px;padding:8px 20px;background:#1A3A5C;color:#fff;border:none;border-radius:4px;cursor:pointer;'; btnP.textContent='🖨️ Imprimir'; btnP.onclick=()=>popup.print(); pd.body.appendChild(btnP);
+}
+
+function excluirExtraPauta(idProp, cardEl){
+  if(!confirm('Excluir esta proposição extra pauta?')) return;
+  fetch('/extra_pauta/' + window.EVENTO_ID + '/' + idProp, {method:'DELETE'})
+    .then(r => r.json())
+    .then(j => {
+      if(j.ok){
+        cardEl?.remove();
+        // Remove do ITENS_DATA
+        if(window.ITENS_DATA) window.ITENS_DATA = window.ITENS_DATA.filter(it => String(it.id_principal) !== String(idProp) || !it.eh_extra_pauta);
+      } else { alert('Erro ao excluir: ' + (j.error||'')); }
+    })
+    .catch(e => alert('Erro: ' + e.message));
+}
+
+async function carregarExtraPauta(){
+  if(!window.EVENTO_ID) return;
+  try{
+    const r = await fetch('/extra_pauta/' + window.EVENTO_ID);
+    if(!r.ok) return;
+    const itens = await r.json();
+    for(const item of itens){
+      // Não duplica se já existe na tela
+      if(document.getElementById('extra-pauta-' + item.id_principal)) continue;
+      await adicionarExtraPautaCarregado(item);
+    }
+  }catch(e){ console.warn('Erro ao carregar extra pauta:', e); }
+}
+
+// Versão silenciosa de adicionar (sem modal, sem salvar no banco novamente)
+async function adicionarExtraPautaCarregado(item){
+  _epOrdemCounter++;
+  const ordem = _epOrdemCounter;
+  const id    = item.id_principal;
+  item.ordem  = String(ordem);
+
+  if(!window.ITENS_DATA) window.ITENS_DATA = [];
+  if(!window.ITENS_DATA.find(it => String(it.id_principal)===String(id) && it.eh_extra_pauta)){
+    window.ITENS_DATA.push({
+      ordem: String(ordem), id_principal: id,
+      projeto: item.projeto, projeto_original: item.projeto,
+      ementa: item.ementa, autor: item.autor, relator: item.relator,
+      orientacao: '', resumo_ia: '', responsavel_username: '',
+      responsavel_nome: '', responsavel_categoria: '', eh_extra_pauta: true,
+    });
+  }
+
+  const container = document.querySelector('.container.my-4') || document.body;
+  const card = document.createElement('div');
+  card.className = 'item-card mb-3';
+  card.dataset.idPrincipal = id;
+  card.style.cssText = 'border:2px solid #B8860B;border-radius:8px;background:#FFFBEA;';
+  card.id = 'extra-pauta-' + id;
+
+  const dataStr = item.created_at ? ' · Adicionado em ' + item.created_at.substring(0,10).split('-').reverse().join('/') + ' por ' + (item.created_by||'') : '';
+
+  card.innerHTML = `
+    <div class="card-body">
+      <div class="item-header d-flex align-items-center justify-content-between"
+           data-bs-toggle="collapse" data-bs-target="#col-ep-${id}" aria-expanded="false"
+           style="cursor:pointer;color:#7B5E00;font-weight:600;">
+        <div>
+          <span class="badge me-2" style="background:#B8860B;font-size:0.7rem;">⭐ EXTRA PAUTA</span>
+          <i class="fas fa-file-alt me-2" style="color:#B8860B;"></i>
+          Item ${ordem} — <strong>${item.projeto}</strong>
+          <button class="btn btn-sm btn-outline-danger ms-2 py-0 px-2" style="font-size:0.7rem;"
+            onclick="event.stopPropagation();excluirExtraPauta('${id}',this.closest('.item-card'))">
+            <i class="fas fa-trash-alt"></i> Excluir
+          </button>
+          <div class="item-info mt-1 text-muted fst-italic" style="font-size:0.82rem;">${item.ementa}</div>
+          <div class="item-info mt-1 small"><strong>Autor:</strong> ${item.autor}${dataStr}</div>
+        </div>
+        <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
+      </div>
+      <div class="collapse" id="col-ep-${id}">
+        <hr class="mt-2 mb-2">
+        <div class="mb-2">
+          <label class="form-label small"><strong>Gerar sugestão de análise:</strong></label>
+          <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
+            <button class="btn btn-outline-primary btn-gerar-analise btn-sm"
+              data-ordem="${ordem}" data-projeto="${item.projeto.replace(/"/g,'')}"
+              data-ementa="${item.ementa.replace(/"/g,'').replace(/'/g,'')}"
+              data-autor="${item.autor.replace(/"/g,'')}" data-relator="${item.relator||'N/D'}"
+              data-id-principal="${id}" onclick="gerarAnalise('${ordem}', this)">
+              <img src="/static/logo_gemini.svg" style="width:16px;height:16px;vertical-align:middle;" class="me-1">Gerar Análise
+            </button>
+            <button class="btn btn-outline-secondary btn-gerar-banner btn-sm"
+              data-ordem="${ordem}" data-proposicao="${item.projeto.replace(/"/g,'')}"
+              data-ementa="${item.ementa.replace(/"/g,'').replace(/'/g,'')}"
+              data-autor="${item.autor.replace(/"/g,'')}" data-relator="${item.relator||'N/D'}"
+              data-id-principal="${id}" onclick="abrirModalBanner(this)">
+              <i class="fas fa-image me-2"></i>Gerar Banner
+            </button>
+          </div>
+        </div>
+        <div class="mt-2 position-relative">
+          <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
+          <textarea id="editor-resumo-materia-${ordem}" class="d-none"></textarea>
+          <div id="quill-editor-${ordem}" data-ordem="${ordem}" style="width:100%;background:#fff;min-height:300px;"></div>
+          <div id="overlay-${ordem}" class="editor-overlay" style="display:none;">
+            <div class="editor-spinner"></div><p>Analisando proposição...</p>
+          </div>
+        </div>
+        <div class="mt-2">
+          <label class="form-label small"><strong>Orientação:</strong></label>
+          <select class="form-control editable-field orientacao" data-ordem="${ordem}">
+            <option value="">Selecione</option>
+            <option value="SIM">SIM</option><option value="NÃO">NÃO</option>
+            <option value="LIBERADO">LIBERADO</option><option value="OBSTRUÇÃO">OBSTRUÇÃO</option>
+            <option value="ABSTENÇÃO">ABSTENÇÃO</option><option value="NEGOCIAÇÃO">NEGOCIAÇÃO</option>
+          </select>
+        </div>
+        <div class="mt-4">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <h6 class="mb-0"><i class="fas fa-thumbtack text-warning me-2"></i>Destaques</h6>
+            <button class="btn btn-outline-warning btn-sm btn-buscar-destaques"
+              data-id-proposicao="${id}" data-ordem="${ordem}" data-projeto="${item.projeto}">
+              <i class="fas fa-search me-1"></i>Buscar Destaques
+            </button>
+          </div>
+          <div id="tabela-destaques-${ordem}" style="display:none;">
+            <div class="table-responsive">
+              <table class="table table-sm table-striped align-middle">
+                <thead class="table-warning"><tr>
+                  <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo</th><th>Situação</th><th>IA</th>
+                </tr></thead>
+                <tbody id="tbody-destaques-${ordem}"></tbody>
+              </table>
+            </div>
+            <div id="sem-destaques-${ordem}" class="alert alert-info py-2" style="display:none;">Nenhum destaque encontrado.</div>
+          </div>
+        </div>
+        <div class="d-flex align-items-center gap-3 mt-3">
+          <button class="btn btn-warning btn-sm save-btn" data-ordem="${ordem}" data-id-principal="${id}"
+            style="color:#1a1a1a;">Salvar</button>
+          <small class="text-muted" id="info-salvo-${ordem}"></small>
+        </div>
+      </div>
+    </div>`;
+
+  const items = document.querySelectorAll('.item-card');
+  const lastItem = items[items.length - 1];
+  if(lastItem && lastItem !== card) lastItem.after(card);
+  else container.appendChild(card);
+
+  card.querySelector(`#col-ep-${id}`)?.addEventListener('shown.bs.collapse', () => {
+    if(window.quillInstances && !window.quillInstances[ordem]){
+      const q = new Quill(`#quill-editor-${ordem}`, {
+        theme:'snow', modules:{toolbar:[['bold','italic','underline'],[{'list':'ordered'},{'list':'bullet'}],['clean']]}
+      });
+      const TEMPLATE = `<p><strong>📘 Resumo Técnico</strong></p><p><br></p><p><strong>🟢 Pontos Positivos</strong></p><p><br></p><p><strong>🔴 Pontos Negativos</strong></p><p><br></p><p><strong>⚖️ Riscos Políticos e de Imagem</strong></p><p><br></p><p><strong>↔️ Orientação Sugerida</strong></p><p><br></p>`;
+      q.clipboard.dangerouslyPasteHTML(TEMPLATE);
+      window.quillInstances[ordem] = q;
+    }
+  });
+}
+
+// Chama ao carregar a página (após 1.5s para garantir que DOM esteja pronto)
+setTimeout(carregarExtraPauta, 1500);
+
+function gerarBannerBP(){
+  if(!_bpDados){ alert('Busque uma proposição primeiro.'); return; }
+  // Popula o modal de gerar banner com os dados da proposição buscada
+  // e abre normalmente
+  const btnFake = {
+    dataset: {
+      proposicao: _bpDados.projeto, ementa: _bpDados.ementa,
+      autor: _bpDados.autor, relator: _bpDados.relator,
+      idPrincipal: _bpDados.id, ordem: '999',
+    }
+  };
+  // Fecha modal buscar e abre modal de banner
+  bootstrap.Modal.getInstance(document.getElementById('modalBuscarProposicao'))?.hide();
+  setTimeout(() => abrirModalBanner(btnFake), 400);
 }
 </script>
 </body>
