@@ -3896,7 +3896,8 @@ async function buscarNotaBancoBP(idProposicao){
     if(j.found && j.notas && j.notas.length > 0){
       const n = j.notas[0];
       const dataStr = n.saved_at ? ' · Salvo em ' + n.saved_at.substring(0,10).split('-').reverse().join('/') + ' por ' + (n.saved_by||'') : '';
-      const tipoStr = n.tipo === 'nota_req' ? ' <span class="badge bg-warning text-dark">Via REQ</span>' : '';
+      const tipoStr = (n.tipo === 'nota_req' || n.tipo === 'nota_req_pauta')
+        ? ' <span class="badge bg-warning text-dark">Via REQ de Urgência</span>' : '';
       nota.style.whiteSpace = 'normal';
       nota.innerHTML =
         '<div class="alert alert-success py-1 px-2 mb-2 small">' +
