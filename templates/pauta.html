@@ -3865,6 +3865,7 @@ async function buscarProposicaoBP(){
 
     _bpDados = {
       id: String(prop.id), projeto: `${prop.siglaTipo} ${prop.numero}/${prop.ano}`,
+      numero: String(prop.numero), ano: String(prop.ano), sigla: prop.siglaTipo,
       ementa: prop.ementa||'', autor, relator,
       situacao: prop.statusProposicao?.descricaoSituacao||'N/D',
     };
@@ -3891,7 +3892,13 @@ async function buscarNotaBancoBP(idProposicao){
   const nota = document.getElementById('bp-nota');
   nota.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando nota técnica no banco...';
   try{
-    const r = await fetch('/notas_por_proposicao/' + idProposicao);
+    // Passa nome e número/ano para ajudar a encontrar REQs de urgência
+    const bpProjeto  = (_bpDados && _bpDados.projeto)  ? encodeURIComponent(_bpDados.projeto)  : '';
+    const bpNumero   = (_bpDados && _bpDados.numero)   ? encodeURIComponent(_bpDados.numero)   : '';
+    const bpAno      = (_bpDados && _bpDados.ano)      ? encodeURIComponent(_bpDados.ano)      : '';
+    const bpUrl = '/notas_por_proposicao/' + idProposicao
+      + '?projeto=' + bpProjeto + '&numero=' + bpNumero + '&ano=' + bpAno;
+    const r = await fetch(bpUrl);
     const j = await r.json();
     if(j.found && j.notas && j.notas.length > 0){
       const n = j.notas[0];
