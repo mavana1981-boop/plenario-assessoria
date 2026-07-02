@@ -4773,7 +4773,8 @@ def get_nota_proposicao(id_proposicao):
 @app.route('/notas_por_proposicao/<id_proposicao>', methods=['GET'])
 @login_required
 def notas_por_proposicao(id_proposicao):
-    """Busca nota de um PL E de REQs de urgência relacionados, em qualquer evento."""
+    """Busca nota de um PL E de REQs de urgência relacionados, em qualquer evento.
+    Query params opcionais: projeto (ex: PL 1234/2023), numero, ano, sigla."""
     conn = get_conn()
     c = conn.cursor()
     try:
@@ -4821,40 +4822,71 @@ def notas_por_proposicao(id_proposicao):
             resultado += [{'resumo': r[0], 'orientacao': r[1], 'saved_by': r[2],
                            'saved_at': r[3], 'tipo': 'nota_req'} for r in rows3]
 
-        # 4. Busca REQs de urgência pelo nome do projeto via pauta_cache_db
-        #    Encontra os id_principais de REQs que apontam para este PL
-        #    e verifica se há nota salva para eles
+        # 4. Busca REQs de urgência via pauta_cache_db
+        #    Estratégia: varre itens da pauta buscando REQs cujo campo ementa/projeto
+        #    menciona o numero+ano do PL buscado, obtém o id_principal do REQ
+        #    e busca a nota desse REQ no banco.
+        #    Também aceita nome do projeto via query param (ex: ?projeto=PL+1234/2023)
+        projeto_nome = request.args.get('projeto', '')  # ex: "PL 1234/2023"
+        numero_pl    = request.args.get('numero', '')
+        ano_pl       = request.args.get('ano', '')
+
         if not resultado:
             try:
                 import json as _json
                 c.execute(
-                    "SELECT json_pauta FROM pauta_cache_db ORDER BY last_updated DESC LIMIT 20"
+                    "SELECT json_pauta FROM pauta_cache_db ORDER BY last_updated DESC LIMIT 30"
                 )
+                ids_req_candidatos = []
                 for (jp,) in c.fetchall():
                     if not jp: continue
-                    itens = _json.loads(jp) if isinstance(jp, str) else jp
+                    try:
+                        itens = _json.loads(jp) if isinstance(jp, str) else jp
+                    except Exception:
+                        continue
                     if not isinstance(itens, list): continue
                     for it in itens:
-                        proj = str(it.get('projeto_original') or it.get('projeto') or '')
-                        ref_id = str(it.get('id_principal') or '')
-                        # REQ que menciona o PL buscado no campo projeto
-                        if str(id_proposicao) in proj or str(id_proposicao) in str(it):
-                            if ref_id and ref_id != str(id_proposicao):
-                                req_key = f"PROP_{ref_id}"
-                                c.execute(
-                                    "SELECT resumo_materia, orientacao, saved_by, saved_at FROM notas "
-                                    "WHERE item_key=? AND resumo_materia IS NOT NULL AND TRIM(resumo_materia) != '' "
-                                    "ORDER BY saved_at DESC LIMIT 1",
-                                    (req_key,)
-                                )
-                                row_req = c.fetchone()
-                                if row_req:
-                                    resultado.append({
-                                        'resumo': row_req[0], 'orientacao': row_req[1],
-                                        'saved_by': row_req[2], 'saved_at': row_req[3],
-                                        'tipo': 'nota_req_pauta'
-                                    })
-                    if resultado: break
+                        ref_id  = str(it.get('id_principal') or '')
+                        ementa  = str(it.get('ementa') or '')
+                        projeto = str(it.get('projeto_original') or it.get('projeto') or '')
+
+                        if ref_id == str(id_proposicao):
+                            continue  # é o próprio PL, não o REQ
+
+                        # Condições de match: id do PL na ementa/projeto do REQ
+                        # OU nome do projeto na ementa do REQ
+                        # OU numero+ano na ementa do REQ
+                        match = False
+                        if str(id_proposicao) in ementa:
+                            match = True
+                        if projeto_nome and projeto_nome in ementa:
+                            match = True
+                        if numero_pl and ano_pl:
+                            if numero_pl in ementa and ano_pl in ementa:
+                                match = True
+                        # REQ de urgência: projeto começa com REQ/RQS/RQU
+                        eh_req = bool(re.match(r'^REQ|^RQS|^RQU|^REC', projeto, re.I))
+                        if match and eh_req and ref_id and ref_id not in ids_req_candidatos:
+                            ids_req_candidatos.append(ref_id)
+
+                # Busca notas para cada REQ candidato
+                for req_id in ids_req_candidatos[:5]:
+                    req_key = f"PROP_{req_id}"
+                    c.execute(
+                        "SELECT resumo_materia, orientacao, saved_by, saved_at FROM notas "
+                        "WHERE item_key=? AND resumo_materia IS NOT NULL AND TRIM(resumo_materia) != '' "
+                        "ORDER BY saved_at DESC LIMIT 1",
+                        (req_key,)
+                    )
+                    row_req = c.fetchone()
+                    if row_req:
+                        resultado.append({
+                            'resumo': row_req[0], 'orientacao': row_req[1],
+                            'saved_by': row_req[2], 'saved_at': row_req[3],
+                            'tipo': 'nota_req_pauta'
+                        })
+                if ids_req_candidatos:
+                    logger.info(f'notas_por_proposicao: REQ candidatos para {id_proposicao}: {ids_req_candidatos}')
             except Exception as _e:
                 logger.warning(f'Busca REQ via pauta_cache_db falhou: {_e}')
 
