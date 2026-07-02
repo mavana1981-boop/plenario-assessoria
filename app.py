@@ -4922,17 +4922,22 @@ def notas_por_proposicao(id_proposicao):
             except Exception as _e:
                 logger.warning(f'Busca REQ via pauta_cache_db falhou: {_e}')
 
-        # Debug: busca especificamente pelo id procurado + total de chaves
+        # Debug: mostra TODAS as chaves quando não achar
         try:
             c.execute("SELECT COUNT(*) FROM notas WHERE item_key LIKE 'PROP_%'")
             total = c.fetchone()[0]
-            # Busca exata pelo id procurado (qualquer variação)
             c.execute("SELECT item_key, saved_at FROM notas WHERE item_key LIKE ? ORDER BY saved_at DESC LIMIT 5",
                       (f'%{id_proposicao}%',))
             matches = c.fetchall()
-            logger.info(f'notas_por_proposicao id={id_proposicao}: {len(resultado)} nota(s) retornadas. '
-                        f'Total chaves no banco: {total}. '
-                        f'Matches diretos para {id_proposicao}: {matches}')
+            if not resultado and not matches:
+                # Mostra TODAS as chaves para diagnóstico
+                c.execute("SELECT item_key FROM notas WHERE item_key LIKE 'PROP_%' ORDER BY saved_at DESC")
+                todas = [r[0] for r in c.fetchall()]
+                logger.info(f'notas_por_proposicao id={id_proposicao}: NÃO ENCONTRADO. '
+                            f'Todas as {total} chaves: {todas}')
+            else:
+                logger.info(f'notas_por_proposicao id={id_proposicao}: {len(resultado)} nota(s). '
+                            f'Matches: {matches}')
         except Exception as _de:
             logger.info(f'notas_por_proposicao id={id_proposicao}: {len(resultado)} nota(s). debug_err={_de}')
         return jsonify({'found': bool(resultado), 'notas': resultado})
