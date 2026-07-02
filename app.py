@@ -4942,6 +4942,125 @@ def notas_por_proposicao(id_proposicao):
     finally:
         conn.close()
 
+
+
+@app.route('/buscar_proposicao', methods=['GET'])
+@login_required
+def buscar_proposicao():
+    """Busca proposição na API da Câmara com fallbacks.
+    Params: sigla, numero, ano
+    Tenta: busca exata → busca sem sigla → busca por número próximo"""
+    sigla  = request.args.get('sigla', 'PL').upper().strip()
+    numero = request.args.get('numero', '').strip()
+    ano    = request.args.get('ano', '').strip()
+
+    if not numero or not ano:
+        return jsonify({'found': False, 'error': 'número e ano obrigatórios'}), 400
+
+    import requests as _req
+
+    def _buscar(sig, num, an):
+        url = (f'https://dadosabertos.camara.leg.br/api/v2/proposicoes'
+               f'?siglaTipo={sig}&numero={num}&ano={an}&itens=1')
+        r = _req.get(url, headers={'Accept': 'application/json'}, timeout=10)
+        if r.ok:
+            dados = r.json().get('dados', [])
+            if dados:
+                return dados[0]
+        return None
+
+    prop = None
+
+    # 1. Busca exata
+    prop = _buscar(sigla, numero, ano)
+
+    # 2. Tenta siglas alternativas comuns
+    if not prop:
+        for sig_alt in ['PL', 'PLP', 'PEC', 'MPV', 'PDL', 'PLC']:
+            if sig_alt == sigla:
+                continue
+            prop = _buscar(sig_alt, numero, ano)
+            if prop:
+                break
+
+    # 3. Busca pelo número na pauta_cache_db (o número na pauta pode ser diferente da API)
+    if not prop:
+        try:
+            import json as _json
+            conn = get_conn()
+            c = conn.cursor()
+            c.execute("SELECT json_pauta FROM pauta_cache_db ORDER BY last_updated DESC LIMIT 10")
+            for (jp,) in c.fetchall():
+                if not jp: continue
+                itens = _json.loads(jp) if isinstance(jp, str) else jp
+                if not isinstance(itens, list): continue
+                for it in itens:
+                    proj = str(it.get('projeto', '') or it.get('projeto_original', ''))
+                    # Verifica se o número e ano batem
+                    if numero in proj and ano in proj:
+                        id_p = it.get('id_principal')
+                        if id_p:
+                            r2 = _req.get(
+                                f'https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_p}',
+                                headers={'Accept': 'application/json'}, timeout=10
+                            )
+                            if r2.ok:
+                                prop = r2.json().get('dados')
+                                if prop:
+                                    break
+                if prop:
+                    break
+            conn.close()
+        except Exception as _e:
+            logger.warning(f'buscar_proposicao fallback pauta_cache: {_e}')
+
+    if not prop:
+        return jsonify({'found': False, 'error': f'{sigla} {numero}/{ano} não encontrado'})
+
+    # Busca autores
+    autor = 'N/D'
+    try:
+        ra = _req.get(
+            f'https://dadosabertos.camara.leg.br/api/v2/proposicoes/{prop["id"]}/autores',
+            headers={'Accept': 'application/json'}, timeout=8
+        )
+        if ra.ok:
+            autores = ra.json().get('dados', [])
+            autor = ', '.join(a['nome'] for a in autores[:2])
+            if len(autores) > 2: autor += ' e outros'
+    except Exception:
+        pass
+
+    # Busca relator (última tramitação com "Relator")
+    relator = 'Não atribuído'
+    try:
+        rt = _req.get(
+            f'https://dadosabertos.camara.leg.br/api/v2/proposicoes/{prop["id"]}/tramitacoes?itens=20&ordem=DESC',
+            headers={'Accept': 'application/json'}, timeout=8
+        )
+        if rt.ok:
+            for t in rt.json().get('dados', []):
+                despacho = t.get('despacho', '') or ''
+                if 'relator' in despacho.lower():
+                    m = re.search(r'Dep\.?\s+\w+(?:\s+\w+)?', despacho)
+                    if m: relator = m.group(0); break
+    except Exception:
+        pass
+
+    status = (prop.get('statusProposicao') or {})
+    return jsonify({
+        'found': True,
+        'id': str(prop['id']),
+        'projeto': f"{prop.get('siglaTipo','?')} {prop.get('numero','?')}/{prop.get('ano','?')}",
+        'sigla': prop.get('siglaTipo', sigla),
+        'numero': str(prop.get('numero', numero)),
+        'ano': str(prop.get('ano', ano)),
+        'ementa': prop.get('ementa', ''),
+        'autor': autor,
+        'relator': relator,
+        'situacao': status.get('descricaoSituacao', 'N/D'),
+    })
+
 @app.errorhandler(500)
 def handle_500(e):
     logger.error(f"500 error: {e}")
