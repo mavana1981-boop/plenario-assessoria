@@ -609,10 +609,14 @@ def extrair_ref_pl(projeto, ementa):
         (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s*(\d{3,5})[/\-](\d{4})\b', 3, None),
         # Texto por extenso — ordem importa: Complementar antes de Lei simples
         (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PLP'),
+        (r'Projeto\s+de\s+Lei\s+Complementar\s+(\d+)[,\s]+de\s+(\d{4})', 2, 'PLP'),
         (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PEC'),
         (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'MPV'),
         (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PDL'),
         (r'Projeto\s+de\s+Lei\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PL'),
+        # Sem nº: "Projeto de Lei 717, de 2024" ou "Projeto de Lei 717/2024"
+        (r'Projeto\s+de\s+Lei\s+(\d{3,5}),\s*de\s+(\d{4})', 2, 'PL'),
+        (r'Projeto\s+de\s+Lei\s+(\d{3,5})/(\d{4})', 2, 'PL'),
     ]
 
     for item in padroes:
@@ -4838,6 +4842,7 @@ def notas_por_proposicao(id_proposicao):
                     "SELECT json_pauta FROM pauta_cache_db ORDER BY last_updated DESC LIMIT 30"
                 )
                 ids_req_candidatos = []
+                _ids_verificados_api = set()
                 for (jp,) in c.fetchall():
                     if not jp: continue
                     try:
@@ -4869,6 +4874,11 @@ def notas_por_proposicao(id_proposicao):
                         if match and eh_req and ref_id and ref_id not in ids_req_candidatos:
                             ids_req_candidatos.append(ref_id)
 
+                        # REQ sem referência explícita ao PL na ementa:
+                        # verifica via API /relacionadas se este REQ aponta para o PL buscado
+                        if eh_req and not match and ref_id and ref_id not in ids_req_candidatos:
+                            _ids_verificados_api.add(ref_id)
+
                 # Busca notas para cada REQ candidato
                 for req_id in ids_req_candidatos[:5]:
                     req_key = f"PROP_{req_id}"
@@ -4885,6 +4895,24 @@ def notas_por_proposicao(id_proposicao):
                             'saved_by': row_req[2], 'saved_at': row_req[3],
                             'tipo': 'nota_req_pauta'
                         })
+                # Para REQs sem referência explícita na ementa,
+                # consulta a API da Câmara /proposicoes/{id_req}/relacionadas
+                for req_id_check in list(_ids_verificados_api)[:10]:
+                    if req_id_check in ids_req_candidatos:
+                        continue
+                    try:
+                        r_rel = requests.get(
+                            f'https://dadosabertos.camara.leg.br/api/v2/proposicoes/{req_id_check}/relacionadas',
+                            headers={'Accept': 'application/json'}, timeout=5
+                        )
+                        if r_rel.ok:
+                            for rel in (r_rel.json().get('dados') or []):
+                                if str(rel.get('id')) == str(id_proposicao):
+                                    ids_req_candidatos.append(req_id_check)
+                                    break
+                    except Exception:
+                        pass
+
                 if ids_req_candidatos:
                     logger.info(f'notas_por_proposicao: REQ candidatos para {id_proposicao}: {ids_req_candidatos}')
             except Exception as _e:
