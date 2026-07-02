@@ -3842,32 +3842,17 @@ async function buscarProposicaoBP(){
   _bpDados = null;
 
   try{
-    const r = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo=${encodeURIComponent(sigla)}&numero=${numero}&ano=${ano}&itens=1`,{headers:{'Accept':'application/json'}});
+    // Usa backend para evitar CORS e ter fallbacks de busca
+    const r = await fetch(`/buscar_proposicao?sigla=${encodeURIComponent(sigla)}&numero=${encodeURIComponent(numero)}&ano=${encodeURIComponent(ano)}`);
     if(!r.ok) throw new Error('HTTP ' + r.status);
-    const dados = (await r.json()).dados||[];
-    if(!dados.length) throw new Error(`${sigla} ${numero}/${ano} não encontrado.`);
-    const prop = dados[0];
-
-    let autor = 'N/D';
-    try{
-      const rA = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${prop.id}/autores`,{headers:{'Accept':'application/json'}});
-      if(rA.ok){ const as=(await rA.json()).dados||[]; autor=as.slice(0,2).map(a=>a.nome).join(', ')+(as.length>2?' e outros':''); }
-    }catch(e){}
-
-    let relator = 'Não atribuído';
-    try{
-      const rT = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${prop.id}/tramitacoes?itens=10&ordem=DESC`,{headers:{'Accept':'application/json'}});
-      if(rT.ok){
-        const trams=(await rT.json()).dados||[];
-        for(const t of trams){ if((t.despacho||'').toLowerCase().includes('relator')){ const m=t.despacho.match(/Dep\.\s+\S+(?:\s+\S+)?/); if(m) relator=m[0]; break; } }
-      }
-    }catch(e){}
+    const prop = await r.json();
+    if(!prop.found) throw new Error(prop.error || `${sigla} ${numero}/${ano} não encontrado.`);
 
     _bpDados = {
-      id: String(prop.id), projeto: `${prop.siglaTipo} ${prop.numero}/${prop.ano}`,
-      numero: String(prop.numero), ano: String(prop.ano), sigla: prop.siglaTipo,
-      ementa: prop.ementa||'', autor, relator,
-      situacao: prop.statusProposicao?.descricaoSituacao||'N/D',
+      id: prop.id, projeto: prop.projeto,
+      numero: prop.numero, ano: prop.ano, sigla: prop.sigla,
+      ementa: prop.ementa||'', autor: prop.autor, relator: prop.relator,
+      situacao: prop.situacao||'N/D',
     };
 
     document.getElementById('bp-titulo').textContent = _bpDados.projeto;
