@@ -586,6 +586,58 @@ def fetch_eventos_por_data(data):
         logger.error(f"Erro ao buscar eventos: {e}")
         return []
 
+def _extrair_sigla_num_ano(texto):
+    """Extrai (sigla_curta, numero, ano) de QUALQUER formato de menção a projeto
+    legislativo. Cobre siglas por extenso e abreviadas, com ou sem nº, com
+    barra, vírgula, espaço ou 'de' como separador."""
+    PADROES = [
+        # Complementar (extenso)
+        (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PLP'),
+        (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*(\d[\d.]*)\s+(?:de\s+)?(\d{4})', 'PLP'),
+        (r'Projeto\s+de\s+Lei\s+Complementar\s+(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PLP'),
+        (r'Projeto\s+de\s+Lei\s+Complementar\s+(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'PLP'),
+        # PEC (extenso)
+        (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PEC'),
+        (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*(\d[\d.]*)\s+(?:de\s+)?(\d{4})', 'PEC'),
+        (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PEC'),
+        (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'PEC'),
+        # MPV (extenso)
+        (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'MPV'),
+        (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'MPV'),
+        (r'Medida\s+Provis[oó]ria\s+(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'MPV'),
+        (r'Medida\s+Provis[oó]ria\s+(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'MPV'),
+        # PDL (extenso)
+        (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PDL'),
+        (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'PDL'),
+        (r'Projeto\s+de\s+Decreto\s+Legislativo\s+(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PDL'),
+        (r'Projeto\s+de\s+Decreto\s+Legislativo\s+(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'PDL'),
+        # PL (extenso) — com nº
+        (r'Projeto\s+de\s+Lei\s+n[º°.]\s*(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PL'),
+        (r'Projeto\s+de\s+Lei\s+n[º°.]\s*(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'PL'),
+        # PL (extenso) — sem nº
+        (r'Projeto\s+de\s+Lei\s+(\d[\d.]*)\s*/\s*(\d{4})\b', 'PL'),
+        (r'Projeto\s+de\s+Lei\s+(\d[\d.]*)\s*,\s*(?:de\s+)?(\d{4})\b', 'PL'),
+        (r'Projeto\s+de\s+Lei\s+(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'PL'),
+        # Siglas curtas — com nº
+        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PLS|PL)\s+n[º°.]\s*(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})\b', None),
+        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PLS|PL)\s+n[º°.]\s*(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', None),
+        # Siglas curtas — sem nº (barra, vírgula, espaço)
+        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PLS|PL)\s+(\d[\d.]*)/( \d{4})\b', None),
+        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PLS|PL)\s+(\d[\d.]*)\s*,\s*(?:de\s+)?(\d{4})\b', None),
+        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PLS|PL)\s+(\d[\d.]*)/(\d{4})\b', None),
+        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PLS|PL)\s+(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', None),
+    ]
+    for item in PADROES:
+        padrao, sigla_fixa = item
+        m = re.search(padrao, texto, re.IGNORECASE)
+        if not m:
+            continue
+        if sigla_fixa:
+            return sigla_fixa, m.group(1).replace('.', ''), m.group(2)
+        else:
+            return m.group(1).upper(), m.group(2).replace('.', ''), m.group(3)
+    return '', '', ''
+
 def extrair_ref_pl(projeto, ementa):
     """
     Se for REQ/RQS/RQU/REC, extrai a referência ao PL/PEC/PLP/MPV da ementa.
@@ -602,35 +654,9 @@ def extrair_ref_pl(projeto, ementa):
     ementa_str = str(ementa or '')
 
     # Padrões do mais específico para o mais genérico
-    padroes = [
-        # Sigla curta com número: "PLP nº 221/2024", "PL nº 1811/2026"
-        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})\b', 3, None),
-        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s+(\d+),?\s*de\s+(\d{4})\b', 3, None),
-        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s*(\d{3,5})[/\-](\d{4})\b', 3, None),
-        # Texto por extenso — ordem importa: Complementar antes de Lei simples
-        (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PLP'),
-        (r'Projeto\s+de\s+Lei\s+Complementar\s+(\d+)[,\s]+de\s+(\d{4})', 2, 'PLP'),
-        (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PEC'),
-        (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'MPV'),
-        (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PDL'),
-        (r'Projeto\s+de\s+Lei\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PL'),
-        # Sem nº: "Projeto de Lei 717, de 2024" ou "Projeto de Lei 717/2024"
-        (r'Projeto\s+de\s+Lei\s+(\d{3,5}),\s*de\s+(\d{4})', 2, 'PL'),
-        (r'Projeto\s+de\s+Lei\s+(\d{3,5})/(\d{4})', 2, 'PL'),
-        # Sem nº e sem vírgula: "Projeto de Lei 2898 de 2025"
-        (r'Projeto\s+de\s+Lei\s+(\d{3,5})\s+de\s+(\d{4})', 2, 'PL'),
-    ]
-
-    for item in padroes:
-        padrao, n_grupos, sigla_fixa = item
-        m = re.search(padrao, ementa_str, re.IGNORECASE)
-        if m:
-            if n_grupos == 3:
-                sigla, num, ano = m.group(1).upper(), m.group(2), m.group(3)
-            else:
-                sigla, num, ano = sigla_fixa, m.group(1), m.group(2)
-            return f"{projeto_base} ao {sigla} {num}/{ano}"
-
+    sigla, num, ano = _extrair_sigla_num_ano(ementa_str)
+    if sigla and num and ano:
+        return f"{projeto_base} ao {sigla} {num}/{ano}"
     return projeto_base
 
 def buscar_ordem_oficial(evento_id, data_evento=''):
@@ -4234,34 +4260,8 @@ def resumo_ementa_impl(data):
             # ("Projeto de Lei Complementar nº 221, de 2024")
             sigla_ref = num_ref = ano_ref = ''
 
-            def _extrair_pl_ref(texto):
-                """Extrai (sigla, numero, ano) do PL referenciado no texto."""
-                padroes = [
-                    # Sigla curta: PLP 221/2024 ou PL nº 221, de 2024
-                    (r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 3),
-                    (r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+([\d.]+)[/\-](\d{4})', 3),
-                    # Texto por extenso com sigla inferida
-                    (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PLP'),
-                    (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PEC'),
-                    (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'MPV'),
-                    (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PDL'),
-                    (r'Projeto\s+de\s+Lei\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PL'),
-                    # Sem nº e sem vírgula: "Projeto de Lei 2898 de 2025"
-                    (r'Projeto\s+de\s+Lei\s+([\d.]+)\s+de\s+(\d{4})', 2, 'PL'),
-                ]
-                for item in padroes:
-                    padrao, n_grupos = item[0], item[1]
-                    sigla_fixa = item[2] if len(item) > 2 else None
-                    m = re.search(padrao, texto, re.IGNORECASE)
-                    if m:
-                        if n_grupos == 3:
-                            return m.group(1).upper(), m.group(2).replace('.',''), m.group(3)
-                        else:
-                            return sigla_fixa, m.group(1).replace('.',''), m.group(2)
-                return '', '', ''
-
             for txt in [ementa_completa, projeto]:
-                sigla_ref, num_ref, ano_ref = _extrair_pl_ref(txt)
+                sigla_ref, num_ref, ano_ref = _extrair_sigla_num_ano(txt)
                 if sigla_ref and num_ref and ano_ref:
                     logger.info(f"REQ {id_principal}: PL extraído de '{txt[:60]}' → {sigla_ref} {num_ref}/{ano_ref}")
                     break
