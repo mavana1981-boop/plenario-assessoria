@@ -617,6 +617,8 @@ def extrair_ref_pl(projeto, ementa):
         # Sem nº: "Projeto de Lei 717, de 2024" ou "Projeto de Lei 717/2024"
         (r'Projeto\s+de\s+Lei\s+(\d{3,5}),\s*de\s+(\d{4})', 2, 'PL'),
         (r'Projeto\s+de\s+Lei\s+(\d{3,5})/(\d{4})', 2, 'PL'),
+        # Sem nº e sem vírgula: "Projeto de Lei 2898 de 2025"
+        (r'Projeto\s+de\s+Lei\s+(\d{3,5})\s+de\s+(\d{4})', 2, 'PL'),
     ]
 
     for item in padroes:
@@ -4244,6 +4246,8 @@ def resumo_ementa_impl(data):
                     (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'MPV'),
                     (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PDL'),
                     (r'Projeto\s+de\s+Lei\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PL'),
+                    # Sem nº e sem vírgula: "Projeto de Lei 2898 de 2025"
+                    (r'Projeto\s+de\s+Lei\s+([\d.]+)\s+de\s+(\d{4})', 2, 'PL'),
                 ]
                 for item in padroes:
                     padrao, n_grupos = item[0], item[1]
