@@ -5066,6 +5066,48 @@ def buscar_proposicao():
         'situacao': status.get('descricaoSituacao', 'N/D'),
     })
 
+
+
+@app.route('/diagnostico_prop/<numero>/<ano>', methods=['GET'])
+@login_required
+def diagnostico_prop(numero, ano):
+    """Diagnóstico: encontra o id_principal de uma proposição no pauta_cache_db
+    buscando pelo número e ano. Útil quando o id da API difere do id salvo."""
+    import json as _json
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute("SELECT json_pauta, last_updated FROM pauta_cache_db ORDER BY last_updated DESC LIMIT 30")
+        achados = []
+        for (jp, lu) in c.fetchall():
+            if not jp: continue
+            try:
+                itens = _json.loads(jp) if isinstance(jp, str) else jp
+            except Exception:
+                continue
+            if not isinstance(itens, list): continue
+            for it in itens:
+                proj = str(it.get('projeto', '') or it.get('projeto_original', ''))
+                if numero in proj and ano in proj:
+                    id_p = str(it.get('id_principal', ''))
+                    # Verifica se tem nota salva
+                    c.execute("SELECT saved_at, saved_by FROM notas WHERE item_key=? AND resumo_materia IS NOT NULL AND TRIM(resumo_materia)!=''",
+                              (f'PROP_{id_p}',))
+                    nota = c.fetchone()
+                    achados.append({
+                        'id_principal': id_p,
+                        'projeto': proj,
+                        'pauta_date': lu,
+                        'tem_nota': bool(nota),
+                        'nota_salva_em': nota[0] if nota else None,
+                        'nota_salva_por': nota[1] if nota else None,
+                    })
+        return jsonify({'numero': numero, 'ano': ano, 'achados': achados})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
 @app.errorhandler(500)
 def handle_500(e):
     logger.error(f"500 error: {e}")
