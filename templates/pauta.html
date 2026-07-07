@@ -2851,7 +2851,7 @@ async function exportarOrientacoesPDF() {
             <span style="font-size:0.82rem;color:#7A5C00;"><strong>Modo edição:</strong> clique em qualquer campo para editar antes de baixar.</span>
           </div>
           <div id="pb-preview-outer" style="border:1px solid #ddd;border-radius:4px;overflow:auto;background:#C5D0DC;max-height:65vh;">
-            <div id="pb-preview-inner" style="transform-origin:top left;width:600px;"></div>
+            <div id="pb-preview-inner" style="transform-origin:top left;width:794px;"></div>
           </div>
         </div>
       </div>
@@ -2947,8 +2947,8 @@ async function gerarPautaBanner(){
     const inner=document.getElementById('pb-preview-inner');
     inner.innerHTML=html;
     const outerW=document.getElementById('pb-preview-outer').offsetWidth||700;
-    const scale=Math.min(1,(outerW-8)/600);
-    inner.style.transform=`scale(${scale})`;inner.style.width='600px';inner.style.transformOrigin='top left';
+    const scale=Math.min(1,(outerW-8)/794);
+    inner.style.transform=`scale(${scale})`;inner.style.width='794px';inner.style.transformOrigin='top left';
     setTimeout(()=>{const h=inner.scrollHeight*scale;document.getElementById('pb-preview-outer').style.height=Math.min(h+20,window.innerHeight*0.6)+'px';},100);
     _ativarEdicaoPautaBanner(inner);
     document.getElementById('pb-resultado').style.display='block';
@@ -3136,7 +3136,7 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
   </div>`;
 
   return`<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
-<div class="pb-banner" style="width:600px;background:${C.f};font-family:'Source Sans 3',Arial,sans-serif;border-radius:8px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.2);">
+<div class="pb-banner" style="width:794px;background:${C.f};font-family:'Source Sans 3',Arial,sans-serif;border-radius:8px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.2);">
   <div style="${cabBgColor}padding:22px 18px 0;position:relative;overflow:hidden;">
     <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${C.a};z-index:3;"></div>
     ${cabFotoEl}
@@ -3173,9 +3173,10 @@ async function baixarPautaBannerPNG(btn){
     void el.offsetHeight;
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     await new Promise(r=>setTimeout(r,150));
-    const canvas=await html2canvas(el,{scale:2,useCORS:true,allowTaint:true,backgroundColor:'#ffffff',logging:false,width:el.scrollWidth,height:el.scrollHeight,windowWidth:el.scrollWidth,windowHeight:el.scrollHeight});
+    const canvas=await html2canvas(el,{scale:3,useCORS:true,allowTaint:true,backgroundColor:'#ffffff',logging:false,width:el.scrollWidth,height:el.scrollHeight,windowWidth:el.scrollWidth,windowHeight:el.scrollHeight});
     inner.style.transform=sc;
-    const a=document.createElement('a');a.download='pauta_banner.png';a.href=canvas.toDataURL('image/png',1.0);document.body.appendChild(a);a.click();document.body.removeChild(a);
+    // PNG A4 pronto para impressao: 794px * 3 = 2382px de largura (suficiente para impressao sem corte)
+    const a=document.createElement('a');a.download='pauta_banner_A4.png';a.href=canvas.toDataURL('image/png',1.0);document.body.appendChild(a);a.click();document.body.removeChild(a);
   }catch(e){alert('Erro: '+e.message);}finally{btn.disabled=false;btn.innerHTML=orig;}
 }
 
