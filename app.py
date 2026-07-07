@@ -2298,7 +2298,7 @@ def analisar_ia():
         _gkey = os.environ.get('GEMINI_API_KEY', '')
         if _gkey:
             try:
-                texto = gemini_post(_gkey, prompt, max_tokens=1500, temperatura=0.3, tentativas=2)
+                texto = gemini_post(_gkey, prompt, max_tokens=3000, temperatura=0.3, tentativas=2)
                 if texto and texto.strip():
                     fonte = 'gemini'
             except Exception as _e:
@@ -2310,7 +2310,7 @@ def analisar_ia():
             _grok = os.environ.get('GROQ_API_KEY', '')
             if _grok:
                 try:
-                    texto = groq_post(prompt, max_tokens=1500, temperatura=0.3)
+                    texto = groq_post(prompt, max_tokens=3000, temperatura=0.3)
                     if texto and texto.strip():
                         fonte = 'groq'
                 except Exception as _e:
@@ -2320,7 +2320,7 @@ def analisar_ia():
         # 3. Cloudflare
         if not texto:
             try:
-                texto, fonte = ia_chain(prompt, max_tokens=1500, contexto="analisar_ia")
+                texto, fonte = ia_chain(prompt, max_tokens=3000, contexto="analisar_ia")
             except Exception as _e:
                 _erros_ia.append(f'Cloudflare: {_e}')
 
