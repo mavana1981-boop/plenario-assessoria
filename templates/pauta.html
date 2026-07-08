@@ -3103,17 +3103,17 @@ async function gerarPautaBannerLetraGrande(){
     }
 
     // ── Distribuição dinâmica de itens por página ────────────────────────
-    // Altura A4 em px (794x1123). Reserva ~180px para cabeçalho+rodapé.
+    // Altura A4 em px (794x1123). Reserva para cabeçalho+rodapé+margens.
     const A4_H = 1123;
     const A4_W = 794;
-    const RESERVA = 185; // cabeçalho + rodapé
-    const AREA_UTIL = A4_H - RESERVA; // ~938px disponíveis para conteúdo
+    const RESERVA = 240; // cabeçalho (~160px) + rodapé (~45px) + margens de segurança (~35px)
+    const AREA_UTIL = A4_H - RESERVA; // ~883px disponíveis para conteúdo
 
-    // Altura estimada de cada item (18px fonte, com ementa ~3 linhas)
-    const H_ITEM_URG  = 85;   // urgência (compacta)
-    const H_ITEM_PROJ = 110;  // projeto (com relator)
-    const H_CARD_HDR  = 52;   // header do card de seção
-    const H_PADDING   = 12;   // padding entre cards
+    // Altura estimada por item — valores conservadores para evitar corte
+    const H_ITEM_URG  = 100;  // urgência (com ementa)
+    const H_ITEM_PROJ = 130;  // projeto (com autor, relator e ementa)
+    const H_CARD_HDR  = 56;   // header do card de seção
+    const H_PADDING   = 16;   // padding entre cards
 
     function alturaSecao(n, hItem){
       return n > 0 ? H_CARD_HDR + n * hItem + H_PADDING : 0;
