@@ -3062,7 +3062,7 @@ async function gerarPautaBannerLetraGrande(){
         <div style="font-size:18px;color:#222;">
           <div style="font-weight:800;">${p}${oriBadge}</div>
           ${a?`<div style="font-size:16px;color:#555;margin-top:2px;">Autor: ${a}</div>`:''}
-          ${res?`<div style="font-size:16px;color:#444;margin-top:3px;line-height:1.45;">${res.substring(0,200)}</div>`:''}
+          ${res?`<div style="font-size:16px;color:#444;margin-top:3px;line-height:1.45;">${res.substring(0,130)}</div>`:''}
         </div>
       </div>`;
     }
@@ -3086,7 +3086,7 @@ async function gerarPautaBannerLetraGrande(){
           <div style="font-weight:800;color:${ehPri?'#7A5500':'#1A2A5C'};">${p}${oriBadge}</div>
           ${a?`<div style="font-size:16px;color:#555;margin-top:2px;">Autor: ${a}</div>`:''}
           ${rel?`<div style="font-size:16px;color:#777;">Rel.: ${rel}</div>`:''}
-          ${res?`<div style="font-size:16px;color:#333;margin-top:3px;line-height:1.45;">${res.substring(0,220)}</div>`:''}
+          ${res?`<div style="font-size:16px;color:#333;margin-top:3px;line-height:1.45;">${res.substring(0,130)}</div>`:''}
         </div>
       </div>`;
     }
@@ -3103,17 +3103,17 @@ async function gerarPautaBannerLetraGrande(){
     }
 
     // ── Distribuição dinâmica de itens por página ────────────────────────
-    // Altura A4 em px (794x1123). Reserva para cabeçalho+rodapé+margens.
+    // Altura A4 em px (794x1123).
     const A4_H = 1123;
     const A4_W = 794;
-    const RESERVA = 240; // cabeçalho (~160px) + rodapé (~45px) + margens de segurança (~35px)
-    const AREA_UTIL = A4_H - RESERVA; // ~883px disponíveis para conteúdo
+    const RESERVA = 280; // cabeçalho + rodapé + margens generosas
+    const AREA_UTIL = A4_H - RESERVA; // ~843px disponíveis
 
-    // Altura estimada por item — valores conservadores para evitar corte
-    const H_ITEM_URG  = 100;  // urgência (com ementa)
-    const H_ITEM_PROJ = 130;  // projeto (com autor, relator e ementa)
-    const H_CARD_HDR  = 56;   // header do card de seção
-    const H_PADDING   = 16;   // padding entre cards
+    // Alturas bem conservadoras — melhor sobrar espaço do que cortar
+    const H_ITEM_URG  = 120;  // urgência
+    const H_ITEM_PROJ = 150;  // projeto
+    const H_CARD_HDR  = 60;   // header de seção
+    const H_PADDING   = 20;   // padding entre cards
 
     function alturaSecao(n, hItem){
       return n > 0 ? H_CARD_HDR + n * hItem + H_PADDING : 0;
