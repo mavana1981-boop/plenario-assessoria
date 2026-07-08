@@ -3058,11 +3058,11 @@ async function gerarPautaBannerLetraGrande(){
       const oriCores={'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#5B6470','OBSTRUÇÃO':'#7A1A1A','NEGOCIAÇÃO':'#1E5C8A'};
       const oriBadge=ori?`<span style="background:${oriCores[ori]||'#6c757d'};color:#fff;font-size:10px;font-weight:800;padding:2px 8px;border-radius:3px;margin-left:8px;">${ori}</span>`:'';
       return `<div style="padding:10px 16px;border-bottom:1px solid #f0f0f0;display:flex;gap:10px;align-items:flex-start;">
-        <div style="min-width:28px;height:28px;background:#7A1A1A;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex-shrink:0;">${n}</div>
-        <div style="font-size:16px;color:#222;">
+        <div style="min-width:28px;height:28px;background:#7A1A1A;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;flex-shrink:0;">${n}</div>
+        <div style="font-size:18px;color:#222;">
           <div style="font-weight:800;">${p}${oriBadge}</div>
-          ${a?`<div style="font-size:14px;color:#555;margin-top:2px;">Autor: ${a}</div>`:''}
-          ${res?`<div style="font-size:14px;color:#444;margin-top:3px;line-height:1.45;">${res.substring(0,200)}</div>`:''}
+          ${a?`<div style="font-size:16px;color:#555;margin-top:2px;">Autor: ${a}</div>`:''}
+          ${res?`<div style="font-size:16px;color:#444;margin-top:3px;line-height:1.45;">${res.substring(0,200)}</div>`:''}
         </div>
       </div>`;
     }
@@ -3078,15 +3078,15 @@ async function gerarPautaBannerLetraGrande(){
       const oriBadge=ori?`<span style="background:${oriCores[ori]||'#6c757d'};color:#fff;font-size:10px;font-weight:800;padding:2px 8px;border-radius:3px;margin-left:8px;">${ori}</span>`:'';
       const rowBg=ehPri?'background:#FFFBEA;border-left:4px solid #E9B847;':'';
       const badgeN=ehPri
-        ?`<div style="min-width:28px;height:28px;background:#7A5500;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;">⭐</div>`
-        :`<div style="min-width:28px;height:28px;background:#1A2A5C;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex-shrink:0;">${n}</div>`;
+        ?`<div style="min-width:28px;height:28px;background:#7A5500;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;">⭐</div>`
+        :`<div style="min-width:28px;height:28px;background:#1A2A5C;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;flex-shrink:0;">${n}</div>`;
       return `<div style="padding:10px 16px;border-bottom:1px solid #f0f0f0;${rowBg}display:flex;gap:10px;align-items:flex-start;">
         ${badgeN}
-        <div style="font-size:16px;color:#1a1a1a;">
+        <div style="font-size:18px;color:#1a1a1a;">
           <div style="font-weight:800;color:${ehPri?'#7A5500':'#1A2A5C'};">${p}${oriBadge}</div>
-          ${a?`<div style="font-size:14px;color:#555;margin-top:2px;">Autor: ${a}</div>`:''}
-          ${rel?`<div style="font-size:14px;color:#777;">Rel.: ${rel}</div>`:''}
-          ${res?`<div style="font-size:14px;color:#333;margin-top:3px;line-height:1.45;">${res.substring(0,220)}</div>`:''}
+          ${a?`<div style="font-size:16px;color:#555;margin-top:2px;">Autor: ${a}</div>`:''}
+          ${rel?`<div style="font-size:16px;color:#777;">Rel.: ${rel}</div>`:''}
+          ${res?`<div style="font-size:16px;color:#333;margin-top:3px;line-height:1.45;">${res.substring(0,220)}</div>`:''}
         </div>
       </div>`;
     }
@@ -3095,8 +3095,8 @@ async function gerarPautaBannerLetraGrande(){
       if(!itens||!itens.length) return '';
       return `<div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid ${bordaCor};margin-bottom:12px;">
         <div style="background:${cor};padding:10px 16px;display:flex;align-items:center;gap:10px;">
-          <div style="width:32px;height:32px;background:rgba(255,255,255,.2);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;">${ico}</div>
-          <span style="font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;">${titulo}</span>
+          <div style="width:32px;height:32px;background:rgba(255,255,255,.2);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;">${ico}</div>
+          <span style="font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;">${titulo}</span>
         </div>
         ${itens.map(it=>tipoFn(it)).join('')}
       </div>`;
