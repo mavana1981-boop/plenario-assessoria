@@ -3199,19 +3199,21 @@ async function gerarPautaBannerLetraGrande(){
         });
       });
       return (
-        `<div style="width:${A4_W}px;height:${A4_H}px;background:#F4F6F8;` +
-        `font-family:'Source Sans 3',Arial,sans-serif;display:flex;flex-direction:column;` +
-        `overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.15);margin-bottom:4px;">` +
+        `<div style="width:794px;background:#F4F6F8;` +
+        `font-family:'Source Sans 3',Arial,sans-serif;display:flex;flex-direction:column;">` +
         cabecalho(dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64,num,totalPaginas,orisPagina) +
-        `<div style="height:${AREA_CONTEUDO}px;padding:8px 10px;overflow:hidden;box-sizing:border-box;">${corpo}</div>` +
+        `<div style="padding:10px 12px 12px;flex:1;">${corpo}</div>` +
         rodape(logoOpoB64,logoMinB64,dataFmt) +
         `</div>`
       );
     });
 
-    // Captura cada página com html2canvas e abre popup com imagens para impressão fiel
+    // Captura cada página com html2canvas
+    // Sem altura fixa — captura o conteúdo real e redimensiona para A4 no canvas final
+    const A4_W_PX = 794;
+    const A4_H_PX = 1123;
     const container = document.createElement('div');
-    container.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1;background:#F4F6F8;';
+    container.style.cssText = `position:fixed;left:-9999px;top:0;width:${A4_W_PX}px;z-index:-1;background:#F4F6F8;`;
     document.body.appendChild(container);
     await new Promise(r => setTimeout(r, 600));
 
@@ -3220,21 +3222,48 @@ async function gerarPautaBannerLetraGrande(){
       btn.innerHTML = `<i class="fas fa-spinner fa-spin me-1"></i>Renderizando ${i+1}/${paginasHTML.length}...`;
       container.innerHTML = paginasHTML[i];
       const el = container.querySelector('div');
+      // Remove altura fixa para capturar conteúdo completo
+      el.style.height = 'auto';
+      el.style.overflow = 'visible';
       void el.offsetHeight;
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-      await new Promise(r => setTimeout(r, 250));
-      const canvas = await html2canvas(el, {
-        scale: 3,
+      await new Promise(r => setTimeout(r, 300));
+
+      const realH = el.scrollHeight;
+      const realW = el.scrollWidth || A4_W_PX;
+
+      // Captura com altura real
+      const canvasReal = await html2canvas(el, {
+        scale: 2,
         useCORS: true,
         allowTaint: true,
         backgroundColor: '#F4F6F8',
         logging: false,
-        width: 794,
-        height: 1123,
-        windowWidth: 794,
-        windowHeight: 1123,
+        width: realW,
+        height: realH,
+        windowWidth: realW,
+        windowHeight: realH,
       });
-      dataURLs.push(canvas.toDataURL('image/png', 1.0));
+
+      // Redimensiona para A4 exato preservando proporção
+      const finalCanvas = document.createElement('canvas');
+      finalCanvas.width  = A4_W_PX * 3;  // scale 3 = alta res
+      finalCanvas.height = A4_H_PX * 3;
+      const ctx = finalCanvas.getContext('2d');
+      ctx.fillStyle = '#F4F6F8';
+      ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+
+      // Calcula escala para caber em A4 mantendo proporção
+      const scaleX = (A4_W_PX * 3) / canvasReal.width;
+      const scaleY = (A4_H_PX * 3) / canvasReal.height;
+      const scale  = Math.min(scaleX, scaleY);  // usa menor escala para não cortar
+      const drawW  = canvasReal.width  * scale;
+      const drawH  = canvasReal.height * scale;
+      const offX   = (finalCanvas.width  - drawW) / 2;
+      const offY   = 0;  // alinha no topo
+
+      ctx.drawImage(canvasReal, offX, offY, drawW, drawH);
+      dataURLs.push(finalCanvas.toDataURL('image/png', 1.0));
     }
     document.body.removeChild(container);
 
