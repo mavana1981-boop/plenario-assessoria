@@ -5457,14 +5457,14 @@ def gerar_banner_proposicao():
         '.resumo{padding:16px 20px;background:#fff;font-size:13px;color:#222;line-height:1.7;border-bottom:1px solid #E0E0E0;}'
 
         # Grade 2 colunas
-        '.grade{display:grid;grid-template-columns:1fr 1fr;gap:0;border-top:1px solid #E0E0E0;}'
+        '.grade{display:grid;grid-template-columns:1fr 1fr;gap:0;border-top:1px solid #E0E0E0;align-items:start;}'
 
         # Card generico
-        '.card{margin:14px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);}'
+        '.card{margin:14px;background:#fff;border-radius:10px;overflow:visible;box-shadow:0 2px 8px rgba(0,0,0,.08);}'
         '.card-header{display:flex;align-items:center;gap:10px;padding:10px 14px;}'
         '.card-header-ico{width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px;}'
         '.card-header-txt{font-family:"Barlow Condensed",sans-serif;font-size:14px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#fff;}'
-        '.card-body{padding:12px 14px;}'
+        '.card-body{padding:12px 14px;overflow:visible;}'
 
         # O que preve
         '.card-verde .card-header{background:' + ORI_COR + ';}'
