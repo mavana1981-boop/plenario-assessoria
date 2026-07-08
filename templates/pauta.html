@@ -2987,142 +2987,196 @@ async function gerarPautaBannerLetraGrande(){
     let dataFmt = '';
     if(dataEvt){
       const meses=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
-      const partes = dataEvt.split('/');
-      if(partes.length===3){const dia=parseInt(partes[0]),mes=parseInt(partes[1]),ano=partes[2];if(!isNaN(dia)&&!isNaN(mes))dataFmt=`${dia} de ${meses[mes-1]} de ${ano}`;}
+      const p=dataEvt.split('/');
+      if(p.length===3){const d=parseInt(p[0]),m=parseInt(p[1]),a=p[2];if(!isNaN(d)&&!isNaN(m))dataFmt=`${d} de ${meses[m-1]} de ${a}`;}
     }
 
     function _e(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
-    // Separa itens por tipo
     const urgencias = itens.filter(it=>/^REQ\s|^RQS\s|^RQU\s|^REC\s/i.test(it.projeto_original||it.projeto||''));
     const materias  = itens.filter(it=>/Reda[cç][aã]o Final/i.test(it.projeto)&&!urgencias.includes(it));
     const checksSel = Array.from(document.querySelectorAll('#pb-lista-prioridade input[type=checkbox]:checked')).map(cb=>String(cb.value));
     const priIds    = new Set(checksSel);
-    const projetos  = itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it));
-    const todosProj = projetos.sort((a,b)=>(a.ordem||0)-(b.ordem||0));
+    const todosProj = itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)).sort((a,b)=>(a.ordem||0)-(b.ordem||0));
 
     const oriCores = {'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#2A5C8A','OBSTRUÇÃO':'#7A1A1A','NEGOCIAÇÃO':'#8A6A00','ABSTENÇÃO':'#555'};
-
-    function itemHTML(it, tipo){
-      const ori = (it.orientacao||'').toUpperCase();
-      const oriBadge = ori ? `<span style="background:${oriCores[ori]||'#555'};color:#fff;font-size:11px;font-weight:900;padding:3px 10px;border-radius:4px;margin-left:8px;">${ori}</span>` : '';
-      const proj  = _e(it.projeto||'');
-      const autor = _e((it.autor||'').split(',').slice(0,2).join(', ').substring(0,70));
-      const rel   = tipo!=='urg' ? _e((it.relator||'').replace('Não atribuído','').substring(0,50)) : '';
-      const res   = _e((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
-      const n     = String(it.ordem);
-      const ehPri = priIds.has(String(it.id_principal));
-      const bgRow = tipo==='urg' ? '' : (ehPri ? 'background:#FFFBEA;border-left:4px solid #E9B847;' : '');
-      const bgNum = tipo==='urg' ? '#8B3A3A' : (ehPri ? '#7A5500' : '#2A4A8A');
-      return `<tr style="border-bottom:1px solid #e8e8e8;${bgRow}">
-        <td style="padding:10px 8px;vertical-align:top;width:34px;">
-          <div style="width:30px;height:30px;background:${bgNum};color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;">${ehPri&&tipo!=='urg'?'⭐':n}</div>
-        </td>
-        <td style="padding:10px 10px 10px 4px;vertical-align:top;">
-          <div style="font-size:18px;font-weight:800;color:${tipo==='urg'?'#5A1A1A':(ehPri?'#7A5500':'#1A2A5C')};">${proj}${oriBadge}</div>
-          ${autor?`<div style="font-size:16px;color:#444;margin-top:3px;">Autor: ${autor}</div>`:''}
-          ${rel?`<div style="font-size:16px;color:#666;">Rel.: ${rel}</div>`:''}
-          ${res?`<div style="font-size:16px;color:#333;margin-top:3px;line-height:1.4;">${res.substring(0,140)}</div>`:''}
-        </td>
-      </tr>`;
-    }
-
-    function secaoHTML(ico, titulo, cor, itens, tipo){
-      if(!itens.length) return '';
-      return `<div style="margin-bottom:16px;border-radius:8px;overflow:hidden;border:1.5px solid #ddd;">
-        <div style="background:${cor};padding:10px 14px;display:flex;align-items:center;gap:10px;">
-          <span style="font-size:18px;">${ico}</span>
-          <span style="font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;">${titulo}</span>
-        </div>
-        <table style="width:100%;border-collapse:collapse;background:#fff;">
-          ${itens.map(it=>itemHTML(it,tipo)).join('')}
-        </table>
-      </div>`;
-    }
-
-    // Monta HTML contínuo (sem paginação)
-    const corpoHTML =
-      secaoHTML('⚡','Requerimentos de Urgência','#8B3A3A', urgencias,'urg') +
-      secaoHTML('📄','Matérias sobre a Mesa',    '#2E7D52', materias, 'mat') +
-      secaoHTML('🏛️','Projetos em Discussão',     '#2A4A8A', todosProj,'proj');
-
     const logoHtml = [logoOpoB64,logoMinB64].filter(Boolean).map(l=>`<img src="${l}" style="height:38px;object-fit:contain;">`).join('');
     const cabFoto  = imgB64 ? `<img src="data:${imgMime};base64,${imgB64}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;"><div style="position:absolute;inset:0;background:rgba(10,20,10,0.6);z-index:1;"></div>` : '';
 
-    const fullHTML = `
-      <div style="width:794px;font-family:'Source Sans 3',Arial,sans-serif;background:#F5F5F3;">
-        <!-- CABEÇALHO -->
-        <div style="background:#0d2a0d;padding:16px 20px;position:relative;overflow:hidden;min-height:100px;">
-          ${cabFoto}
-          <div style="position:relative;z-index:2;display:flex;justify-content:space-between;align-items:center;">
-            <div>
-              <div style="font-family:'Barlow Condensed',sans-serif;font-size:38px;font-weight:900;color:#fff;line-height:.9;letter-spacing:-1px;">PAUTA<br><span style="color:#E9B847">RESUMIDA</span></div>
-              <div style="font-size:12px;font-weight:700;color:rgba(255,255,255,.7);letter-spacing:2px;text-transform:uppercase;margin-top:4px;">Ordem do Dia — Câmara dos Deputados</div>
-              <div style="margin-top:6px;background:#1A6B3A;display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:4px;">
-                <span style="color:#fff;font-size:14px;font-weight:700;">${dataFmt||'—'}</span>
-              </div>
+    // ── HTML helpers ────────────────────────────────────────────────────
+    function mkCabecalho(){
+      return `<div style="background:#0d2a0d;padding:16px 20px;position:relative;overflow:hidden;">
+        ${cabFoto}
+        <div style="position:relative;z-index:2;display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-family:'Barlow Condensed',sans-serif;font-size:38px;font-weight:900;color:#fff;line-height:.9;letter-spacing:-1px;">PAUTA<br><span style="color:#E9B847">RESUMIDA</span></div>
+            <div style="font-size:12px;font-weight:700;color:rgba(255,255,255,.7);letter-spacing:2px;text-transform:uppercase;margin-top:4px;">Ordem do Dia — Câmara dos Deputados</div>
+            <div style="margin-top:6px;background:#1A6B3A;display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:4px;">
+              <span style="color:#fff;font-size:14px;font-weight:700;">${dataFmt||'—'}</span>
             </div>
-            <div style="background:#fff;border-radius:6px;padding:6px 10px;display:flex;gap:8px;align-items:center;">${logoHtml}</div>
           </div>
+          <div style="background:#fff;border-radius:6px;padding:6px 10px;display:flex;gap:8px;align-items:center;">${logoHtml}</div>
         </div>
-        <!-- LINHA SEPARADORA -->
-        <div style="height:6px;background:#E9B847;"></div>
-        <!-- CONTEÚDO -->
-        <div style="padding:14px 12px 14px;">
-          ${corpoHTML}
-        </div>
-        <!-- RODAPÉ -->
-        <div style="background:#1A2A3A;padding:8px 16px;display:flex;justify-content:space-between;align-items:center;">
-          <div style="display:flex;gap:8px;align-items:center;">${logoHtml}</div>
-          <div style="text-align:right;font-size:10px;color:rgba(255,255,255,.7);">
-            <div style="font-weight:800;letter-spacing:1px;text-transform:uppercase;">Pauta Resumida — Ordem do Dia</div>
-            <div>${dataFmt||''}</div>
-          </div>
+      </div><div style="height:6px;background:#E9B847;"></div>`;
+    }
+
+    function mkRodape(){
+      return `<div style="background:#1A2A3A;padding:8px 16px;display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;gap:8px;align-items:center;">${logoHtml}</div>
+        <div style="text-align:right;font-size:10px;color:rgba(255,255,255,.7);">
+          <div style="font-weight:800;letter-spacing:1px;text-transform:uppercase;">Pauta Resumida — Ordem do Dia</div>
+          <div>${dataFmt||''}</div>
         </div>
       </div>`;
+    }
 
-    // Renderiza no DOM
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Renderizando...';
+    function mkSecaoHdr(ico, titulo, cor, cont){
+      return `<div style="background:${cor};padding:10px 14px;display:flex;align-items:center;gap:10px;">
+        <span style="font-size:18px;">${ico}</span>
+        <span style="font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;">${titulo}${cont?' <span style="font-size:14px;font-weight:600;opacity:.8">(Continuação)</span>':''}</span>
+      </div>`;
+    }
+
+    function mkItem(it, tipo){
+      const ori = (it.orientacao||'').toUpperCase();
+      const oriBadge = ori?`<span style="background:${oriCores[ori]||'#555'};color:#fff;font-size:11px;font-weight:900;padding:3px 10px;border-radius:4px;margin-left:8px;">${ori}</span>`:'';
+      const proj  = _e(it.projeto||'');
+      const autor = _e((it.autor||'').split(',').slice(0,2).join(', ').substring(0,70));
+      const rel   = tipo!=='urg'?_e((it.relator||'').replace('Não atribuído','').substring(0,50)):'';
+      const res   = _e((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
+      const n     = String(it.ordem);
+      const ehPri = priIds.has(String(it.id_principal))&&tipo!=='urg';
+      const bgNum = tipo==='urg'?'#8B3A3A':(ehPri?'#7A5500':'#2A4A8A');
+      const bgRow = ehPri?'background:#FFFBEA;border-left:4px solid #E9B847;':'background:#fff;';
+      return `<div style="padding:10px 14px;border-bottom:1px solid #eee;${bgRow}display:flex;gap:10px;align-items:flex-start;">
+        <div style="min-width:30px;height:30px;background:${bgNum};color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;flex-shrink:0;">${ehPri?'⭐':n}</div>
+        <div>
+          <div style="font-size:18px;font-weight:800;color:${tipo==='urg'?'#5A1A1A':(ehPri?'#7A5500':'#1A2A5C')};">${proj}${oriBadge}</div>
+          ${autor?`<div style="font-size:16px;color:#444;margin-top:2px;">Autor: ${autor}</div>`:''}
+          ${rel?`<div style="font-size:16px;color:#666;">Rel.: ${rel}</div>`:''}
+          ${res?`<div style="font-size:16px;color:#333;margin-top:3px;line-height:1.4;">${res.substring(0,140)}</div>`:''}
+        </div>
+      </div>`;
+    }
+
+    // ── Mede alturas reais via DOM ───────────────────────────────────────
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Medindo layout...';
+    const med = document.createElement('div');
+    med.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;visibility:hidden;z-index:-1;';
+    document.body.appendChild(med);
+
+    async function medir(html){
+      med.innerHTML = html; void med.offsetHeight;
+      await new Promise(r=>requestAnimationFrame(r));
+      return med.firstElementChild ? med.firstElementChild.offsetHeight : 0;
+    }
+
+    const hCab = await medir(mkCabecalho());
+    const hRod = await medir(mkRodape());
+    const hHdr = await medir(mkSecaoHdr('⚡','TESTE','#8B3A3A',false));
+
+    // Mede cada item
+    const grupos = [
+      {ico:'⚡',titulo:'Requerimentos de Urgência',cor:'#8B3A3A',itens:urgencias,tipo:'urg'},
+      {ico:'📄',titulo:'Matérias sobre a Mesa',    cor:'#2E7D52', itens:materias, tipo:'mat'},
+      {ico:'🏛️',titulo:'Projetos em Discussão',    cor:'#2A4A8A',itens:todosProj,tipo:'proj'},
+    ].filter(g=>g.itens.length>0);
+
+    for(const g of grupos){
+      g.alturas = [];
+      for(const it of g.itens){
+        g.alturas.push(await medir(mkItem(it,g.tipo))+1);
+      }
+    }
+    document.body.removeChild(med);
+
+    // ── Distribui em páginas sem jamais cortar um item ───────────────────
+    const AREA = 1123 - hCab - hRod - 20; // área útil real com 10px margem cada lado
+    const paginas = []; // cada página = array de {tipo:'hdr'|'item', html, h}
+
+    let paginaAtual = [], altAtual = 0;
+
+    function novasPagina(){
+      if(paginaAtual.length>0) paginas.push(paginaAtual);
+      paginaAtual = []; altAtual = 0;
+    }
+
+    for(const g of grupos){
+      let cont = false;
+      for(let i=0; i<g.itens.length; i++){
+        const hItem = g.alturas[i];
+        const hdr   = mkSecaoHdr(g.ico, g.titulo, g.cor, cont);
+        // Se é primeiro item do grupo OU continuação: precisa do header
+        const precisaHdr = (i===0 || cont===false);
+        // Calcula se header+item cabem
+        const espacoNecessario = (i===0||cont)?hHdr+hItem:hItem;
+        if(altAtual + espacoNecessario > AREA){
+          novasPagina();
+          cont = true;
+        }
+        // Adiciona header se necessário
+        if(i===0 || (cont && paginaAtual.length===0)){
+          const hdrHtml = mkSecaoHdr(g.ico, g.titulo, g.cor, cont&&i>0);
+          paginaAtual.push({html:`<div style="border-radius:8px 8px 0 0;overflow:hidden;margin-bottom:0;">${hdrHtml}</div>`,h:hHdr});
+          altAtual += hHdr;
+        }
+        // Adiciona item
+        paginaAtual.push({html:mkItem(g.itens[i],g.tipo), h:hItem});
+        altAtual += hItem;
+      }
+      // Fecha o card da seção (borda inferior)
+      if(paginaAtual.length>0){
+        paginaAtual.push({html:'<div style="height:12px;background:#fff;border-bottom:1.5px solid #ddd;border-radius:0 0 8px 8px;margin-bottom:16px;"></div>',h:12+16});
+        altAtual += 12+16;
+      }
+    }
+    novasPagina();
+
+    // ── Renderiza cada página e captura ─────────────────────────────────
     const container = document.createElement('div');
     container.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1;';
     document.body.appendChild(container);
-    container.innerHTML = fullHTML;
-    const el = container.querySelector('div');
-    await new Promise(r=>setTimeout(r,600));
-    void el.offsetHeight;
-    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    await new Promise(r=>setTimeout(r,400));
 
-    // Captura o conteúdo completo em um canvas único
-    const canvasFull = await html2canvas(el,{
-      scale:3, useCORS:true, allowTaint:true,
-      backgroundColor:'#F5F5F3', logging:false,
-      width:794, height:el.scrollHeight,
-      windowWidth:794, windowHeight:el.scrollHeight,
-    });
+    const dataURLs = [];
+    for(let p=0; p<paginas.length; p++){
+      btn.innerHTML = `<i class="fas fa-spinner fa-spin me-1"></i>Capturando ${p+1}/${paginas.length}...`;
+      const corpo = paginas[p].map(x=>x.html).join('');
+      const pageHTML = `<div style="width:794px;background:#F5F5F3;font-family:'Source Sans 3',Arial,sans-serif;">
+        ${mkCabecalho()}
+        <div style="padding:10px 12px;">${corpo}</div>
+        ${mkRodape()}
+      </div>`;
+      container.innerHTML = pageHTML;
+      const el = container.querySelector('div');
+      void el.offsetHeight;
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      await new Promise(r=>setTimeout(r,200));
+
+      // Captura com altura exata da página
+      const canvasPage = await html2canvas(el,{
+        scale:3, useCORS:true, allowTaint:true,
+        backgroundColor:'#F5F5F3', logging:false,
+        width:794, height:el.scrollHeight,
+        windowWidth:794, windowHeight:el.scrollHeight,
+      });
+
+      // Cria canvas A4 exato e desenha a página nele (sem escalar — tamanho certo)
+      const A4c = document.createElement('canvas');
+      A4c.width = 794*3; A4c.height = 1123*3;
+      const ctx = A4c.getContext('2d');
+      ctx.fillStyle = '#F5F5F3';
+      ctx.fillRect(0,0,A4c.width,A4c.height);
+      ctx.drawImage(canvasPage,0,0);
+      dataURLs.push(A4c.toDataURL('image/png',1.0));
+    }
     document.body.removeChild(container);
 
-    // Fatia o canvas em páginas A4 (794×1123px × scale 3)
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Fatiando páginas...';
-    const A4W = 794*3, A4H = 1123*3;
-    const totalPags = Math.ceil(canvasFull.height / A4H);
-    const dataURLs = [];
-
-    for(let p=0; p<totalPags; p++){
-      const pageCanvas = document.createElement('canvas');
-      pageCanvas.width  = A4W;
-      pageCanvas.height = A4H;
-      const ctx = pageCanvas.getContext('2d');
-      ctx.fillStyle = '#F5F5F3';
-      ctx.fillRect(0,0,A4W,A4H);
-      ctx.drawImage(canvasFull, 0, p*A4H, A4W, A4H, 0, 0, A4W, A4H);
-      dataURLs.push(pageCanvas.toDataURL('image/png',1.0));
-    }
-
-    // Abre popup com imagens
+    // ── Abre popup ───────────────────────────────────────────────────────
     const popup = window.open('','_blank','width=880,height=900,scrollbars=yes,resizable=yes');
     if(!popup){alert('Permita pop-ups.');return;}
     const imgsHTML = dataURLs.map((src,i)=>
-      `<div class="pagina"><img src="${src}"><div class="num">Pág. ${i+1}/${totalPags}</div></div>`
+      `<div class="pagina"><img src="${src}"><div class="num">Pág. ${i+1}/${dataURLs.length}</div></div>`
     ).join('');
     const pd = popup.document;
     pd.open();
@@ -3137,7 +3191,7 @@ async function gerarPautaBannerLetraGrande(){
   .paginas{padding:16px;display:flex;flex-direction:column;align-items:center;gap:12px;}
   .pagina{position:relative;}
   .pagina img{width:794px;display:block;box-shadow:0 4px 20px rgba(0,0,0,.5);}
-  .num{position:absolute;bottom:6px;right:12px;font-size:11px;color:rgba(255,255,255,.6);font-weight:700;}
+  .num{position:absolute;bottom:6px;right:12px;font-size:11px;color:rgba(255,255,255,.5);}
   @media print{
     body{background:#fff;} .toolbar{display:none!important;}
     .paginas{padding:0;gap:0;}
@@ -3147,7 +3201,7 @@ async function gerarPautaBannerLetraGrande(){
   }
 </style></head><body>
 <div class="toolbar">
-  <strong>📋 Pauta Resumida — Letra Grande · ${totalPags} página${totalPags>1?'s':''}</strong>
+  <strong>📋 Pauta Resumida — Letra Grande · ${dataURLs.length} página${dataURLs.length>1?'s':''}</strong>
   <button class="btn-print" onclick="window.print()">🖨️ Imprimir / PDF</button>
   <button class="btn-close" onclick="window.close()">✕ Fechar</button>
 </div>
