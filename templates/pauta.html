@@ -3102,53 +3102,89 @@ async function gerarPautaBannerLetraGrande(){
       </div>`;
     }
 
-    // Monta grupos de páginas
-    // Grupo 1: Matérias + Urgências (max MAX_POR_PAG itens combinados)
-    // Grupo 2+: Projetos (paginados a cada MAX_POR_PAG)
-    const paginas = [];
+    // ── Distribuição dinâmica de itens por página ────────────────────────
+    // Altura A4 em px (794x1123). Reserva ~180px para cabeçalho+rodapé.
+    const A4_H = 1123;
+    const A4_W = 794;
+    const RESERVA = 185; // cabeçalho + rodapé
+    const AREA_UTIL = A4_H - RESERVA; // ~938px disponíveis para conteúdo
 
-    // Página(s) de matérias + urgências
-    const esqItens = [...materias, ...urgencias];
-    if(esqItens.length > 0){
-      for(let i=0; i<esqItens.length; i+=MAX_POR_PAG){
-        const lote = esqItens.slice(i, i+MAX_POR_PAG);
-        const loteMat = lote.filter(it=>materias.includes(it));
-        const loteUrg = lote.filter(it=>urgencias.includes(it));
-        paginas.push({tipo:'esq', materias:loteMat, urgencias:loteUrg});
-      }
+    // Altura estimada de cada item (18px fonte, com ementa ~3 linhas)
+    const H_ITEM_URG  = 85;   // urgência (compacta)
+    const H_ITEM_PROJ = 110;  // projeto (com relator)
+    const H_CARD_HDR  = 52;   // header do card de seção
+    const H_PADDING   = 12;   // padding entre cards
+
+    function alturaSecao(n, hItem){
+      return n > 0 ? H_CARD_HDR + n * hItem + H_PADDING : 0;
     }
 
-    // Página(s) de projetos
-    if(todosProj.length > 0){
-      for(let i=0; i<todosProj.length; i+=MAX_POR_PAG){
-        paginas.push({tipo:'proj', projetos:todosProj.slice(i, i+MAX_POR_PAG)});
+    // Distribui itens em páginas respeitando AREA_UTIL
+    function distribuirEmPaginas(grupos){
+      // grupos: [{tipo, itens, hItem, ico, titulo, cor, borda, fn}]
+      const paginas = [];
+      let paginaAtual = [];
+      let alturaAtual = 0;
+
+      for(const grupo of grupos){
+        if(!grupo.itens || !grupo.itens.length) continue;
+        // Verifica se o grupo inteiro cabe na página atual
+        const altGrupoTotal = alturaSecao(grupo.itens.length, grupo.hItem);
+        if(alturaAtual + altGrupoTotal <= AREA_UTIL && paginaAtual.length < 3){
+          paginaAtual.push({...grupo, itens: grupo.itens});
+          alturaAtual += altGrupoTotal;
+        } else {
+          // Divide o grupo: coloca o que cabe, o resto vai para próxima(s) página(s)
+          let restantes = [...grupo.itens];
+          let primeiroLote = true;
+          while(restantes.length > 0){
+            const espacoDisponivel = primeiroLote
+              ? AREA_UTIL - alturaAtual
+              : AREA_UTIL;
+            const maxItens = Math.max(1, Math.floor((espacoDisponivel - H_CARD_HDR - H_PADDING) / grupo.hItem));
+            const lote = restantes.splice(0, maxItens);
+            if(primeiroLote && paginaAtual.length > 0 && lote.length > 0){
+              paginaAtual.push({...grupo, itens: lote});
+              alturaAtual += alturaSecao(lote.length, grupo.hItem);
+              primeiroLote = false;
+            } else {
+              if(paginaAtual.length > 0) paginas.push(paginaAtual);
+              paginaAtual = lote.length > 0 ? [{...grupo, itens: lote}] : [];
+              alturaAtual = lote.length > 0 ? alturaSecao(lote.length, grupo.hItem) : 0;
+              primeiroLote = false;
+            }
+          }
+        }
       }
+      if(paginaAtual.length > 0) paginas.push(paginaAtual);
+      return paginas;
     }
 
-    // Se não há urgências nem matérias, todos os projetos ficam sem página separada
-    if(paginas.length === 0){
-      for(let i=0; i<todosProj.length; i+=MAX_POR_PAG){
-        paginas.push({tipo:'proj', projetos:todosProj.slice(i, i+MAX_POR_PAG)});
-      }
-    }
+    // Define grupos de seções
+    const gruposSecoes = [
+      {tipo:'mat',  itens:materias,  hItem:H_ITEM_PROJ, ico:'📄', titulo:'Matérias sobre a Mesa',       cor:'#1A3A2A', borda:'#c8d8c8', fn:itemProjLG},
+      {tipo:'urg',  itens:urgencias, hItem:H_ITEM_URG,  ico:'⚡', titulo:'Requerimentos de Urgência',    cor:'#7A1A1A', borda:'#c8a8a8', fn:itemUrgLG},
+      {tipo:'proj', itens:todosProj, hItem:H_ITEM_PROJ, ico:'🏛️', titulo:'Projetos em Discussão',        cor:'#1A2A5C', borda:'#a8b8d8', fn:itemProjLG},
+    ].filter(g => g.itens && g.itens.length > 0);
 
+    const paginas = distribuirEmPaginas(gruposSecoes);
     const totalPaginas = paginas.length || 1;
 
-    // Monta HTML de cada página
-    const paginasHTML = paginas.map((pag, idx) => {
-      const num = idx+1;
-      let corpo = '';
-      if(pag.tipo === 'esq'){
-        corpo += cardSecaoLG('📄','Matérias sobre a Mesa','#1A3A2A','#c8d8c8',pag.materias,itemProjLG);
-        corpo += cardSecaoLG('⚡','Requerimentos de Urgência','#7A1A1A','#c8a8a8',pag.urgencias,itemUrgLG);
-      } else {
-        corpo += cardSecaoLG('🏛️','Projetos em Discussão','#1A2A5C','#a8b8d8',pag.projetos,itemProjLG);
-      }
-      return `<div style="width:794px;min-height:1123px;background:#F4F6F8;font-family:'Source Sans 3',Arial,sans-serif;display:flex;flex-direction:column;page-break-after:always;box-shadow:0 4px 20px rgba(0,0,0,.15);margin-bottom:20px;">
-        ${cabecalho(dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64,num,totalPaginas)}
-        <div style="padding:12px 12px 0;flex:1;">${corpo}</div>
-        ${rodape(logoOpoB64,logoMinB64,dataFmt)}
-      </div>`;
+    // Monta HTML de cada página — altura FIXA A4 com conteúdo alinhado ao topo
+    const paginasHTML = paginas.map((grupos, idx) => {
+      const num = idx + 1;
+      const corpo = grupos.map(g =>
+        cardSecaoLG(g.ico, g.titulo, g.cor, g.borda, g.itens, g.fn)
+      ).join('');
+      return (
+        `<div style="width:${A4_W}px;height:${A4_H}px;background:#F4F6F8;` +
+        `font-family:'Source Sans 3',Arial,sans-serif;display:flex;flex-direction:column;` +
+        `overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.15);margin-bottom:4px;">` +
+        cabecalho(dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64,num,totalPaginas) +
+        `<div style="padding:10px 10px 0;flex:1;overflow:hidden;">${corpo}</div>` +
+        rodape(logoOpoB64,logoMinB64,dataFmt) +
+        `</div>`
+      );
     });
 
     // Renderiza todas as páginas e une em um único canvas/PNG
@@ -4388,3 +4424,4 @@ function gerarBannerBP(){
 </script>
 </body>
 </html>
+                                                             
