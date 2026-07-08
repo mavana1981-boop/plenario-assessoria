@@ -3623,7 +3623,7 @@ document.addEventListener('click', function(ev){
 </script>
 
 <div class="modal fade" id="modalGerarBanner" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width:900px;">
     <div class="modal-content">
       <div class="modal-header" style="background:linear-gradient(135deg,#1a3a5c,#0d2137);">
         <h5 class="modal-title text-white">
@@ -3701,7 +3701,7 @@ document.addEventListener('click', function(ev){
             </span>
           </div>
           <div id="banner-preview-outer"
-            style="border:1px solid #ddd;border-radius:4px;overflow:auto;background:#C5D0DC;max-height:70vh;">
+            style="border:1px solid #ddd;border-radius:4px;overflow:auto;background:#C5D0DC;">
             <div id="banner-preview-inner" style="transform-origin:top left;display:block;"></div>
           </div>
         </div>
@@ -3825,7 +3825,7 @@ async function gerarBannerIA() {
     inner.style.transformOrigin = 'top left';
     setTimeout(() => {
       const h = inner.scrollHeight * scale;
-      document.getElementById('banner-preview-outer').style.height = Math.min(h, window.innerHeight * 0.65) + 'px';
+      document.getElementById('banner-preview-outer').style.height = h + 'px'; // altura real do banner
     }, 100);
     _ativarEdicaoBanner(inner);
     document.getElementById('banner-resultado').style.display = 'block';
