@@ -3513,6 +3513,104 @@ async function exportarBannerPNG(btn){
     if(btn){btn.disabled=false;btn.innerHTML=orig;}
   }
 }
+
+// ── BANNER PROPOSIÇÃO — LETRA GRANDE ─────────────────────────────────────
+async function exportarBannerLetraGrande(btn){
+  const inner = document.getElementById('banner-preview-inner');
+  const el    = inner ? inner.querySelector('.banner') : null;
+  if(!el){ alert('Gere o banner primeiro.'); return; }
+
+  const origTxt = btn ? btn.innerHTML : '';
+  if(btn){ btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Gerando...'; }
+
+  try{
+    // Aumenta temporariamente a fonte de todos os textos para 18px mínimo
+    const todosEls = el.querySelectorAll('*');
+    const fonteOriginal = [];
+    todosEls.forEach((e,i) => {
+      const fs = parseFloat(window.getComputedStyle(e).fontSize);
+      fonteOriginal.push(e.style.fontSize);
+      if(fs < 18) e.style.fontSize = '18px';
+    });
+
+    // Reflow
+    void el.offsetHeight;
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await new Promise(r => setTimeout(r, 200));
+
+    // Captura com scale 3 (alta resolução A4)
+    const sc = inner.style.transform;
+    inner.style.transform = 'none';
+    void el.offsetHeight;
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    const canvas = await html2canvas(el, {
+      scale: 3,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+      width: el.scrollWidth,
+      height: el.scrollHeight,
+      windowWidth: el.scrollWidth,
+      windowHeight: el.scrollHeight,
+    });
+
+    // Restaura fontes originais
+    todosEls.forEach((e,i) => { e.style.fontSize = fonteOriginal[i]; });
+    inner.style.transform = sc;
+
+    // Abre popup com a imagem para impressão A4
+    const popup = window.open('', '_blank', 'width=880,height=700,scrollbars=yes,resizable=yes');
+    if(!popup){ alert('Permita pop-ups.'); return; }
+    const dataURL = canvas.toDataURL('image/png', 1.0);
+    const pd = popup.document;
+    pd.open();
+    pd.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Banner — Letra Grande</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#555;font-family:Arial,sans-serif;}
+  .toolbar{background:#1a1a1a;color:#fff;padding:10px 18px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:99;}
+  .toolbar strong{flex:1;font-size:13px;}
+  .toolbar button{padding:7px 18px;border:none;border-radius:5px;cursor:pointer;font-weight:700;font-size:13px;}
+  .btn-print{background:#1A6B3A;color:#fff;}
+  .btn-dl{background:#1A3A7A;color:#fff;}
+  .btn-close{background:#555;color:#fff;}
+  .pagina{display:flex;justify-content:center;padding:16px;}
+  img{max-width:794px;display:block;box-shadow:0 4px 20px rgba(0,0,0,.5);}
+  @media print{
+    body{background:#fff;}
+    .toolbar{display:none!important;}
+    .pagina{padding:0;}
+    img{width:100%;max-width:100%;box-shadow:none;}
+    @page{size:A4 portrait;margin:0;}
+  }
+</style></head><body>
+<div class="toolbar">
+  <strong>🖼️ Banner Proposição — Letra Grande</strong>
+  <button class="btn-print" onclick="window.print()">🖨️ Imprimir / PDF</button>
+  <button class="btn-dl" onclick="const a=document.createElement('a');a.download='banner_letra_grande.png';a.href=document.getElementById('img').src;document.body.appendChild(a);a.click();document.body.removeChild(a);">⬇️ Baixar PNG</button>
+  <button class="btn-close" onclick="window.close()">✕ Fechar</button>
+</div>
+<div class="pagina"><img id="img" src="${dataURL}"></div>
+</body></html>`);
+    // Download direto via URL já disponível
+    popup._dataURL = dataURL;
+    pd.close();
+
+  }catch(e){
+    alert('Erro: '+e.message);
+  }finally{
+    if(btn){ btn.disabled=false; btn.innerHTML=origTxt; }
+  }
+}
+
+// Listener para o botão Letra Grande do banner individual
+document.addEventListener('click', function(ev){
+  const btn = ev.target.closest('#btn-banner-letra-grande');
+  if(btn) exportarBannerLetraGrande(btn);
+});
+
 // Listener robusto via delegação de evento — funciona mesmo se o botão for recriado/clonado
 document.addEventListener('click', function(ev){
   const btnPng = ev.target.closest('#btn-exportar-banner-png');
@@ -3588,6 +3686,10 @@ document.addEventListener('click', function(ev){
             </label>
             <button class="btn btn-outline-primary btn-sm" id="btn-exportar-banner-png" type="button">
               <i class="fas fa-image me-1"></i>Baixar PNG
+            </button>
+            <button class="btn btn-sm text-white" id="btn-banner-letra-grande" type="button"
+              style="background:linear-gradient(135deg,#1A3A7A,#0d2a5c);">
+              <i class="fas fa-text-height me-1"></i>Letra Grande
             </button>
           </div>
           <div id="banner-edit-aviso" style="display:none;align-items:center;gap:8px;
