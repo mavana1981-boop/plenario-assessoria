@@ -3170,23 +3170,32 @@ async function gerarPautaBannerLetraGrande(){
 
     const totalPaginas = paginas.length || 1;
 
-    // Monta HTML final de cada página
+    // Mede altura real do cabeçalho e rodapé via DOM
+    const _medDiv = document.createElement('div');
+    _medDiv.style.cssText = `position:fixed;left:-9999px;top:0;width:${A4_W}px;visibility:hidden;z-index:-1;`;
+    document.body.appendChild(_medDiv);
+    _medDiv.innerHTML = cabecalho(dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64,1,1,[]);
+    await new Promise(r=>requestAnimationFrame(r));
+    const _hCab = _medDiv.firstElementChild ? _medDiv.firstElementChild.offsetHeight : 160;
+    _medDiv.innerHTML = rodape(logoOpoB64,logoMinB64,dataFmt);
+    await new Promise(r=>requestAnimationFrame(r));
+    const _hRod = _medDiv.firstElementChild ? _medDiv.firstElementChild.offsetHeight : 44;
+    document.body.removeChild(_medDiv);
+    // Área útil real para conteúdo (com margens de segurança de 16px top/bottom)
+    const AREA_CONTEUDO = A4_H - _hCab - _hRod - 32;
+    console.log(`[LG] cab=${_hCab}px rod=${_hRod}px area=${AREA_CONTEUDO}px`);
+
+    // Monta HTML final de cada página com altura exata
     const paginasHTML = paginas.map((grupos, idx) => {
       const num = idx + 1;
       const corpo = grupos.map(g =>
         cardSecaoLG(g.ico, g.titulo, g.cor, g.borda, g.itens, g.fn)
       ).join('');
-      // Coleta orientações dos itens desta página para mostrar no cabeçalho
       const orisPagina = [];
       grupos.forEach(g => {
         g.itens.forEach(it => {
           const ori = (it.orientacao||'').trim();
-          if(ori){
-            orisPagina.push({
-              projeto: (it.projeto_original||it.projeto||'').substring(0,40),
-              ori
-            });
-          }
+          if(ori) orisPagina.push({projeto:(it.projeto_original||it.projeto||'').substring(0,40),ori});
         });
       });
       return (
@@ -3194,7 +3203,7 @@ async function gerarPautaBannerLetraGrande(){
         `font-family:'Source Sans 3',Arial,sans-serif;display:flex;flex-direction:column;` +
         `overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.15);margin-bottom:4px;">` +
         cabecalho(dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64,num,totalPaginas,orisPagina) +
-        `<div style="padding:10px 10px 10px;flex:1;overflow:hidden;">${corpo}</div>` +
+        `<div style="height:${AREA_CONTEUDO}px;padding:8px 10px;overflow:hidden;box-sizing:border-box;">${corpo}</div>` +
         rodape(logoOpoB64,logoMinB64,dataFmt) +
         `</div>`
       );
