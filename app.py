@@ -5457,7 +5457,7 @@ def gerar_banner_proposicao():
         '.resumo{padding:16px 20px;background:#fff;font-size:13px;color:#222;line-height:1.7;border-bottom:1px solid #E0E0E0;}'
 
         # Grade 2 colunas
-        '.grade{display:grid;grid-template-columns:1fr 1fr;gap:0;border-top:1px solid #E0E0E0;align-items:start;}'
+        '.grade{display:flex;gap:0;border-top:1px solid #E0E0E0;align-items:flex-start;}'
 
         # Card generico
         '.card{margin:14px;background:#fff;border-radius:10px;overflow:visible;box-shadow:0 2px 8px rgba(0,0,0,.08);}'
@@ -5581,7 +5581,7 @@ def gerar_banner_proposicao():
         '<div class="grade">'
 
         # O que preve
-        '<div style="background:#F0F0F0;">'
+        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
         '<div class="card card-verde">'
         '<div class="card-header">'
         '<div class="card-header-ico">&#10003;</div>'
@@ -5592,7 +5592,7 @@ def gerar_banner_proposicao():
         '</div></div></div>'
 
         # Criticas
-        '<div style="background:#F0F0F0;">'
+        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
         '<div class="card card-verm">'
         '<div class="card-header">'
         '<div class="card-header-ico">&#10007;</div>'
@@ -5607,7 +5607,7 @@ def gerar_banner_proposicao():
         '<div class="grade" style="border-top:1px solid #E0E0E0;">'
 
         # Justificativa
-        '<div style="background:#F0F0F0;">'
+        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
         '<div class="card card-escuro">'
         '<div class="card-header">'
         '<div class="card-header-ico">&#9878;</div>'
@@ -5621,7 +5621,7 @@ def gerar_banner_proposicao():
         '</div></div></div>'
 
         # Orientacao
-        '<div style="background:#F0F0F0;">'
+        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
         '<div class="card card-ori">'
         '<div class="card-header">'
         '<div class="card-header-ico">&#127885;</div>'
@@ -5699,7 +5699,7 @@ def gerar_banner_proposicao():
         '<div class="grade">'
 
         # O que preve
-        '<div style="background:#F0F0F0;">'
+        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
         '<div class="card card-verde">'
         '<div class="card-header">'
         '<div class="card-header-ico">&#10003;</div>'
@@ -5710,7 +5710,7 @@ def gerar_banner_proposicao():
         '</div></div></div>'
 
         # Criticas
-        '<div style="background:#F0F0F0;">'
+        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
         '<div class="card card-verm">'
         '<div class="card-header">'
         '<div class="card-header-ico">&#10007;</div>'
@@ -5725,7 +5725,7 @@ def gerar_banner_proposicao():
         '<div class="grade" style="border-top:1px solid #E0E0E0;">'
 
         # Justificativa
-        '<div style="background:#F0F0F0;">'
+        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
         '<div class="card card-escuro">'
         '<div class="card-header">'
         '<div class="card-header-ico">&#9878;</div>'
@@ -5739,7 +5739,7 @@ def gerar_banner_proposicao():
         '</div></div></div>'
 
         # Orientacao
-        '<div style="background:#F0F0F0;">'
+        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
         '<div class="card card-ori">'
         '<div class="card-header">'
         '<div class="card-header-ico">&#127885;</div>'
