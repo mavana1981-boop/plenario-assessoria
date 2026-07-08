@@ -3103,71 +3103,79 @@ async function gerarPautaBannerLetraGrande(){
     }
 
     // ── Distribuição dinâmica de itens por página ────────────────────────
-    // Altura A4 em px (794x1123).
+    // Mede a altura real de cada item no DOM para distribuição precisa
     const A4_H = 1123;
     const A4_W = 794;
-    const RESERVA = 190; // cabeçalho (~145px) + rodapé (~35px) + segurança (~10px)
-    const AREA_UTIL = A4_H - RESERVA; // ~933px disponíveis
+    const MARGEM_CAB_ROD = 195; // cabeçalho + rodapé + padding
 
-    // Alturas por item (18px fonte, padding 10px topo/base, ementa ~2 linhas)
-    const H_ITEM_URG  = 88;   // urgência: projeto + autor + ementa
-    const H_ITEM_PROJ = 108;  // projeto: projeto + autor + relator + ementa
-    const H_CARD_HDR  = 52;   // header de seção
-    const H_PADDING   = 10;   // padding entre cards
+    const medidor = document.createElement('div');
+    medidor.style.cssText = `position:fixed;left:-9999px;top:0;width:${A4_W}px;z-index:-1;visibility:hidden;`;
+    document.body.appendChild(medidor);
 
-    function alturaSecao(n, hItem){
-      return n > 0 ? H_CARD_HDR + n * hItem + H_PADDING : 0;
+    async function medirAltura(html){
+      medidor.innerHTML = html;
+      void medidor.offsetHeight;
+      await new Promise(r => requestAnimationFrame(r));
+      return medidor.firstElementChild ? medidor.firstElementChild.offsetHeight : 0;
     }
 
-    // Distribui itens em páginas respeitando AREA_UTIL
-    function distribuirEmPaginas(grupos){
-      // grupos: [{tipo, itens, hItem, ico, titulo, cor, borda, fn}]
-      const paginas = [];
-      let paginaAtual = [];
-      let alturaAtual = 0;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Medindo layout...';
 
-      for(const grupo of grupos){
-        if(!grupo.itens || !grupo.itens.length) continue;
-        // Verifica se o grupo inteiro cabe na página atual
-        const altGrupoTotal = alturaSecao(grupo.itens.length, grupo.hItem);
-        if(alturaAtual + altGrupoTotal <= AREA_UTIL && paginaAtual.length < 3){
-          paginaAtual.push({...grupo, itens: grupo.itens});
-          alturaAtual += altGrupoTotal;
-        } else {
-          // Divide o grupo: coloca o que cabe, o resto vai para próxima(s) página(s)
-          let restantes = [...grupo.itens];
-          let primeiroLote = true;
-          while(restantes.length > 0){
-            const espacoDisponivel = primeiroLote
-              ? AREA_UTIL - alturaAtual
-              : AREA_UTIL;
-            const maxItens = Math.max(1, Math.floor((espacoDisponivel - H_CARD_HDR - H_PADDING) / grupo.hItem));
-            const lote = restantes.splice(0, maxItens);
-            if(primeiroLote && paginaAtual.length > 0 && lote.length > 0){
-              paginaAtual.push({...grupo, itens: lote});
-              alturaAtual += alturaSecao(lote.length, grupo.hItem);
-              primeiroLote = false;
-            } else {
-              if(paginaAtual.length > 0) paginas.push(paginaAtual);
-              paginaAtual = lote.length > 0 ? [{...grupo, itens: lote}] : [];
-              alturaAtual = lote.length > 0 ? alturaSecao(lote.length, grupo.hItem) : 0;
-              primeiroLote = false;
-            }
-          }
-        }
-      }
-      if(paginaAtual.length > 0) paginas.push(paginaAtual);
-      return paginas;
-    }
-
-    // Define grupos de seções
     const gruposSecoes = [
-      {tipo:'mat',  itens:materias,  hItem:H_ITEM_PROJ, ico:'📄', titulo:'Matérias sobre a Mesa',       cor:'#1A3A2A', borda:'#c8d8c8', fn:itemProjLG},
-      {tipo:'urg',  itens:urgencias, hItem:H_ITEM_URG,  ico:'⚡', titulo:'Requerimentos de Urgência',    cor:'#7A1A1A', borda:'#c8a8a8', fn:itemUrgLG},
-      {tipo:'proj', itens:todosProj, hItem:H_ITEM_PROJ, ico:'🏛️', titulo:'Projetos em Discussão',        cor:'#1A2A5C', borda:'#a8b8d8', fn:itemProjLG},
+      {tipo:'mat',  itens:materias,  ico:'📄', titulo:'Matérias sobre a Mesa',     cor:'#1A3A2A', borda:'#c8d8c8', fn:itemProjLG},
+      {tipo:'urg',  itens:urgencias, ico:'⚡', titulo:'Requerimentos de Urgência',  cor:'#7A1A1A', borda:'#c8a8a8', fn:itemUrgLG},
+      {tipo:'proj', itens:todosProj, ico:'🏛️', titulo:'Projetos em Discussão',      cor:'#1A2A5C', borda:'#a8b8d8', fn:itemProjLG},
     ].filter(g => g.itens && g.itens.length > 0);
 
-    const paginas = distribuirEmPaginas(gruposSecoes);
+    // Mede cabeçalho de seção e cada item
+    for(const g of gruposSecoes){
+      medidor.innerHTML = `<div style="background:${g.cor};padding:10px 16px;display:flex;align-items:center;gap:10px;"><span style="font-size:20px;font-weight:800;color:#fff;">${g.titulo}</span></div>`;
+      void medidor.offsetHeight;
+      await new Promise(r => requestAnimationFrame(r));
+      g.hCab = (medidor.firstElementChild?.offsetHeight || 52) + 12;
+      g.alturas = [];
+      for(const it of g.itens){
+        const h = await medirAltura(g.fn(it));
+        g.alturas.push(h + 2);
+      }
+    }
+    document.body.removeChild(medidor);
+
+    // Distribui em páginas com alturas reais
+    const AREA_UTIL = A4_H - MARGEM_CAB_ROD;
+    const paginas = [];
+    let paginaAtual = [];
+    let alturaAtual = 0;
+
+    for(const g of gruposSecoes){
+      if(!g.itens.length) continue;
+      let restantes = g.itens.map((it,i) => ({it, h:g.alturas[i]}));
+
+      while(restantes.length > 0){
+        const espacoDisp = AREA_UTIL - alturaAtual;
+        let acum = g.hCab;
+        let qtd = 0;
+        for(const {h} of restantes){
+          if(acum + h > espacoDisp && qtd > 0) break;
+          acum += h;
+          qtd++;
+        }
+        if(qtd === 0){
+          // Nem 1 item cabe — quebra de página
+          if(paginaAtual.length > 0) paginas.push(paginaAtual);
+          paginaAtual = []; alturaAtual = 0; continue;
+        }
+        const lote = restantes.splice(0, qtd);
+        paginaAtual.push({...g, itens: lote.map(x=>x.it)});
+        alturaAtual += acum;
+        if(restantes.length > 0){
+          paginas.push(paginaAtual);
+          paginaAtual = []; alturaAtual = 0;
+        }
+      }
+    }
+    if(paginaAtual.length > 0) paginas.push(paginaAtual);
+
     const totalPaginas = paginas.length || 1;
 
     // Monta HTML de cada página — altura FIXA A4 com conteúdo alinhado ao topo
