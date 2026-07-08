@@ -2861,6 +2861,10 @@ async function exportarOrientacoesPDF() {
           style="background:linear-gradient(135deg,#1A6B3A,#0d4a27);" onclick="gerarPautaBanner()">
           <i class="fas fa-magic me-1"></i>Gerar Banner
         </button>
+        <button type="button" class="btn btn-sm text-white" id="btn-pb-gerar-lg"
+          style="background:linear-gradient(135deg,#1A3A7A,#0d2a5c);" onclick="gerarPautaBannerLetraGrande()">
+          <i class="fas fa-text-height me-1"></i>Letra Grande
+        </button>
         <button type="button" class="btn btn-outline-primary btn-sm" id="btn-pb-png"
           style="display:none;" onclick="baixarPautaBannerPNG(this)">
           <i class="fas fa-image me-1"></i>Baixar PNG
@@ -2956,6 +2960,235 @@ async function gerarPautaBanner(){
   }catch(e){alert('Erro: '+e.message);}
   finally{btn.disabled=false;btn.innerHTML='<i class="fas fa-magic me-1"></i>Gerar Banner';}
 }
+
+// ── PAUTA BANNER LETRA GRANDE ────────────────────────────────────────────────
+// Gera múltiplas páginas A4 (794px) com fonte mínima 16px
+// Separa: urgências / matérias / projetos — se muitos itens, cada seção em página própria
+async function gerarPautaBannerLetraGrande(){
+  const btn = document.getElementById('btn-pb-gerar-lg');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando...';
+
+  try{
+    const itens = window.ITENS_DATA || [];
+    const imgFile = document.getElementById('pb-imagem').files[0];
+    let imgB64='', imgMime='';
+    if(imgFile){
+      imgB64 = await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(imgFile);});
+      imgMime = imgFile.type;
+    }
+    const [logoOpoB64,logoMinB64] = await Promise.all([
+      fetch('/static/logo_oposicao.png').then(r=>r.blob()).then(b=>new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(b)})),
+      fetch('/static/logo_minoria.png').then(r=>r.blob()).then(b=>new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(b)})),
+    ]).catch(()=>['','']);
+
+    const dataEl = document.querySelector('[data-evento-data]');
+    const dataEvt = dataEl?.dataset?.eventoData || '';
+    let dataFmt = '';
+    if(dataEvt){
+      const meses=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+      const partes = dataEvt.split('/');
+      if(partes.length===3){
+        const dia=parseInt(partes[0]),mes=parseInt(partes[1]),ano=partes[2];
+        if(!isNaN(dia)&&!isNaN(mes)) dataFmt=`${dia} de ${meses[mes-1]} de ${ano}`;
+      }
+    }
+
+    // Separa itens por tipo
+    const urgencias  = itens.filter(it=>/^REQ\s|^RQS\s|^RQU\s|^REC\s/i.test(it.projeto_original||it.projeto||''));
+    const materias   = itens.filter(it=>/Reda[cç][aã]o Final/i.test(it.projeto)&&!urgencias.includes(it));
+    const checksSel  = Array.from(document.querySelectorAll('#pb-lista-prioridade input[type=checkbox]:checked')).map(cb=>String(cb.value));
+    const prioridade = itens.filter(it=>checksSel.includes(String(it.id_principal))&&!urgencias.includes(it)&&!materias.includes(it));
+    const projetos   = itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)&&!prioridade.includes(it));
+    const priIds     = new Set(prioridade.map(it=>String(it.id_principal)));
+    const todosProj  = [...prioridade,...projetos].sort((a,b)=>(a.ordem||0)-(b.ordem||0));
+
+    // Decide distribuição de páginas
+    // Regra: se urgências>0 E projetos>0, urgências e matérias ficam na página 1,
+    //        projetos na(s) página(s) seguinte(s).
+    //        Máximo 8 itens por página (com fonte 16px cabe confortavelmente).
+    const MAX_POR_PAG = 8;
+
+    function _ePB(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+    function cabecalho(dataFmt, imgB64, imgMime, logoOpoB64, logoMinB64, numPagina, totalPaginas){
+      const lO = logoOpoB64?`<img src="${logoOpoB64}" style="height:44px;object-fit:contain;">`:'';
+      const lM = logoMinB64?`<img src="${logoMinB64}" style="height:44px;object-fit:contain;">`:'';
+      const cabBgColor = 'background:#0d2a0d;';
+      const cabFoto = imgB64
+        ? `<img src="data:${imgMime};base64,${imgB64}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;object-position:center top;z-index:0;">
+           <div style="position:absolute;inset:0;background:linear-gradient(to right,rgba(0,0,0,0.72) 0%,rgba(0,0,0,0.20) 40%,rgba(0,0,0,0.20) 60%,rgba(0,0,0,0.72) 100%);z-index:1;"></div>` : '';
+      return `<div style="${cabBgColor}padding:18px 20px 0;position:relative;overflow:hidden;">
+        ${cabFoto}
+        <div style="position:relative;z-index:2;display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div style="font-family:'Barlow Condensed',sans-serif;font-size:42px;font-weight:900;color:#fff;line-height:.88;letter-spacing:-1px;">PAUTA<br><span style="color:#E9B847">RESUMIDA</span></div>
+            <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.8);letter-spacing:2px;text-transform:uppercase;margin-top:5px;">Ordem do Dia — Câmara dos Deputados</div>
+            <table style="border-collapse:collapse;margin-top:8px;background:#1A6B3A;border-radius:4px;"><tr>
+              <td style="padding:4px 6px;line-height:0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></td>
+              <td style="padding:4px 12px 4px 4px;color:#fff;font-size:15px;font-weight:700;white-space:nowrap;">${dataFmt||'—'}</td>
+            </tr></table>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+            <div style="background:#fff;border-radius:5px;padding:6px 10px;display:flex;gap:8px;align-items:center;">${lO}${lM}</div>
+            <div style="color:rgba(255,255,255,.6);font-size:11px;">Pág. ${numPagina}/${totalPaginas}</div>
+          </div>
+        </div>
+        <div style="height:12px;background:#F4F6F8;margin:10px -20px 0;border-radius:10px 10px 0 0;"></div>
+      </div>`;
+    }
+
+    function rodape(logoOpoB64, logoMinB64, dataFmt){
+      const lO = logoOpoB64?`<img src="${logoOpoB64}" style="height:22px;object-fit:contain;">`:'';
+      const lM = logoMinB64?`<img src="${logoMinB64}" style="height:22px;object-fit:contain;">`:'';
+      return `<div style="background:#2C3E50;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;gap:8px;align-items:center;">${lO}${lM}</div>
+        <div style="text-align:right;font-size:9px;color:rgba(255,255,255,.7);">
+          <div style="font-weight:800;letter-spacing:1px;text-transform:uppercase;">Pauta Resumida — Ordem do Dia</div>
+          <div>Material de Apoio Parlamentar · ${dataFmt||''}</div>
+        </div>
+      </div>`;
+    }
+
+    function itemUrgLG(it){
+      const n=String(it.ordem),p=_ePB(it.projeto||'');
+      const a=_ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,70));
+      const res=_ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
+      const ori=(it.orientacao||'').toUpperCase();
+      const oriCores={'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#5B6470','OBSTRUÇÃO':'#7A1A1A','NEGOCIAÇÃO':'#1E5C8A'};
+      const oriBadge=ori?`<span style="background:${oriCores[ori]||'#6c757d'};color:#fff;font-size:10px;font-weight:800;padding:2px 8px;border-radius:3px;margin-left:8px;">${ori}</span>`:'';
+      return `<div style="padding:10px 16px;border-bottom:1px solid #f0f0f0;display:flex;gap:10px;align-items:flex-start;">
+        <div style="min-width:28px;height:28px;background:#7A1A1A;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex-shrink:0;">${n}</div>
+        <div style="font-size:16px;color:#222;">
+          <div style="font-weight:800;">${p}${oriBadge}</div>
+          ${a?`<div style="font-size:14px;color:#555;margin-top:2px;">Autor: ${a}</div>`:''}
+          ${res?`<div style="font-size:14px;color:#444;margin-top:3px;line-height:1.45;">${res.substring(0,200)}</div>`:''}
+        </div>
+      </div>`;
+    }
+
+    function itemProjLG(it){
+      const n=String(it.ordem),p=_ePB(it.projeto||'');
+      const a=_ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,70));
+      const rel=_ePB((it.relator||'').replace('Não atribuído','').substring(0,50));
+      const res=_ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
+      const ehPri=priIds.has(String(it.id_principal));
+      const ori=(it.orientacao||'').toUpperCase();
+      const oriCores={'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#5B6470','OBSTRUÇÃO':'#7A1A1A','NEGOCIAÇÃO':'#1E5C8A'};
+      const oriBadge=ori?`<span style="background:${oriCores[ori]||'#6c757d'};color:#fff;font-size:10px;font-weight:800;padding:2px 8px;border-radius:3px;margin-left:8px;">${ori}</span>`:'';
+      const rowBg=ehPri?'background:#FFFBEA;border-left:4px solid #E9B847;':'';
+      const badgeN=ehPri
+        ?`<div style="min-width:28px;height:28px;background:#7A5500;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;">⭐</div>`
+        :`<div style="min-width:28px;height:28px;background:#1A2A5C;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex-shrink:0;">${n}</div>`;
+      return `<div style="padding:10px 16px;border-bottom:1px solid #f0f0f0;${rowBg}display:flex;gap:10px;align-items:flex-start;">
+        ${badgeN}
+        <div style="font-size:16px;color:#1a1a1a;">
+          <div style="font-weight:800;color:${ehPri?'#7A5500':'#1A2A5C'};">${p}${oriBadge}</div>
+          ${a?`<div style="font-size:14px;color:#555;margin-top:2px;">Autor: ${a}</div>`:''}
+          ${rel?`<div style="font-size:14px;color:#777;">Rel.: ${rel}</div>`:''}
+          ${res?`<div style="font-size:14px;color:#333;margin-top:3px;line-height:1.45;">${res.substring(0,220)}</div>`:''}
+        </div>
+      </div>`;
+    }
+
+    function cardSecaoLG(ico, titulo, cor, bordaCor, itens, tipoFn){
+      if(!itens||!itens.length) return '';
+      return `<div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid ${bordaCor};margin-bottom:12px;">
+        <div style="background:${cor};padding:10px 16px;display:flex;align-items:center;gap:10px;">
+          <div style="width:32px;height:32px;background:rgba(255,255,255,.2);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;">${ico}</div>
+          <span style="font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;">${titulo}</span>
+        </div>
+        ${itens.map(it=>tipoFn(it)).join('')}
+      </div>`;
+    }
+
+    // Monta grupos de páginas
+    // Grupo 1: Matérias + Urgências (max MAX_POR_PAG itens combinados)
+    // Grupo 2+: Projetos (paginados a cada MAX_POR_PAG)
+    const paginas = [];
+
+    // Página(s) de matérias + urgências
+    const esqItens = [...materias, ...urgencias];
+    if(esqItens.length > 0){
+      for(let i=0; i<esqItens.length; i+=MAX_POR_PAG){
+        const lote = esqItens.slice(i, i+MAX_POR_PAG);
+        const loteMat = lote.filter(it=>materias.includes(it));
+        const loteUrg = lote.filter(it=>urgencias.includes(it));
+        paginas.push({tipo:'esq', materias:loteMat, urgencias:loteUrg});
+      }
+    }
+
+    // Página(s) de projetos
+    if(todosProj.length > 0){
+      for(let i=0; i<todosProj.length; i+=MAX_POR_PAG){
+        paginas.push({tipo:'proj', projetos:todosProj.slice(i, i+MAX_POR_PAG)});
+      }
+    }
+
+    // Se não há urgências nem matérias, todos os projetos ficam sem página separada
+    if(paginas.length === 0){
+      for(let i=0; i<todosProj.length; i+=MAX_POR_PAG){
+        paginas.push({tipo:'proj', projetos:todosProj.slice(i, i+MAX_POR_PAG)});
+      }
+    }
+
+    const totalPaginas = paginas.length || 1;
+
+    // Monta HTML de cada página
+    const paginasHTML = paginas.map((pag, idx) => {
+      const num = idx+1;
+      let corpo = '';
+      if(pag.tipo === 'esq'){
+        corpo += cardSecaoLG('📄','Matérias sobre a Mesa','#1A3A2A','#c8d8c8',pag.materias,itemProjLG);
+        corpo += cardSecaoLG('⚡','Requerimentos de Urgência','#7A1A1A','#c8a8a8',pag.urgencias,itemUrgLG);
+      } else {
+        corpo += cardSecaoLG('🏛️','Projetos em Discussão','#1A2A5C','#a8b8d8',pag.projetos,itemProjLG);
+      }
+      return `<div style="width:794px;min-height:1123px;background:#F4F6F8;font-family:'Source Sans 3',Arial,sans-serif;display:flex;flex-direction:column;page-break-after:always;box-shadow:0 4px 20px rgba(0,0,0,.15);margin-bottom:20px;">
+        ${cabecalho(dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64,num,totalPaginas)}
+        <div style="padding:12px 12px 0;flex:1;">${corpo}</div>
+        ${rodape(logoOpoB64,logoMinB64,dataFmt)}
+      </div>`;
+    });
+
+    // Abre popup com todas as páginas e botão de impressão
+    const popup = window.open('', '_blank', 'width=860,height=900,scrollbars=yes,resizable=yes');
+    if(!popup){ alert('Permita pop-ups para usar esta função.'); return; }
+    const pd = popup.document;
+    pd.open();
+    pd.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Pauta Banner — Letra Grande</title>
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+      body{background:#888;padding:20px;margin:0;font-family:Arial,sans-serif;}
+      .toolbar{background:#1a1a1a;color:#fff;padding:12px 20px;display:flex;align-items:center;gap:12px;margin-bottom:20px;border-radius:8px;}
+      .toolbar button{padding:8px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:700;font-size:14px;}
+      .btn-print{background:#1A6B3A;color:#fff;}
+      .btn-close{background:#555;color:#fff;}
+      .paginas{display:flex;flex-direction:column;align-items:center;gap:0;}
+      @media print{
+        body{background:#fff;padding:0;}
+        .toolbar{display:none;}
+        .paginas > div{box-shadow:none;margin-bottom:0;page-break-after:always;}
+      }
+    </style>
+    </head><body>
+    <div class="toolbar">
+      <strong style="font-size:15px;">📋 Pauta Banner — Letra Grande (${totalPaginas} página${totalPaginas>1?'s':''})</strong>
+      <button class="btn-print" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button>
+      <button class="btn-close" onclick="window.close()">✕ Fechar</button>
+    </div>
+    <div class="paginas">${paginasHTML.join('')}</div>
+    </body></html>`);
+    pd.close();
+
+  }catch(e){
+    alert('Erro: '+e.message);
+  }finally{
+    btn.disabled=false;
+    btn.innerHTML='<i class="fas fa-text-height me-1"></i>Letra Grande';
+  }
+}
+
 function _ativarEdicaoPautaBanner(c){c.querySelectorAll('[data-pb-edit]').forEach(el=>{el.contentEditable='true';el.style.outline='none';el.style.cursor='text';el.addEventListener('focus',function(){this.style.boxShadow='0 0 0 2px rgba(255,200,0,0.7)';this.style.borderRadius='2px';});el.addEventListener('blur',function(){this.style.boxShadow='';});});}
 function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64}){
   const C={v:'#1A6B3A',ve:'#0d4a27',a:'#E9B847',c:'#2C3E50',f:'#F4F6F8'};
