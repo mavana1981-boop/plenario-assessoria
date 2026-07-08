@@ -3151,35 +3151,56 @@ async function gerarPautaBannerLetraGrande(){
       </div>`;
     });
 
-    // Abre popup com todas as páginas e botão de impressão
-    const popup = window.open('', '_blank', 'width=860,height=900,scrollbars=yes,resizable=yes');
-    if(!popup){ alert('Permita pop-ups para usar esta função.'); return; }
-    const pd = popup.document;
-    pd.open();
-    pd.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Pauta Banner — Letra Grande</title>
-    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
-    <style>
-      body{background:#888;padding:20px;margin:0;font-family:Arial,sans-serif;}
-      .toolbar{background:#1a1a1a;color:#fff;padding:12px 20px;display:flex;align-items:center;gap:12px;margin-bottom:20px;border-radius:8px;}
-      .toolbar button{padding:8px 20px;border:none;border-radius:6px;cursor:pointer;font-weight:700;font-size:14px;}
-      .btn-print{background:#1A6B3A;color:#fff;}
-      .btn-close{background:#555;color:#fff;}
-      .paginas{display:flex;flex-direction:column;align-items:center;gap:0;}
-      @media print{
-        body{background:#fff;padding:0;}
-        .toolbar{display:none;}
-        .paginas > div{box-shadow:none;margin-bottom:0;page-break-after:always;}
-      }
-    </style>
-    </head><body>
-    <div class="toolbar">
-      <strong style="font-size:15px;">📋 Pauta Banner — Letra Grande (${totalPaginas} página${totalPaginas>1?'s':''})</strong>
-      <button class="btn-print" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button>
-      <button class="btn-close" onclick="window.close()">✕ Fechar</button>
-    </div>
-    <div class="paginas">${paginasHTML.join('')}</div>
-    </body></html>`);
-    pd.close();
+    // Renderiza cada página em um container off-screen e captura com html2canvas
+    const container = document.createElement('div');
+    container.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1;';
+    document.body.appendChild(container);
+
+    // Link de fontes necessário para html2canvas
+    const fontLink = document.createElement('link');
+    fontLink.rel = 'stylesheet';
+    fontLink.href = 'https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap';
+    document.head.appendChild(fontLink);
+    await new Promise(r => setTimeout(r, 800)); // aguarda fontes carregarem
+
+    for(let i = 0; i < paginasHTML.length; i++){
+      btn.innerHTML = `<i class="fas fa-spinner fa-spin me-1"></i>Gerando página ${i+1}/${paginasHTML.length}...`;
+
+      // Injeta a página no container
+      container.innerHTML = `<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">${paginasHTML[i]}`;
+      const el = container.querySelector('div');
+
+      // Reflow
+      void el.offsetHeight;
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await new Promise(r => setTimeout(r, 200));
+
+      const canvas = await html2canvas(el, {
+        scale: 3,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#F4F6F8',
+        logging: false,
+        width: el.scrollWidth,
+        height: el.scrollHeight,
+        windowWidth: el.scrollWidth,
+        windowHeight: el.scrollHeight,
+      });
+
+      // Download do PNG
+      const a = document.createElement('a');
+      const sufixo = paginasHTML.length > 1 ? `_pag${i+1}de${paginasHTML.length}` : '';
+      a.download = `pauta_banner_LG${sufixo}.png`;
+      a.href = canvas.toDataURL('image/png', 1.0);
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      // Pequena pausa entre páginas para não sobrecarregar
+      if(i < paginasHTML.length - 1) await new Promise(r => setTimeout(r, 400));
+    }
+
+    document.body.removeChild(container);
 
   }catch(e){
     alert('Erro: '+e.message);
