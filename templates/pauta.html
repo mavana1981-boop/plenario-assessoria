@@ -3011,13 +3011,28 @@ async function gerarPautaBannerLetraGrande(){
 
     function _ePB(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
-    function cabecalho(dataFmt, imgB64, imgMime, logoOpoB64, logoMinB64, numPagina, totalPaginas){
+    function cabecalho(dataFmt, imgB64, imgMime, logoOpoB64, logoMinB64, numPagina, totalPaginas, orientacoes){
       const lO = logoOpoB64?`<img src="${logoOpoB64}" style="height:44px;object-fit:contain;">`:'';
       const lM = logoMinB64?`<img src="${logoMinB64}" style="height:44px;object-fit:contain;">`:'';
       const cabBgColor = 'background:#0d2a0d;';
       const cabFoto = imgB64
         ? `<img src="data:${imgMime};base64,${imgB64}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;object-position:center top;z-index:0;">
            <div style="position:absolute;inset:0;background:linear-gradient(to right,rgba(0,0,0,0.72) 0%,rgba(0,0,0,0.20) 40%,rgba(0,0,0,0.20) 60%,rgba(0,0,0,0.72) 100%);z-index:1;"></div>` : '';
+      // Monta faixa de orientações se houver
+      const oriFaixaHTML = (() => {
+        if(!orientacoes || !orientacoes.length) return '';
+        const oriCoresFx = {'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#2A5C8A','OBSTRUÇÃO':'#7A1A1A','OBSTRUCAO':'#7A1A1A','NEGOCIAÇÃO':'#8A6A00','NEGOCIACAO':'#8A6A00','ABSTENÇÃO':'#555','ABSTENCAO':'#555'};
+        // Agrupa: mostra cada combinação (projeto + orientação) em linha compacta
+        return orientacoes.map(({projeto, ori}) => {
+          if(!ori) return '';
+          const cor = oriCoresFx[ori.toUpperCase()] || '#444';
+          return `<div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
+            <span style="background:${cor};color:#fff;font-size:11px;font-weight:900;padding:2px 10px;border-radius:3px;letter-spacing:1px;flex-shrink:0;">${ori.toUpperCase()}</span>
+            <span style="font-size:11px;color:rgba(255,255,255,.85);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;">${projeto}</span>
+          </div>`;
+        }).filter(Boolean).join('');
+      })();
+
       return `<div style="${cabBgColor}padding:18px 20px 0;position:relative;overflow:hidden;">
         ${cabFoto}
         <div style="position:relative;z-index:2;display:flex;justify-content:space-between;align-items:flex-start;">
@@ -3028,6 +3043,7 @@ async function gerarPautaBannerLetraGrande(){
               <td style="padding:4px 6px;line-height:0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></td>
               <td style="padding:4px 12px 4px 4px;color:#fff;font-size:15px;font-weight:700;white-space:nowrap;">${dataFmt||'—'}</td>
             </tr></table>
+            ${oriFaixaHTML}
           </div>
           <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
             <div style="background:#fff;border-radius:5px;padding:6px 10px;display:flex;gap:8px;align-items:center;">${lO}${lM}</div>
@@ -3160,11 +3176,24 @@ async function gerarPautaBannerLetraGrande(){
       const corpo = grupos.map(g =>
         cardSecaoLG(g.ico, g.titulo, g.cor, g.borda, g.itens, g.fn)
       ).join('');
+      // Coleta orientações dos itens desta página para mostrar no cabeçalho
+      const orisPagina = [];
+      grupos.forEach(g => {
+        g.itens.forEach(it => {
+          const ori = (it.orientacao||'').trim();
+          if(ori){
+            orisPagina.push({
+              projeto: (it.projeto_original||it.projeto||'').substring(0,40),
+              ori
+            });
+          }
+        });
+      });
       return (
         `<div style="width:${A4_W}px;height:${A4_H}px;background:#F4F6F8;` +
         `font-family:'Source Sans 3',Arial,sans-serif;display:flex;flex-direction:column;` +
         `overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.15);margin-bottom:4px;">` +
-        cabecalho(dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64,num,totalPaginas) +
+        cabecalho(dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64,num,totalPaginas,orisPagina) +
         `<div style="padding:10px 10px 0;flex:1;overflow:hidden;">${corpo}</div>` +
         rodape(logoOpoB64,logoMinB64,dataFmt) +
         `</div>`
@@ -3524,6 +3553,13 @@ async function exportarBannerLetraGrande(btn){
   if(btn){ btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Gerando...'; }
 
   try{
+    // Pega orientação do modal
+    const oriVal  = (document.getElementById('banner-orientacao')?.value || '').trim().toUpperCase();
+    const oriCores = {'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#1A3A7A',
+                      'OBSTRUÇÃO':'#7A1A1A','OBSTRUCAO':'#7A1A1A','NEGOCIAÇÃO':'#8A6A00',
+                      'NEGOCIACAO':'#8A6A00','ABSTENÇÃO':'#444','ABSTENCAO':'#444'};
+    const oriCor   = oriCores[oriVal] || '#1A2A3A';
+
     // Aumenta temporariamente a fonte de todos os textos para 18px mínimo
     const todosEls = el.querySelectorAll('*');
     const fonteOriginal = [];
@@ -3544,7 +3580,7 @@ async function exportarBannerLetraGrande(btn){
     void el.offsetHeight;
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-    const canvas = await html2canvas(el, {
+    const canvasBanner = await html2canvas(el, {
       scale: 3,
       useCORS: true,
       allowTaint: true,
@@ -3559,6 +3595,29 @@ async function exportarBannerLetraGrande(btn){
     // Restaura fontes originais
     todosEls.forEach((e,i) => { e.style.fontSize = fonteOriginal[i]; });
     inner.style.transform = sc;
+
+    // Adiciona faixa de orientação no topo
+    let canvas = canvasBanner;
+    if(oriVal){
+      const FAIXA_H = 90; // altura da faixa em px no canvas (scale 3)
+      const finalC = document.createElement('canvas');
+      finalC.width  = canvasBanner.width;
+      finalC.height = canvasBanner.height + FAIXA_H;
+      const ctx = finalC.getContext('2d');
+      // Faixa
+      ctx.fillStyle = oriCor;
+      ctx.fillRect(0, 0, finalC.width, FAIXA_H);
+      // Texto da orientação centralizado
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `900 ${FAIXA_H * 0.55}px 'Barlow Condensed', Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.letterSpacing = '4px';
+      ctx.fillText('ORIENTAÇÃO: ' + oriVal, finalC.width / 2, FAIXA_H / 2);
+      // Banner abaixo
+      ctx.drawImage(canvasBanner, 0, FAIXA_H);
+      canvas = finalC;
+    }
 
     // Abre popup com a imagem para impressão A4
     const popup = window.open('', '_blank', 'width=880,height=700,scrollbars=yes,resizable=yes');
