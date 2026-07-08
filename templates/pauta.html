@@ -3124,8 +3124,8 @@ async function gerarPautaBannerLetraGrande(){
     // Última(s) página(s): Projetos em Discussão
     const A4_H = 1123;
     const A4_W = 794;
-    const MAX_RQU_POR_PAG = 7;  // máx urgências por página
-    const MAX_PRJ_POR_PAG = 6;  // máx projetos por página (fonte 18px com ementa)
+    const MAX_RQU_POR_PAG = 6;  // máx urgências por página
+    const MAX_PRJ_POR_PAG = 5;  // máx projetos por página (fonte 18px com ementa + margem segurança)
 
     const paginas = [];
 
@@ -3135,11 +3135,11 @@ async function gerarPautaBannerLetraGrande(){
       for(let i = 0; i < esqItens.length; i += MAX_RQU_POR_PAG){
         const lote = esqItens.slice(i, i + MAX_RQU_POR_PAG);
         paginas.push([{
-          ico:'⚡', titulo:'Requerimentos e Matérias', cor:'#7A1A1A', borda:'#c8a8a8',
+          ico:'⚡', titulo:'Requerimentos e Matérias', cor:'#8B3A3A', borda:'#e0b8b8',
           itens: lote.filter(it => urgencias.includes(it)), fn: itemUrgLG,
           tipo:'urg'
         },{
-          ico:'📄', titulo:'Matérias sobre a Mesa', cor:'#1A3A2A', borda:'#c8d8c8',
+          ico:'📄', titulo:'Matérias sobre a Mesa', cor:'#2E7D52', borda:'#b8ddc8',
           itens: lote.filter(it => materias.includes(it)), fn: itemProjLG,
           tipo:'mat'
         }].filter(g => g.itens.length > 0));
@@ -3150,7 +3150,7 @@ async function gerarPautaBannerLetraGrande(){
     if(todosProj.length > 0){
       for(let i = 0; i < todosProj.length; i += MAX_PRJ_POR_PAG){
         paginas.push([{
-          ico:'🏛️', titulo:'Projetos em Discussão', cor:'#1A2A5C', borda:'#a8b8d8',
+          ico:'🏛️', titulo:'Projetos em Discussão', cor:'#2A4A8A', borda:'#b8c8e8',
           itens: todosProj.slice(i, i + MAX_PRJ_POR_PAG), fn: itemProjLG,
           tipo:'proj'
         }]);
@@ -3161,7 +3161,7 @@ async function gerarPautaBannerLetraGrande(){
     if(paginas.length === 0 && todosProj.length > 0){
       for(let i = 0; i < todosProj.length; i += MAX_PRJ_POR_PAG){
         paginas.push([{
-          ico:'🏛️', titulo:'Projetos em Discussão', cor:'#1A2A5C', borda:'#a8b8d8',
+          ico:'🏛️', titulo:'Projetos em Discussão', cor:'#2A4A8A', borda:'#b8c8e8',
           itens: todosProj.slice(i, i + MAX_PRJ_POR_PAG), fn: itemProjLG,
           tipo:'proj'
         }]);
@@ -3194,7 +3194,7 @@ async function gerarPautaBannerLetraGrande(){
         `font-family:'Source Sans 3',Arial,sans-serif;display:flex;flex-direction:column;` +
         `overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.15);margin-bottom:4px;">` +
         cabecalho(dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64,num,totalPaginas,orisPagina) +
-        `<div style="padding:10px 10px 0;flex:1;overflow:hidden;">${corpo}</div>` +
+        `<div style="padding:10px 10px 10px;flex:1;overflow:hidden;">${corpo}</div>` +
         rodape(logoOpoB64,logoMinB64,dataFmt) +
         `</div>`
       );
