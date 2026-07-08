@@ -122,7 +122,7 @@ def cloudflare_post(prompt, max_tokens=1500, temperatura=0.3):
         headers={"Authorization": f"Bearer {cf_token}", "Content-Type": "application/json"},
         json={"messages": [{"role": "user", "content": prompt}],
               "max_tokens": max_tokens, "temperature": temperatura},
-        timeout=30
+        timeout=60
     )
     r.raise_for_status()
     return r.json()['result']['response']
