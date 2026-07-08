@@ -2991,37 +2991,40 @@ async function gerarPautaBannerLetraGrande(){
       if(p.length===3){const d=parseInt(p[0]),m=parseInt(p[1]),a=p[2];if(!isNaN(d)&&!isNaN(m))dataFmt=`${d} de ${meses[m-1]} de ${a}`;}
     }
 
-    function _e(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+    function _ePB(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
+    // Separa itens por tipo
     const urgencias = itens.filter(it=>/^REQ\s|^RQS\s|^RQU\s|^REC\s/i.test(it.projeto_original||it.projeto||''));
     const materias  = itens.filter(it=>/Reda[cç][aã]o Final/i.test(it.projeto)&&!urgencias.includes(it));
     const checksSel = Array.from(document.querySelectorAll('#pb-lista-prioridade input[type=checkbox]:checked')).map(cb=>String(cb.value));
     const priIds    = new Set(checksSel);
     const todosProj = itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)).sort((a,b)=>(a.ordem||0)-(b.ordem||0));
 
-    const oriCores = {'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#2A5C8A','OBSTRUÇÃO':'#7A1A1A','NEGOCIAÇÃO':'#8A6A00','ABSTENÇÃO':'#555'};
-    const logoHtml = [logoOpoB64,logoMinB64].filter(Boolean).map(l=>`<img src="${l}" style="height:38px;object-fit:contain;">`).join('');
-    const cabFoto  = imgB64 ? `<img src="data:${imgMime};base64,${imgB64}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;"><div style="position:absolute;inset:0;background:rgba(10,20,10,0.6);z-index:1;"></div>` : '';
+    const oriCores={'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#2A5C8A','OBSTRUÇÃO':'#7A1A1A','NEGOCIAÇÃO':'#8A6A00','ABSTENÇÃO':'#555'};
+    const logoHtml=[logoOpoB64,logoMinB64].filter(Boolean).map(l=>`<img src="${l}" style="height:40px;object-fit:contain;">`).join('');
+    const cabFoto=imgB64?`<img src="data:${imgMime};base64,${imgB64}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;"><div style="position:absolute;inset:0;background:rgba(10,20,10,0.6);z-index:1;"></div>`:'';
 
-    // ── HTML helpers ────────────────────────────────────────────────────
-    function mkCabecalho(){
+    function mkCab(num, total){
       return `<div style="background:#0d2a0d;padding:16px 20px;position:relative;overflow:hidden;">
         ${cabFoto}
         <div style="position:relative;z-index:2;display:flex;justify-content:space-between;align-items:center;">
           <div>
-            <div style="font-family:'Barlow Condensed',sans-serif;font-size:38px;font-weight:900;color:#fff;line-height:.9;letter-spacing:-1px;">PAUTA<br><span style="color:#E9B847">RESUMIDA</span></div>
+            <div style="font-family:'Barlow Condensed',sans-serif;font-size:40px;font-weight:900;color:#fff;line-height:.88;letter-spacing:-1px;">PAUTA<br><span style="color:#E9B847">RESUMIDA</span></div>
             <div style="font-size:12px;font-weight:700;color:rgba(255,255,255,.7);letter-spacing:2px;text-transform:uppercase;margin-top:4px;">Ordem do Dia — Câmara dos Deputados</div>
-            <div style="margin-top:6px;background:#1A6B3A;display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:4px;">
+            <div style="margin-top:6px;background:#1A6B3A;display:inline-flex;align-items:center;padding:3px 10px;border-radius:4px;">
               <span style="color:#fff;font-size:14px;font-weight:700;">${dataFmt||'—'}</span>
             </div>
           </div>
-          <div style="background:#fff;border-radius:6px;padding:6px 10px;display:flex;gap:8px;align-items:center;">${logoHtml}</div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+            <div style="background:#fff;border-radius:6px;padding:6px 10px;display:flex;gap:8px;align-items:center;">${logoHtml}</div>
+            <div style="color:rgba(255,255,255,.5);font-size:11px;font-weight:600;">Pág. ${num}/${total}</div>
+          </div>
         </div>
-      </div><div style="height:6px;background:#E9B847;"></div>`;
+      </div><div style="height:5px;background:#E9B847;"></div>`;
     }
 
-    function mkRodape(){
-      return `<div style="background:#1A2A3A;padding:8px 16px;display:flex;justify-content:space-between;align-items:center;">
+    function mkRod(){
+      return `<div style="background:#1A2A3A;padding:8px 16px;display:flex;justify-content:space-between;align-items:center;margin-top:auto;">
         <div style="display:flex;gap:8px;align-items:center;">${logoHtml}</div>
         <div style="text-align:right;font-size:10px;color:rgba(255,255,255,.7);">
           <div style="font-weight:800;letter-spacing:1px;text-transform:uppercase;">Pauta Resumida — Ordem do Dia</div>
@@ -3030,155 +3033,115 @@ async function gerarPautaBannerLetraGrande(){
       </div>`;
     }
 
-    function mkSecaoHdr(ico, titulo, cor, cont){
-      return `<div style="background:${cor};padding:10px 14px;display:flex;align-items:center;gap:10px;">
-        <span style="font-size:18px;">${ico}</span>
-        <span style="font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;">${titulo}${cont?' <span style="font-size:14px;font-weight:600;opacity:.8">(Continuação)</span>':''}</span>
-      </div>`;
-    }
-
     function mkItem(it, tipo){
-      const ori = (it.orientacao||'').toUpperCase();
-      const oriBadge = ori?`<span style="background:${oriCores[ori]||'#555'};color:#fff;font-size:11px;font-weight:900;padding:3px 10px;border-radius:4px;margin-left:8px;">${ori}</span>`:'';
-      const proj  = _e(it.projeto||'');
-      const autor = _e((it.autor||'').split(',').slice(0,2).join(', ').substring(0,70));
-      const rel   = tipo!=='urg'?_e((it.relator||'').replace('Não atribuído','').substring(0,50)):'';
-      const res   = _e((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
-      const n     = String(it.ordem);
-      const ehPri = priIds.has(String(it.id_principal))&&tipo!=='urg';
-      const bgNum = tipo==='urg'?'#8B3A3A':(ehPri?'#7A5500':'#2A4A8A');
-      const bgRow = ehPri?'background:#FFFBEA;border-left:4px solid #E9B847;':'background:#fff;';
-      return `<div style="padding:10px 14px;border-bottom:1px solid #eee;${bgRow}display:flex;gap:10px;align-items:flex-start;">
-        <div style="min-width:30px;height:30px;background:${bgNum};color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;flex-shrink:0;">${ehPri?'⭐':n}</div>
+      const ori=(it.orientacao||'').toUpperCase();
+      const oriBadge=ori?`<span style="background:${oriCores[ori]||'#555'};color:#fff;font-size:11px;font-weight:900;padding:3px 10px;border-radius:4px;margin-left:8px;">${ori}</span>`:'';
+      const proj=_ePB(it.projeto||'');
+      const autor=_ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,70));
+      const rel=tipo!=='urg'?_ePB((it.relator||'').replace('Não atribuído','').substring(0,50)):'';
+      const res=_ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
+      const n=String(it.ordem);
+      const ehPri=priIds.has(String(it.id_principal))&&tipo!=='urg';
+      const bgNum=tipo==='urg'?'#8B3A3A':(ehPri?'#7A5500':'#2A4A8A');
+      const bgRow=ehPri?'background:#FFFBEA;border-left:4px solid #E9B847;':'background:#fff;';
+      return `<div style="padding:12px 14px;border-bottom:1px solid #eee;${bgRow}display:flex;gap:10px;align-items:flex-start;">
+        <div style="min-width:32px;height:32px;background:${bgNum};color:#fff;border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;flex-shrink:0;">${ehPri?'⭐':n}</div>
         <div>
           <div style="font-size:18px;font-weight:800;color:${tipo==='urg'?'#5A1A1A':(ehPri?'#7A5500':'#1A2A5C')};">${proj}${oriBadge}</div>
-          ${autor?`<div style="font-size:16px;color:#444;margin-top:2px;">Autor: ${autor}</div>`:''}
+          ${autor?`<div style="font-size:16px;color:#444;margin-top:3px;">Autor: ${autor}</div>`:''}
           ${rel?`<div style="font-size:16px;color:#666;">Rel.: ${rel}</div>`:''}
-          ${res?`<div style="font-size:16px;color:#333;margin-top:3px;line-height:1.4;">${res.substring(0,140)}</div>`:''}
+          ${res?`<div style="font-size:16px;color:#333;margin-top:3px;line-height:1.4;">${res.substring(0,160)}</div>`:''}
         </div>
       </div>`;
     }
 
-    // ── Mede alturas reais via DOM ───────────────────────────────────────
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Medindo layout...';
-    const med = document.createElement('div');
-    med.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;visibility:hidden;z-index:-1;';
-    document.body.appendChild(med);
-
-    async function medir(html){
-      med.innerHTML = html; void med.offsetHeight;
-      await new Promise(r=>requestAnimationFrame(r));
-      return med.firstElementChild ? med.firstElementChild.offsetHeight : 0;
+    function mkSecao(ico, titulo, cor, itens, tipo){
+      if(!itens.length) return '';
+      return `<div style="border-radius:8px;overflow:hidden;border:1.5px solid #ddd;margin-bottom:14px;">
+        <div style="background:${cor};padding:10px 14px;display:flex;align-items:center;gap:10px;">
+          <span style="font-size:18px;">${ico}</span>
+          <span style="font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;">${titulo}</span>
+        </div>
+        ${itens.map(it=>mkItem(it,tipo)).join('')}
+      </div>`;
     }
 
-    const hCab = await medir(mkCabecalho());
-    const hRod = await medir(mkRodape());
-    const hHdr = await medir(mkSecaoHdr('⚡','TESTE','#8B3A3A',false));
+    // Monta páginas: página 1 = RQU+Matérias, restantes = Projetos
+    // Uma página por grupo — sem quebrar grupo entre páginas
+    const paginas = [];
 
-    // Mede cada item
-    const grupos = [
-      {ico:'⚡',titulo:'Requerimentos de Urgência',cor:'#8B3A3A',itens:urgencias,tipo:'urg'},
-      {ico:'📄',titulo:'Matérias sobre a Mesa',    cor:'#2E7D52', itens:materias, tipo:'mat'},
-      {ico:'🏛️',titulo:'Projetos em Discussão',    cor:'#2A4A8A',itens:todosProj,tipo:'proj'},
-    ].filter(g=>g.itens.length>0);
-
-    for(const g of grupos){
-      g.alturas = [];
-      for(const it of g.itens){
-        g.alturas.push(await medir(mkItem(it,g.tipo))+1);
-      }
-    }
-    document.body.removeChild(med);
-
-    // ── Distribui em páginas sem jamais cortar um item ───────────────────
-    const AREA = 1123 - hCab - hRod - 20; // área útil real com 10px margem cada lado
-    const paginas = []; // cada página = array de {tipo:'hdr'|'item', html, h}
-
-    let paginaAtual = [], altAtual = 0;
-
-    function novasPagina(){
-      if(paginaAtual.length>0) paginas.push(paginaAtual);
-      paginaAtual = []; altAtual = 0;
+    const esqItens = [...materias, ...urgencias];
+    if(esqItens.length){
+      paginas.push({
+        secoes:[
+          {ico:'⚡',titulo:'Requerimentos de Urgência',cor:'#8B3A3A',itens:urgencias,tipo:'urg'},
+          {ico:'📄',titulo:'Matérias sobre a Mesa',    cor:'#2E7D52', itens:materias, tipo:'mat'},
+        ].filter(s=>s.itens.length)
+      });
     }
 
-    for(const g of grupos){
-      let cont = false;
-      for(let i=0; i<g.itens.length; i++){
-        const hItem = g.alturas[i];
-        const hdr   = mkSecaoHdr(g.ico, g.titulo, g.cor, cont);
-        // Se é primeiro item do grupo OU continuação: precisa do header
-        const precisaHdr = (i===0 || cont===false);
-        // Calcula se header+item cabem
-        const espacoNecessario = (i===0||cont)?hHdr+hItem:hItem;
-        if(altAtual + espacoNecessario > AREA){
-          novasPagina();
-          cont = true;
-        }
-        // Adiciona header se necessário
-        if(i===0 || (cont && paginaAtual.length===0)){
-          const hdrHtml = mkSecaoHdr(g.ico, g.titulo, g.cor, cont&&i>0);
-          paginaAtual.push({html:`<div style="border-radius:8px 8px 0 0;overflow:hidden;margin-bottom:0;">${hdrHtml}</div>`,h:hHdr});
-          altAtual += hHdr;
-        }
-        // Adiciona item
-        paginaAtual.push({html:mkItem(g.itens[i],g.tipo), h:hItem});
-        altAtual += hItem;
-      }
-      // Fecha o card da seção (borda inferior)
-      if(paginaAtual.length>0){
-        paginaAtual.push({html:'<div style="height:12px;background:#fff;border-bottom:1.5px solid #ddd;border-radius:0 0 8px 8px;margin-bottom:16px;"></div>',h:12+16});
-        altAtual += 12+16;
-      }
+    // Projetos — pagina a cada 5 itens para caber bem em A4 com fonte 18px
+    const PROJ_POR_PAG = 5;
+    for(let i=0; i<todosProj.length; i+=PROJ_POR_PAG){
+      paginas.push({
+        secoes:[{ico:'🏛️',titulo:'Projetos em Discussão',cor:'#2A4A8A',itens:todosProj.slice(i,i+PROJ_POR_PAG),tipo:'proj'}]
+      });
     }
-    novasPagina();
 
-    // ── Renderiza cada página e captura ─────────────────────────────────
+    if(!paginas.length) paginas.push({secoes:[]});
+    const total = paginas.length;
+
+    // Renderiza e captura cada página
     const container = document.createElement('div');
-    container.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1;';
+    container.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;z-index:-1;';
     document.body.appendChild(container);
-    await new Promise(r=>setTimeout(r,400));
+    await new Promise(r=>setTimeout(r,500));
 
     const dataURLs = [];
     for(let p=0; p<paginas.length; p++){
-      btn.innerHTML = `<i class="fas fa-spinner fa-spin me-1"></i>Capturando ${p+1}/${paginas.length}...`;
-      const corpo = paginas[p].map(x=>x.html).join('');
-      const pageHTML = `<div style="width:794px;background:#F5F5F3;font-family:'Source Sans 3',Arial,sans-serif;">
-        ${mkCabecalho()}
-        <div style="padding:10px 12px;">${corpo}</div>
-        ${mkRodape()}
+      btn.innerHTML = `<i class="fas fa-spinner fa-spin me-1"></i>Capturando ${p+1}/${total}...`;
+      const corpo = paginas[p].secoes.map(s=>mkSecao(s.ico,s.titulo,s.cor,s.itens,s.tipo)).join('');
+      container.innerHTML = `<div style="width:794px;background:#F5F5F3;font-family:'Source Sans 3',Arial,sans-serif;">
+        ${mkCab(p+1,total)}
+        <div style="padding:12px 12px 0;">${corpo}</div>
+        ${mkRod()}
       </div>`;
-      container.innerHTML = pageHTML;
       const el = container.querySelector('div');
       void el.offsetHeight;
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-      await new Promise(r=>setTimeout(r,200));
+      await new Promise(r=>setTimeout(r,250));
 
-      // Captura com altura exata da página
-      const canvasPage = await html2canvas(el,{
+      // Captura altura real e redimensiona para A4 mantendo tudo visível
+      const canvasReal = await html2canvas(el,{
         scale:3, useCORS:true, allowTaint:true,
         backgroundColor:'#F5F5F3', logging:false,
         width:794, height:el.scrollHeight,
         windowWidth:794, windowHeight:el.scrollHeight,
       });
 
-      // Cria canvas A4 exato e desenha a página nele (sem escalar — tamanho certo)
-      const A4c = document.createElement('canvas');
-      A4c.width = 794*3; A4c.height = 1123*3;
-      const ctx = A4c.getContext('2d');
-      ctx.fillStyle = '#F5F5F3';
-      ctx.fillRect(0,0,A4c.width,A4c.height);
-      ctx.drawImage(canvasPage,0,0);
-      dataURLs.push(A4c.toDataURL('image/png',1.0));
+      // Canvas A4 exato — escala o conteúdo para caber sem cortar
+      const A4W=794*3, A4H=1123*3;
+      const finalC = document.createElement('canvas');
+      finalC.width=A4W; finalC.height=A4H;
+      const ctx=finalC.getContext('2d');
+      ctx.fillStyle='#F5F5F3';
+      ctx.fillRect(0,0,A4W,A4H);
+      // Escala proporcional: usa largura total, ajusta altura se necessário
+      const scaleY = canvasReal.height > A4H ? A4H/canvasReal.height : 1;
+      const drawW  = canvasReal.width  * scaleY;
+      const drawH  = canvasReal.height * scaleY;
+      ctx.drawImage(canvasReal, 0, 0, drawW, drawH);
+      dataURLs.push(finalC.toDataURL('image/png',1.0));
     }
     document.body.removeChild(container);
 
-    // ── Abre popup ───────────────────────────────────────────────────────
+    // Popup com imagens para impressão A4
     const popup = window.open('','_blank','width=880,height=900,scrollbars=yes,resizable=yes');
     if(!popup){alert('Permita pop-ups.');return;}
     const imgsHTML = dataURLs.map((src,i)=>
-      `<div class="pagina"><img src="${src}"><div class="num">Pág. ${i+1}/${dataURLs.length}</div></div>`
+      `<div class="pagina"><img src="${src}"></div>`
     ).join('');
-    const pd = popup.document;
+    const pd=popup.document;
     pd.open();
     pd.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Pauta — Letra Grande</title>
 <style>
@@ -3189,19 +3152,17 @@ async function gerarPautaBannerLetraGrande(){
   .toolbar button{padding:7px 18px;border:none;border-radius:5px;cursor:pointer;font-weight:700;font-size:13px;}
   .btn-print{background:#1A6B3A;color:#fff;} .btn-close{background:#555;color:#fff;}
   .paginas{padding:16px;display:flex;flex-direction:column;align-items:center;gap:12px;}
-  .pagina{position:relative;}
   .pagina img{width:794px;display:block;box-shadow:0 4px 20px rgba(0,0,0,.5);}
-  .num{position:absolute;bottom:6px;right:12px;font-size:11px;color:rgba(255,255,255,.5);}
   @media print{
     body{background:#fff;} .toolbar{display:none!important;}
     .paginas{padding:0;gap:0;}
     .pagina{page-break-after:always;break-after:page;}
-    .pagina img{width:100%;} .num{display:none;}
+    .pagina img{width:100%;}
     @page{size:A4 portrait;margin:0;}
   }
 </style></head><body>
 <div class="toolbar">
-  <strong>📋 Pauta Resumida — Letra Grande · ${dataURLs.length} página${dataURLs.length>1?'s':''}</strong>
+  <strong>📋 Pauta Resumida — Letra Grande · ${total} página${total>1?'s':''}</strong>
   <button class="btn-print" onclick="window.print()">🖨️ Imprimir / PDF</button>
   <button class="btn-close" onclick="window.close()">✕ Fechar</button>
 </div>
