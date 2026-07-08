@@ -5625,7 +5625,7 @@ def gerar_banner_proposicao():
         '<div class="card card-ori">'
         '<div class="card-header">'
         '<div class="card-header-ico">&#127885;</div>'
-        '<div class="card-header-txt">Orienta&ccedil;&atilde;o da Minoria</div>'
+        '<div class="card-header-txt">Orienta&ccedil;&atilde;o</div>'
         '</div>'
         '<div class="ori-badge"><div class="ori-badge-txt">' + ORI_EMOJI + ' ' + ORI_LABEL + '</div></div>'
         + (
@@ -5743,7 +5743,7 @@ def gerar_banner_proposicao():
         '<div class="card card-ori">'
         '<div class="card-header">'
         '<div class="card-header-ico">&#127885;</div>'
-        '<div class="card-header-txt">Orienta&ccedil;&atilde;o da Minoria</div>'
+        '<div class="card-header-txt">Orienta&ccedil;&atilde;o</div>'
         '</div>'
         '<div class="ori-badge"><div class="ori-badge-txt">' + ORI_EMOJI + ' ' + ORI_LABEL + '</div></div>'
         + (
