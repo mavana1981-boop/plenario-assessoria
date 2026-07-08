@@ -3121,6 +3121,12 @@ async function gerarPautaBannerLetraGrande(){
 
     btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Medindo layout...';
 
+    // Mede cabeçalho e rodapé reais
+    const hCabReal = await medirAltura(cabecalho(dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64,1,1));
+    const hRodReal = await medirAltura(rodape(logoOpoB64,logoMinB64,dataFmt));
+    const MARGEM_REAL = hCabReal + hRodReal + 22; // +22px padding interno
+    console.log('[LG] cabeçalho='+hCabReal+'px, rodapé='+hRodReal+'px, margem='+MARGEM_REAL+'px');
+
     const gruposSecoes = [
       {tipo:'mat',  itens:materias,  ico:'📄', titulo:'Matérias sobre a Mesa',     cor:'#1A3A2A', borda:'#c8d8c8', fn:itemProjLG},
       {tipo:'urg',  itens:urgencias, ico:'⚡', titulo:'Requerimentos de Urgência',  cor:'#7A1A1A', borda:'#c8a8a8', fn:itemUrgLG},
@@ -3142,7 +3148,7 @@ async function gerarPautaBannerLetraGrande(){
     document.body.removeChild(medidor);
 
     // Distribui em páginas com alturas reais
-    const AREA_UTIL = A4_H - MARGEM_CAB_ROD;
+    const AREA_UTIL = A4_H - MARGEM_REAL;
     const paginas = [];
     let paginaAtual = [];
     let alturaAtual = 0;
