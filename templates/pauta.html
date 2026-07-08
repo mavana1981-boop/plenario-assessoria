@@ -3018,20 +3018,7 @@ async function gerarPautaBannerLetraGrande(){
       const cabFoto = imgB64
         ? `<img src="data:${imgMime};base64,${imgB64}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;object-position:center top;z-index:0;">
            <div style="position:absolute;inset:0;background:linear-gradient(to right,rgba(0,0,0,0.72) 0%,rgba(0,0,0,0.20) 40%,rgba(0,0,0,0.20) 60%,rgba(0,0,0,0.72) 100%);z-index:1;"></div>` : '';
-      // Monta faixa de orientações se houver
-      const oriFaixaHTML = (() => {
-        if(!orientacoes || !orientacoes.length) return '';
-        const oriCoresFx = {'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#2A5C8A','OBSTRUÇÃO':'#7A1A1A','OBSTRUCAO':'#7A1A1A','NEGOCIAÇÃO':'#8A6A00','NEGOCIACAO':'#8A6A00','ABSTENÇÃO':'#555','ABSTENCAO':'#555'};
-        // Agrupa: mostra cada combinação (projeto + orientação) em linha compacta
-        return orientacoes.map(({projeto, ori}) => {
-          if(!ori) return '';
-          const cor = oriCoresFx[ori.toUpperCase()] || '#444';
-          return `<div style="display:flex;align-items:center;gap:6px;margin-top:3px;">
-            <span style="background:${cor};color:#fff;font-size:11px;font-weight:900;padding:2px 10px;border-radius:3px;letter-spacing:1px;flex-shrink:0;">${ori.toUpperCase()}</span>
-            <span style="font-size:11px;color:rgba(255,255,255,.85);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;">${projeto}</span>
-          </div>`;
-        }).filter(Boolean).join('');
-      })();
+      const oriFaixaHTML = ''; // orientação aparece inline em cada item
 
       return `<div style="${cabBgColor}padding:18px 20px 0;position:relative;overflow:hidden;">
         ${cabFoto}
@@ -3124,8 +3111,8 @@ async function gerarPautaBannerLetraGrande(){
     // Última(s) página(s): Projetos em Discussão
     const A4_H = 1123;
     const A4_W = 794;
-    const MAX_RQU_POR_PAG = 6;  // máx urgências por página
-    const MAX_PRJ_POR_PAG = 5;  // máx projetos por página (fonte 18px com ementa + margem segurança)
+    const MAX_RQU_POR_PAG = 4;  // máx urgências por página (conservador para evitar overflow)
+    const MAX_PRJ_POR_PAG = 4;  // máx projetos por página
 
     const paginas = [];
 
