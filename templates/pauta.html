@@ -3151,26 +3151,21 @@ async function gerarPautaBannerLetraGrande(){
       </div>`;
     });
 
-    // Renderiza cada página em um container off-screen e captura com html2canvas
+    // Renderiza todas as páginas e une em um único canvas/PNG
     const container = document.createElement('div');
     container.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1;';
     document.body.appendChild(container);
 
-    // Link de fontes necessário para html2canvas
-    const fontLink = document.createElement('link');
-    fontLink.rel = 'stylesheet';
-    fontLink.href = 'https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap';
-    document.head.appendChild(fontLink);
-    await new Promise(r => setTimeout(r, 800)); // aguarda fontes carregarem
+    // Aguarda fontes carregarem
+    await new Promise(r => setTimeout(r, 800));
 
+    const canvases = [];
     for(let i = 0; i < paginasHTML.length; i++){
-      btn.innerHTML = `<i class="fas fa-spinner fa-spin me-1"></i>Gerando página ${i+1}/${paginasHTML.length}...`;
+      btn.innerHTML = `<i class="fas fa-spinner fa-spin me-1"></i>Capturando página ${i+1}/${paginasHTML.length}...`;
 
-      // Injeta a página no container
       container.innerHTML = `<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">${paginasHTML[i]}`;
       const el = container.querySelector('div');
 
-      // Reflow
       void el.offsetHeight;
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       await new Promise(r => setTimeout(r, 200));
@@ -3186,21 +3181,34 @@ async function gerarPautaBannerLetraGrande(){
         windowWidth: el.scrollWidth,
         windowHeight: el.scrollHeight,
       });
-
-      // Download do PNG
-      const a = document.createElement('a');
-      const sufixo = paginasHTML.length > 1 ? `_pag${i+1}de${paginasHTML.length}` : '';
-      a.download = `pauta_banner_LG${sufixo}.png`;
-      a.href = canvas.toDataURL('image/png', 1.0);
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-
-      // Pequena pausa entre páginas para não sobrecarregar
-      if(i < paginasHTML.length - 1) await new Promise(r => setTimeout(r, 400));
+      canvases.push(canvas);
     }
 
     document.body.removeChild(container);
+
+    // Une todos os canvases verticalmente em um único canvas
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Unindo páginas...';
+    const totalW = Math.max(...canvases.map(c => c.width));
+    const totalH = canvases.reduce((s, c) => s + c.height, 0);
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width  = totalW;
+    finalCanvas.height = totalH;
+    const ctx = finalCanvas.getContext('2d');
+    ctx.fillStyle = '#888888';
+    ctx.fillRect(0, 0, totalW, totalH);
+    let y = 0;
+    for(const c of canvases){
+      ctx.drawImage(c, 0, y);
+      y += c.height;
+    }
+
+    // Download único
+    const a = document.createElement('a');
+    a.download = 'pauta_banner_LG.png';
+    a.href = finalCanvas.toDataURL('image/png', 1.0);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
 
   }catch(e){
     alert('Erro: '+e.message);
