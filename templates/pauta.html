@@ -2988,305 +2988,167 @@ async function gerarPautaBannerLetraGrande(){
     if(dataEvt){
       const meses=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
       const partes = dataEvt.split('/');
-      if(partes.length===3){
-        const dia=parseInt(partes[0]),mes=parseInt(partes[1]),ano=partes[2];
-        if(!isNaN(dia)&&!isNaN(mes)) dataFmt=`${dia} de ${meses[mes-1]} de ${ano}`;
-      }
+      if(partes.length===3){const dia=parseInt(partes[0]),mes=parseInt(partes[1]),ano=partes[2];if(!isNaN(dia)&&!isNaN(mes))dataFmt=`${dia} de ${meses[mes-1]} de ${ano}`;}
     }
+
+    function _e(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
     // Separa itens por tipo
-    const urgencias  = itens.filter(it=>/^REQ\s|^RQS\s|^RQU\s|^REC\s/i.test(it.projeto_original||it.projeto||''));
-    const materias   = itens.filter(it=>/Reda[cç][aã]o Final/i.test(it.projeto)&&!urgencias.includes(it));
-    const checksSel  = Array.from(document.querySelectorAll('#pb-lista-prioridade input[type=checkbox]:checked')).map(cb=>String(cb.value));
-    const prioridade = itens.filter(it=>checksSel.includes(String(it.id_principal))&&!urgencias.includes(it)&&!materias.includes(it));
-    const projetos   = itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)&&!prioridade.includes(it));
-    const priIds     = new Set(prioridade.map(it=>String(it.id_principal)));
-    const todosProj  = [...prioridade,...projetos].sort((a,b)=>(a.ordem||0)-(b.ordem||0));
+    const urgencias = itens.filter(it=>/^REQ\s|^RQS\s|^RQU\s|^REC\s/i.test(it.projeto_original||it.projeto||''));
+    const materias  = itens.filter(it=>/Reda[cç][aã]o Final/i.test(it.projeto)&&!urgencias.includes(it));
+    const checksSel = Array.from(document.querySelectorAll('#pb-lista-prioridade input[type=checkbox]:checked')).map(cb=>String(cb.value));
+    const priIds    = new Set(checksSel);
+    const projetos  = itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it));
+    const todosProj = projetos.sort((a,b)=>(a.ordem||0)-(b.ordem||0));
 
-    // Decide distribuição de páginas
-    // Regra: se urgências>0 E projetos>0, urgências e matérias ficam na página 1,
-    //        projetos na(s) página(s) seguinte(s).
-    //        Máximo 8 itens por página (com fonte 16px cabe confortavelmente).
-    const MAX_POR_PAG = 8;
+    const oriCores = {'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#2A5C8A','OBSTRUÇÃO':'#7A1A1A','NEGOCIAÇÃO':'#8A6A00','ABSTENÇÃO':'#555'};
 
-    function _ePB(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-
-    function cabecalho(dataFmt, imgB64, imgMime, logoOpoB64, logoMinB64, numPagina, totalPaginas, orientacoes){
-      const lO = logoOpoB64?`<img src="${logoOpoB64}" style="height:44px;object-fit:contain;">`:'';
-      const lM = logoMinB64?`<img src="${logoMinB64}" style="height:44px;object-fit:contain;">`:'';
-      const cabBgColor = 'background:#0d2a0d;';
-      const cabFoto = imgB64
-        ? `<img src="data:${imgMime};base64,${imgB64}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;object-position:center top;z-index:0;">
-           <div style="position:absolute;inset:0;background:linear-gradient(to right,rgba(0,0,0,0.72) 0%,rgba(0,0,0,0.20) 40%,rgba(0,0,0,0.20) 60%,rgba(0,0,0,0.72) 100%);z-index:1;"></div>` : '';
-      const oriFaixaHTML = ''; // orientação aparece inline em cada item
-
-      return `<div style="${cabBgColor}padding:18px 20px 0;position:relative;overflow:hidden;">
-        ${cabFoto}
-        <div style="position:relative;z-index:2;display:flex;justify-content:space-between;align-items:flex-start;">
-          <div>
-            <div style="font-family:'Barlow Condensed',sans-serif;font-size:42px;font-weight:900;color:#fff;line-height:.88;letter-spacing:-1px;">PAUTA<br><span style="color:#E9B847">RESUMIDA</span></div>
-            <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.8);letter-spacing:2px;text-transform:uppercase;margin-top:5px;">Ordem do Dia — Câmara dos Deputados</div>
-            <table style="border-collapse:collapse;margin-top:8px;background:#1A6B3A;border-radius:4px;"><tr>
-              <td style="padding:4px 6px;line-height:0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></td>
-              <td style="padding:4px 12px 4px 4px;color:#fff;font-size:15px;font-weight:700;white-space:nowrap;">${dataFmt||'—'}</td>
-            </tr></table>
-            ${oriFaixaHTML}
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
-            <div style="background:#fff;border-radius:5px;padding:6px 10px;display:flex;gap:8px;align-items:center;">${lO}${lM}</div>
-            <div style="color:rgba(255,255,255,.6);font-size:11px;">Pág. ${numPagina}/${totalPaginas}</div>
-          </div>
-        </div>
-        <div style="height:12px;background:#F4F6F8;margin:10px -20px 0;border-radius:10px 10px 0 0;"></div>
-      </div>`;
+    function itemHTML(it, tipo){
+      const ori = (it.orientacao||'').toUpperCase();
+      const oriBadge = ori ? `<span style="background:${oriCores[ori]||'#555'};color:#fff;font-size:11px;font-weight:900;padding:3px 10px;border-radius:4px;margin-left:8px;">${ori}</span>` : '';
+      const proj  = _e(it.projeto||'');
+      const autor = _e((it.autor||'').split(',').slice(0,2).join(', ').substring(0,70));
+      const rel   = tipo!=='urg' ? _e((it.relator||'').replace('Não atribuído','').substring(0,50)) : '';
+      const res   = _e((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
+      const n     = String(it.ordem);
+      const ehPri = priIds.has(String(it.id_principal));
+      const bgRow = tipo==='urg' ? '' : (ehPri ? 'background:#FFFBEA;border-left:4px solid #E9B847;' : '');
+      const bgNum = tipo==='urg' ? '#8B3A3A' : (ehPri ? '#7A5500' : '#2A4A8A');
+      return `<tr style="border-bottom:1px solid #e8e8e8;${bgRow}">
+        <td style="padding:10px 8px;vertical-align:top;width:34px;">
+          <div style="width:30px;height:30px;background:${bgNum};color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;">${ehPri&&tipo!=='urg'?'⭐':n}</div>
+        </td>
+        <td style="padding:10px 10px 10px 4px;vertical-align:top;">
+          <div style="font-size:18px;font-weight:800;color:${tipo==='urg'?'#5A1A1A':(ehPri?'#7A5500':'#1A2A5C')};">${proj}${oriBadge}</div>
+          ${autor?`<div style="font-size:16px;color:#444;margin-top:3px;">Autor: ${autor}</div>`:''}
+          ${rel?`<div style="font-size:16px;color:#666;">Rel.: ${rel}</div>`:''}
+          ${res?`<div style="font-size:16px;color:#333;margin-top:3px;line-height:1.4;">${res.substring(0,140)}</div>`:''}
+        </td>
+      </tr>`;
     }
 
-    function rodape(logoOpoB64, logoMinB64, dataFmt){
-      const lO = logoOpoB64?`<img src="${logoOpoB64}" style="height:22px;object-fit:contain;">`:'';
-      const lM = logoMinB64?`<img src="${logoMinB64}" style="height:22px;object-fit:contain;">`:'';
-      return `<div style="background:#2C3E50;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;">
-        <div style="display:flex;gap:8px;align-items:center;">${lO}${lM}</div>
-        <div style="text-align:right;font-size:9px;color:rgba(255,255,255,.7);">
-          <div style="font-weight:800;letter-spacing:1px;text-transform:uppercase;">Pauta Resumida — Ordem do Dia</div>
-          <div>Material de Apoio Parlamentar · ${dataFmt||''}</div>
-        </div>
-      </div>`;
-    }
-
-    function itemUrgLG(it){
-      const n=String(it.ordem),p=_ePB(it.projeto||'');
-      const a=_ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,70));
-      const res=_ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
-      const ori=(it.orientacao||'').toUpperCase();
-      const oriCores={'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#5B6470','OBSTRUÇÃO':'#7A1A1A','NEGOCIAÇÃO':'#1E5C8A'};
-      const oriBadge=ori?`<span style="background:${oriCores[ori]||'#6c757d'};color:#fff;font-size:10px;font-weight:800;padding:2px 8px;border-radius:3px;margin-left:8px;">${ori}</span>`:'';
-      return `<div style="padding:10px 16px;border-bottom:1px solid #f0f0f0;display:flex;gap:10px;align-items:flex-start;">
-        <div style="min-width:28px;height:28px;background:#7A1A1A;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;flex-shrink:0;">${n}</div>
-        <div style="font-size:18px;color:#222;">
-          <div style="font-weight:800;">${p}${oriBadge}</div>
-          ${a?`<div style="font-size:16px;color:#555;margin-top:2px;">Autor: ${a}</div>`:''}
-          ${res?`<div style="font-size:16px;color:#444;margin-top:3px;line-height:1.45;">${res.substring(0,130)}</div>`:''}
-        </div>
-      </div>`;
-    }
-
-    function itemProjLG(it){
-      const n=String(it.ordem),p=_ePB(it.projeto||'');
-      const a=_ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,70));
-      const rel=_ePB((it.relator||'').replace('Não atribuído','').substring(0,50));
-      const res=_ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
-      const ehPri=priIds.has(String(it.id_principal));
-      const ori=(it.orientacao||'').toUpperCase();
-      const oriCores={'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#5B6470','OBSTRUÇÃO':'#7A1A1A','NEGOCIAÇÃO':'#1E5C8A'};
-      const oriBadge=ori?`<span style="background:${oriCores[ori]||'#6c757d'};color:#fff;font-size:10px;font-weight:800;padding:2px 8px;border-radius:3px;margin-left:8px;">${ori}</span>`:'';
-      const rowBg=ehPri?'background:#FFFBEA;border-left:4px solid #E9B847;':'';
-      const badgeN=ehPri
-        ?`<div style="min-width:28px;height:28px;background:#7A5500;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;">⭐</div>`
-        :`<div style="min-width:28px;height:28px;background:#1A2A5C;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;flex-shrink:0;">${n}</div>`;
-      return `<div style="padding:10px 16px;border-bottom:1px solid #f0f0f0;${rowBg}display:flex;gap:10px;align-items:flex-start;">
-        ${badgeN}
-        <div style="font-size:18px;color:#1a1a1a;">
-          <div style="font-weight:800;color:${ehPri?'#7A5500':'#1A2A5C'};">${p}${oriBadge}</div>
-          ${a?`<div style="font-size:16px;color:#555;margin-top:2px;">Autor: ${a}</div>`:''}
-          ${rel?`<div style="font-size:16px;color:#777;">Rel.: ${rel}</div>`:''}
-          ${res?`<div style="font-size:16px;color:#333;margin-top:3px;line-height:1.45;">${res.substring(0,130)}</div>`:''}
-        </div>
-      </div>`;
-    }
-
-    function cardSecaoLG(ico, titulo, cor, bordaCor, itens, tipoFn){
-      if(!itens||!itens.length) return '';
-      return `<div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid ${bordaCor};margin-bottom:12px;">
-        <div style="background:${cor};padding:10px 16px;display:flex;align-items:center;gap:10px;">
-          <div style="width:32px;height:32px;background:rgba(255,255,255,.2);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;">${ico}</div>
+    function secaoHTML(ico, titulo, cor, itens, tipo){
+      if(!itens.length) return '';
+      return `<div style="margin-bottom:16px;border-radius:8px;overflow:hidden;border:1.5px solid #ddd;">
+        <div style="background:${cor};padding:10px 14px;display:flex;align-items:center;gap:10px;">
+          <span style="font-size:18px;">${ico}</span>
           <span style="font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;">${titulo}</span>
         </div>
-        ${itens.map(it=>tipoFn(it)).join('')}
+        <table style="width:100%;border-collapse:collapse;background:#fff;">
+          ${itens.map(it=>itemHTML(it,tipo)).join('')}
+        </table>
       </div>`;
     }
 
-    // ── Distribuição FIXA por tipo ───────────────────────────────────────
-    // Regra simples e confiável:
-    // Página 1+: Matérias + Requerimentos (todos juntos, paginando se necessário)
-    // Última(s) página(s): Projetos em Discussão
-    const A4_H = 1123;
-    const A4_W = 794;
-    const MAX_RQU_POR_PAG = 4;  // máx urgências por página (conservador para evitar overflow)
-    const MAX_PRJ_POR_PAG = 4;  // máx projetos por página
+    // Monta HTML contínuo (sem paginação)
+    const corpoHTML =
+      secaoHTML('⚡','Requerimentos de Urgência','#8B3A3A', urgencias,'urg') +
+      secaoHTML('📄','Matérias sobre a Mesa',    '#2E7D52', materias, 'mat') +
+      secaoHTML('🏛️','Projetos em Discussão',     '#2A4A8A', todosProj,'proj');
 
-    const paginas = [];
+    const logoHtml = [logoOpoB64,logoMinB64].filter(Boolean).map(l=>`<img src="${l}" style="height:38px;object-fit:contain;">`).join('');
+    const cabFoto  = imgB64 ? `<img src="data:${imgMime};base64,${imgB64}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;"><div style="position:absolute;inset:0;background:rgba(10,20,10,0.6);z-index:1;"></div>` : '';
 
-    // Páginas de Matérias + Urgências
-    const esqItens = [...materias, ...urgencias];
-    if(esqItens.length > 0){
-      for(let i = 0; i < esqItens.length; i += MAX_RQU_POR_PAG){
-        const lote = esqItens.slice(i, i + MAX_RQU_POR_PAG);
-        paginas.push([{
-          ico:'⚡', titulo:'Requerimentos e Matérias', cor:'#8B3A3A', borda:'#e0b8b8',
-          itens: lote.filter(it => urgencias.includes(it)), fn: itemUrgLG,
-          tipo:'urg'
-        },{
-          ico:'📄', titulo:'Matérias sobre a Mesa', cor:'#2E7D52', borda:'#b8ddc8',
-          itens: lote.filter(it => materias.includes(it)), fn: itemProjLG,
-          tipo:'mat'
-        }].filter(g => g.itens.length > 0));
-      }
-    }
+    const fullHTML = `
+      <div style="width:794px;font-family:'Source Sans 3',Arial,sans-serif;background:#F5F5F3;">
+        <!-- CABEÇALHO -->
+        <div style="background:#0d2a0d;padding:16px 20px;position:relative;overflow:hidden;min-height:100px;">
+          ${cabFoto}
+          <div style="position:relative;z-index:2;display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <div style="font-family:'Barlow Condensed',sans-serif;font-size:38px;font-weight:900;color:#fff;line-height:.9;letter-spacing:-1px;">PAUTA<br><span style="color:#E9B847">RESUMIDA</span></div>
+              <div style="font-size:12px;font-weight:700;color:rgba(255,255,255,.7);letter-spacing:2px;text-transform:uppercase;margin-top:4px;">Ordem do Dia — Câmara dos Deputados</div>
+              <div style="margin-top:6px;background:#1A6B3A;display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:4px;">
+                <span style="color:#fff;font-size:14px;font-weight:700;">${dataFmt||'—'}</span>
+              </div>
+            </div>
+            <div style="background:#fff;border-radius:6px;padding:6px 10px;display:flex;gap:8px;align-items:center;">${logoHtml}</div>
+          </div>
+        </div>
+        <!-- LINHA SEPARADORA -->
+        <div style="height:6px;background:#E9B847;"></div>
+        <!-- CONTEÚDO -->
+        <div style="padding:14px 12px 14px;">
+          ${corpoHTML}
+        </div>
+        <!-- RODAPÉ -->
+        <div style="background:#1A2A3A;padding:8px 16px;display:flex;justify-content:space-between;align-items:center;">
+          <div style="display:flex;gap:8px;align-items:center;">${logoHtml}</div>
+          <div style="text-align:right;font-size:10px;color:rgba(255,255,255,.7);">
+            <div style="font-weight:800;letter-spacing:1px;text-transform:uppercase;">Pauta Resumida — Ordem do Dia</div>
+            <div>${dataFmt||''}</div>
+          </div>
+        </div>
+      </div>`;
 
-    // Páginas de Projetos — sempre em página(s) nova(s)
-    if(todosProj.length > 0){
-      for(let i = 0; i < todosProj.length; i += MAX_PRJ_POR_PAG){
-        paginas.push([{
-          ico:'🏛️', titulo:'Projetos em Discussão', cor:'#2A4A8A', borda:'#b8c8e8',
-          itens: todosProj.slice(i, i + MAX_PRJ_POR_PAG), fn: itemProjLG,
-          tipo:'proj'
-        }]);
-      }
-    }
-
-    // Fallback: se não há urgências nem matérias, só projetos
-    if(paginas.length === 0 && todosProj.length > 0){
-      for(let i = 0; i < todosProj.length; i += MAX_PRJ_POR_PAG){
-        paginas.push([{
-          ico:'🏛️', titulo:'Projetos em Discussão', cor:'#2A4A8A', borda:'#b8c8e8',
-          itens: todosProj.slice(i, i + MAX_PRJ_POR_PAG), fn: itemProjLG,
-          tipo:'proj'
-        }]);
-      }
-    }
-
-    const totalPaginas = paginas.length || 1;
-
-    // Mede altura real do cabeçalho e rodapé via DOM
-    const _medDiv = document.createElement('div');
-    _medDiv.style.cssText = `position:fixed;left:-9999px;top:0;width:${A4_W}px;visibility:hidden;z-index:-1;`;
-    document.body.appendChild(_medDiv);
-    _medDiv.innerHTML = cabecalho(dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64,1,1,[]);
-    await new Promise(r=>requestAnimationFrame(r));
-    const _hCab = _medDiv.firstElementChild ? _medDiv.firstElementChild.offsetHeight : 160;
-    _medDiv.innerHTML = rodape(logoOpoB64,logoMinB64,dataFmt);
-    await new Promise(r=>requestAnimationFrame(r));
-    const _hRod = _medDiv.firstElementChild ? _medDiv.firstElementChild.offsetHeight : 44;
-    document.body.removeChild(_medDiv);
-    // Área útil real para conteúdo (com margens de segurança de 16px top/bottom)
-    const AREA_CONTEUDO = A4_H - _hCab - _hRod - 32;
-    console.log(`[LG] cab=${_hCab}px rod=${_hRod}px area=${AREA_CONTEUDO}px`);
-
-    // Monta HTML final de cada página com altura exata
-    const paginasHTML = paginas.map((grupos, idx) => {
-      const num = idx + 1;
-      const corpo = grupos.map(g =>
-        cardSecaoLG(g.ico, g.titulo, g.cor, g.borda, g.itens, g.fn)
-      ).join('');
-      const orisPagina = [];
-      grupos.forEach(g => {
-        g.itens.forEach(it => {
-          const ori = (it.orientacao||'').trim();
-          if(ori) orisPagina.push({projeto:(it.projeto_original||it.projeto||'').substring(0,40),ori});
-        });
-      });
-      return (
-        `<div style="width:794px;background:#F4F6F8;` +
-        `font-family:'Source Sans 3',Arial,sans-serif;display:flex;flex-direction:column;">` +
-        cabecalho(dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64,num,totalPaginas,orisPagina) +
-        `<div style="padding:10px 12px 12px;flex:1;">${corpo}</div>` +
-        rodape(logoOpoB64,logoMinB64,dataFmt) +
-        `</div>`
-      );
-    });
-
-    // Captura cada página com html2canvas
-    // Sem altura fixa — captura o conteúdo real e redimensiona para A4 no canvas final
-    const A4_W_PX = 794;
-    const A4_H_PX = 1123;
+    // Renderiza no DOM
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Renderizando...';
     const container = document.createElement('div');
-    container.style.cssText = `position:fixed;left:-9999px;top:0;width:${A4_W_PX}px;z-index:-1;background:#F4F6F8;`;
+    container.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1;';
     document.body.appendChild(container);
-    await new Promise(r => setTimeout(r, 600));
+    container.innerHTML = fullHTML;
+    const el = container.querySelector('div');
+    await new Promise(r=>setTimeout(r,600));
+    void el.offsetHeight;
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
 
-    const dataURLs = [];
-    for(let i = 0; i < paginasHTML.length; i++){
-      btn.innerHTML = `<i class="fas fa-spinner fa-spin me-1"></i>Renderizando ${i+1}/${paginasHTML.length}...`;
-      container.innerHTML = paginasHTML[i];
-      const el = container.querySelector('div');
-      // Remove altura fixa para capturar conteúdo completo
-      el.style.height = 'auto';
-      el.style.overflow = 'visible';
-      void el.offsetHeight;
-      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-      await new Promise(r => setTimeout(r, 300));
-
-      const realH = el.scrollHeight;
-      const realW = el.scrollWidth || A4_W_PX;
-
-      // Captura com altura real
-      const canvasReal = await html2canvas(el, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#F4F6F8',
-        logging: false,
-        width: realW,
-        height: realH,
-        windowWidth: realW,
-        windowHeight: realH,
-      });
-
-      // Redimensiona para A4 exato preservando proporção
-      const finalCanvas = document.createElement('canvas');
-      finalCanvas.width  = A4_W_PX * 3;  // scale 3 = alta res
-      finalCanvas.height = A4_H_PX * 3;
-      const ctx = finalCanvas.getContext('2d');
-      ctx.fillStyle = '#F4F6F8';
-      ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
-
-      // Calcula escala para caber em A4 mantendo proporção
-      const scaleX = (A4_W_PX * 3) / canvasReal.width;
-      const scaleY = (A4_H_PX * 3) / canvasReal.height;
-      const scale  = Math.min(scaleX, scaleY);  // usa menor escala para não cortar
-      const drawW  = canvasReal.width  * scale;
-      const drawH  = canvasReal.height * scale;
-      const offX   = (finalCanvas.width  - drawW) / 2;
-      const offY   = 0;  // alinha no topo
-
-      ctx.drawImage(canvasReal, offX, offY, drawW, drawH);
-      dataURLs.push(finalCanvas.toDataURL('image/png', 1.0));
-    }
+    // Captura o conteúdo completo em um canvas único
+    const canvasFull = await html2canvas(el,{
+      scale:3, useCORS:true, allowTaint:true,
+      backgroundColor:'#F5F5F3', logging:false,
+      width:794, height:el.scrollHeight,
+      windowWidth:794, windowHeight:el.scrollHeight,
+    });
     document.body.removeChild(container);
 
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Abrindo...';
-    const popup = window.open('', '_blank', 'width=880,height=900,scrollbars=yes,resizable=yes');
-    if(!popup){ alert('Permita pop-ups para usar esta função.'); return; }
-    const imgsHTML = dataURLs.map(src =>
-      `<div class="pagina"><img src="${src}" style="width:100%;height:100%;display:block;"></div>`
-    ).join('\n');
+    // Fatia o canvas em páginas A4 (794×1123px × scale 3)
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Fatiando páginas...';
+    const A4W = 794*3, A4H = 1123*3;
+    const totalPags = Math.ceil(canvasFull.height / A4H);
+    const dataURLs = [];
+
+    for(let p=0; p<totalPags; p++){
+      const pageCanvas = document.createElement('canvas');
+      pageCanvas.width  = A4W;
+      pageCanvas.height = A4H;
+      const ctx = pageCanvas.getContext('2d');
+      ctx.fillStyle = '#F5F5F3';
+      ctx.fillRect(0,0,A4W,A4H);
+      ctx.drawImage(canvasFull, 0, p*A4H, A4W, A4H, 0, 0, A4W, A4H);
+      dataURLs.push(pageCanvas.toDataURL('image/png',1.0));
+    }
+
+    // Abre popup com imagens
+    const popup = window.open('','_blank','width=880,height=900,scrollbars=yes,resizable=yes');
+    if(!popup){alert('Permita pop-ups.');return;}
+    const imgsHTML = dataURLs.map((src,i)=>
+      `<div class="pagina"><img src="${src}"><div class="num">Pág. ${i+1}/${totalPags}</div></div>`
+    ).join('');
     const pd = popup.document;
     pd.open();
-    pd.write(`<!DOCTYPE html><html lang="pt-BR"><head>
-<meta charset="UTF-8"><title>Pauta Banner — Letra Grande</title>
+    pd.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Pauta — Letra Grande</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;}
   body{background:#555;font-family:Arial,sans-serif;}
   .toolbar{background:#1a1a1a;color:#fff;padding:10px 18px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:99;}
-  .toolbar strong{font-size:13px;flex:1;}
+  .toolbar strong{flex:1;font-size:13px;}
   .toolbar button{padding:7px 18px;border:none;border-radius:5px;cursor:pointer;font-weight:700;font-size:13px;}
-  .btn-print{background:#1A6B3A;color:#fff;}
-  .btn-close{background:#555;color:#fff;}
+  .btn-print{background:#1A6B3A;color:#fff;} .btn-close{background:#555;color:#fff;}
   .paginas{padding:16px;display:flex;flex-direction:column;align-items:center;gap:12px;}
-  .pagina{width:794px;height:1123px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.5);}
+  .pagina{position:relative;}
+  .pagina img{width:794px;display:block;box-shadow:0 4px 20px rgba(0,0,0,.5);}
+  .num{position:absolute;bottom:6px;right:12px;font-size:11px;color:rgba(255,255,255,.6);font-weight:700;}
   @media print{
-    body{background:#fff;}
-    .toolbar{display:none!important;}
+    body{background:#fff;} .toolbar{display:none!important;}
     .paginas{padding:0;gap:0;}
-    .pagina{width:100%;height:100vh;box-shadow:none;page-break-after:always;break-after:page;}
-    .pagina:last-child{page-break-after:avoid;break-after:avoid;}
+    .pagina{page-break-after:always;break-after:page;}
+    .pagina img{width:100%;} .num{display:none;}
+    @page{size:A4 portrait;margin:0;}
   }
-  @page{size:A4 portrait;margin:0;}
-</style>
-</head><body>
+</style></head><body>
 <div class="toolbar">
-  <strong>📋 Pauta Resumida — Letra Grande · ${totalPaginas} página${totalPaginas>1?'s':''}</strong>
-  <button class="btn-print" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button>
+  <strong>📋 Pauta Resumida — Letra Grande · ${totalPags} página${totalPags>1?'s':''}</strong>
+  <button class="btn-print" onclick="window.print()">🖨️ Imprimir / PDF</button>
   <button class="btn-close" onclick="window.close()">✕ Fechar</button>
 </div>
 <div class="paginas">${imgsHTML}</div>
@@ -3295,6 +3157,7 @@ async function gerarPautaBannerLetraGrande(){
 
   }catch(e){
     alert('Erro: '+e.message);
+    console.error(e);
   }finally{
     btn.disabled=false;
     btn.innerHTML='<i class="fas fa-text-height me-1"></i>Letra Grande';
