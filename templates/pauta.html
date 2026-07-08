@@ -3187,59 +3187,74 @@ async function gerarPautaBannerLetraGrande(){
       );
     });
 
-    // Abre popup com páginas A4 prontas para impressão multipágina
-    // O browser divide automaticamente em páginas A4 ao imprimir
+    // Captura cada página com html2canvas (preserva cores/fundos fielmente)
+    // e abre popup com as imagens para impressão A4
+    const container = document.createElement('div');
+    container.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1;background:#F4F6F8;';
+    document.body.appendChild(container);
+    await new Promise(r => setTimeout(r, 600));
+
+    const dataURLs = [];
+    for(let i = 0; i < paginasHTML.length; i++){
+      btn.innerHTML = `<i class="fas fa-spinner fa-spin me-1"></i>Renderizando ${i+1}/${paginasHTML.length}...`;
+      container.innerHTML = paginasHTML[i];
+      const el = container.querySelector('div');
+      void el.offsetHeight;
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await new Promise(r => setTimeout(r, 250));
+      const canvas = await html2canvas(el, {
+        scale: 3,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#F4F6F8',
+        logging: false,
+        width: 794,
+        height: 1123,
+        windowWidth: 794,
+        windowHeight: 1123,
+      });
+      dataURLs.push(canvas.toDataURL('image/png', 1.0));
+    }
+    document.body.removeChild(container);
+
+    // Abre popup com as imagens PNG — impressão fiel a 1 imagem por página A4
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Abrindo...';
     const popup = window.open('', '_blank', 'width=880,height=900,scrollbars=yes,resizable=yes');
     if(!popup){ alert('Permita pop-ups para usar esta função.'); return; }
+    const imgsHTML = dataURLs.map(src =>
+      `<div class="pagina"><img src="${src}" style="width:100%;height:100%;display:block;object-fit:contain;"></div>`
+    ).join('\n');
     const pd = popup.document;
     pd.open();
     pd.write(`<!DOCTYPE html><html lang="pt-BR"><head>
 <meta charset="UTF-8">
 <title>Pauta Banner — Letra Grande</title>
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #666; font-family: 'Source Sans 3', Arial, sans-serif; }
-  .toolbar {
-    background: #1a1a1a; color: #fff; padding: 12px 20px;
-    display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 99;
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#555;font-family:Arial,sans-serif;}
+  .toolbar{background:#1a1a1a;color:#fff;padding:10px 18px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:99;}
+  .toolbar strong{font-size:13px;flex:1;}
+  .toolbar button{padding:7px 18px;border:none;border-radius:5px;cursor:pointer;font-weight:700;font-size:13px;}
+  .btn-print{background:#1A6B3A;color:#fff;}
+  .btn-close{background:#555;color:#fff;}
+  .paginas{padding:16px;display:flex;flex-direction:column;align-items:center;gap:12px;}
+  .pagina{width:794px;height:1123px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.5);}
+  @media print{
+    body{background:#fff;}
+    .toolbar{display:none!important;}
+    .paginas{padding:0;gap:0;}
+    .pagina{width:100%;height:100vh;box-shadow:none;page-break-after:always;break-after:page;}
+    .pagina:last-child{page-break-after:avoid;break-after:avoid;}
   }
-  .toolbar strong { font-size: 14px; flex: 1; }
-  .toolbar button {
-    padding: 8px 20px; border: none; border-radius: 6px;
-    cursor: pointer; font-weight: 700; font-size: 13px;
-  }
-  .btn-print { background: #1A6B3A; color: #fff; }
-  .btn-close  { background: #555; color: #fff; }
-  .paginas { padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 16px; }
-  .pagina {
-    width: 794px; height: 1123px; background: #F4F6F8;
-    display: flex; flex-direction: column; overflow: hidden;
-    box-shadow: 0 4px 24px rgba(0,0,0,.4);
-  }
-  @media print {
-    body { background: #fff; }
-    .toolbar { display: none !important; }
-    .paginas { padding: 0; gap: 0; }
-    .pagina {
-      width: 100%; height: 100vh;
-      box-shadow: none;
-      page-break-after: always;
-      break-after: page;
-    }
-    .pagina:last-child { page-break-after: avoid; break-after: avoid; }
-  }
-  @page { size: A4 portrait; margin: 0; }
+  @page{size:A4 portrait;margin:0;}
 </style>
 </head><body>
 <div class="toolbar">
-  <strong>📋 Pauta Resumida — Letra Grande &nbsp;·&nbsp; ${totalPaginas} página${totalPaginas > 1 ? 's' : ''}</strong>
+  <strong>📋 Pauta Resumida — Letra Grande · ${totalPaginas} página${totalPaginas>1?'s':''}</strong>
   <button class="btn-print" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button>
   <button class="btn-close" onclick="window.close()">✕ Fechar</button>
 </div>
-<div class="paginas">
-  ${paginasHTML.map(p => '<div class="pagina">' + p + '</div>').join('\n')}
-</div>
+<div class="paginas">${imgsHTML}</div>
 </body></html>`);
     pd.close();
 
