@@ -549,6 +549,28 @@ class User(UserMixin):
             return f"{self.username} - {self.categoria}"
         return self.username
 
+
+@app.after_request
+def inject_pwa_tags(response):
+    """Injeta tags PWA em todas as páginas HTML para garantir standalone em qualquer rota."""
+    if response.content_type and 'text/html' in response.content_type:
+        data = response.get_data(as_text=True)
+        if '<head>' in data and 'manifest.json' not in data:
+            pwa_tags = (
+                '<link rel="manifest" href="/manifest.json">'
+                '<meta name="theme-color" content="#0A1628">'
+                '<meta name="mobile-web-app-capable" content="yes">'
+                '<meta name="apple-mobile-web-app-capable" content="yes">'
+                '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">'
+                '<meta name="apple-mobile-web-app-title" content="Pauta">'
+                '<link rel="apple-touch-icon" sizes="192x192" href="/static/icon-192.png">'
+                '<link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">'
+            )
+            data = data.replace('<head>', '<head>' + pwa_tags, 1)
+            response.set_data(data)
+    return response
+
+
 @login_manager.user_loader
 def load_user(user_id):
     conn = get_conn()
@@ -5120,7 +5142,7 @@ def pwa_manifest():
         "start_url": "/",
         "scope": "/",
         "display": "standalone",
-        "display_override": ["standalone", "minimal-ui"],
+        
         "background_color": "#0A1628",
         "theme_color": "#0A1628",
         "orientation": "portrait-primary",
@@ -5145,10 +5167,13 @@ def pwa_manifest():
 @app.route('/sw.js')
 def pwa_sw():
     sw_code = """
-const CACHE = 'pauta-v2';
+const CACHE = 'pauta-v3';
+const OFFLINE_URL = '/offline.html';
 
 self.addEventListener('install', e => {
-  // Não tenta cachear '/' pois requer login — apenas instala
+  e.waitUntil(
+    caches.open(CACHE).then(c => c.addAll([OFFLINE_URL, '/static/icon-192.png', '/static/icon-512.png']))
+  );
   self.skipWaiting();
 });
 
@@ -5162,10 +5187,12 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  // Passa tudo direto para a rede — sem cache
-  // O SW existe apenas para habilitar o modo standalone (PWA)
   if (e.request.method !== 'GET') return;
-  e.respondWith(fetch(e.request));
+  e.respondWith(
+    fetch(e.request).catch(() =>
+      caches.match(e.request).then(r => r || caches.match(OFFLINE_URL))
+    )
+  );
 });
 """
     from flask import Response
@@ -5201,6 +5228,19 @@ def favicon():
     import base64
     px = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==')
     return Response(px, mimetype='image/png')
+
+
+
+@app.route('/offline.html')
+def offline():
+    from flask import Response
+    return Response("""<!DOCTYPE html><html><head><meta charset=UTF-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Pauta — Offline</title>
+<style>body{font-family:Arial,sans-serif;background:#0A1628;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;}
+h1{color:#E9B847;}p{opacity:.7;}</style></head>
+<body><div><h1>Pauta Plenário</h1><p>Sem conexão. Conecte-se para acessar.</p></div></body></html>""",
+    mimetype='text/html')
 
 @app.errorhandler(500)
 def handle_500(e):
