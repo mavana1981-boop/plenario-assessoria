@@ -5118,16 +5118,22 @@ def pwa_manifest():
         "short_name": "Pauta",
         "description": "Assessoria legislativa — Câmara dos Deputados",
         "start_url": "/",
+        "scope": "/",
         "display": "standalone",
+        "display_override": ["standalone", "minimal-ui"],
         "background_color": "#0A1628",
         "theme_color": "#0A1628",
         "orientation": "portrait-primary",
         "lang": "pt-BR",
+        "prefer_related_applications": False,
         "icons": [
             {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
             {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable"},
             {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
             {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+        ],
+        "screenshots": [
+            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "form_factor": "narrow"}
         ]
     }
     from flask import Response
@@ -5167,6 +5173,19 @@ self.addEventListener('fetch', e => {
     resp.headers['Service-Worker-Allowed'] = '/'
     resp.headers['Cache-Control'] = 'no-cache'
     return resp
+
+
+
+@app.route('/static/icon-<size>.png')
+def pwa_icon(size):
+    import os
+    from flask import send_from_directory, abort
+    static_dir = os.path.join(os.path.dirname(__file__), 'static')
+    fname = f'icon-{size}.png'
+    fpath = os.path.join(static_dir, fname)
+    if os.path.exists(fpath):
+        return send_from_directory(static_dir, fname, mimetype='image/png')
+    abort(404)
 
 @app.errorhandler(500)
 def handle_500(e):
