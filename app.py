@@ -5139,7 +5139,7 @@ def pwa_manifest():
         "name": "Pauta Plenário",
         "short_name": "Pauta",
         "description": "Assessoria legislativa — Câmara dos Deputados",
-        "start_url": "/",
+        "start_url": "/login",
         "scope": "/",
         "display": "standalone",
         
