@@ -5124,12 +5124,16 @@ def pwa_manifest():
         "orientation": "portrait-primary",
         "lang": "pt-BR",
         "icons": [
-            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
-            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable"},
+            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
         ]
     }
     from flask import Response
-    return Response(_json.dumps(manifest), mimetype='application/manifest+json')
+    resp = Response(_json.dumps(manifest), mimetype='application/manifest+json')
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
 
 
 @app.route('/sw.js')
@@ -5159,7 +5163,10 @@ self.addEventListener('fetch', e => {
 });
 """
     from flask import Response
-    return Response(sw_code, mimetype='application/javascript')
+    resp = Response(sw_code, mimetype='application/javascript')
+    resp.headers['Service-Worker-Allowed'] = '/'
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
 
 @app.errorhandler(500)
 def handle_500(e):
