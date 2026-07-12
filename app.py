@@ -5145,27 +5145,27 @@ def pwa_manifest():
 @app.route('/sw.js')
 def pwa_sw():
     sw_code = """
-const CACHE = 'pauta-v1';
+const CACHE = 'pauta-v2';
+
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(['/'])));
+  // Não tenta cachear '/' pois requer login — apenas instala
   self.skipWaiting();
 });
+
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(keys =>
-    Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-  ));
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+    )
+  );
   self.clients.claim();
 });
+
 self.addEventListener('fetch', e => {
+  // Passa tudo direto para a rede — sem cache
+  // O SW existe apenas para habilitar o modo standalone (PWA)
   if (e.request.method !== 'GET') return;
-  if (e.request.url.includes('/analisar') || e.request.url.includes('/gerar_')) return;
-  e.respondWith(
-    fetch(e.request).then(r => {
-      const clone = r.clone();
-      caches.open(CACHE).then(c => c.put(e.request, clone));
-      return r;
-    }).catch(() => caches.match(e.request))
-  );
+  e.respondWith(fetch(e.request));
 });
 """
     from flask import Response
@@ -5186,6 +5186,21 @@ def pwa_icon(size):
     if os.path.exists(fpath):
         return send_from_directory(static_dir, fname, mimetype='image/png')
     abort(404)
+
+
+
+@app.route('/favicon.ico')
+def favicon():
+    import os
+    from flask import send_from_directory, Response
+    static_dir = os.path.join(os.path.dirname(__file__), 'static')
+    fpath = os.path.join(static_dir, 'icon-192.png')
+    if os.path.exists(fpath):
+        return send_from_directory(static_dir, 'icon-192.png', mimetype='image/png')
+    # Retorna PNG 1x1 transparente como fallback
+    import base64
+    px = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==')
+    return Response(px, mimetype='image/png')
 
 @app.errorhandler(500)
 def handle_500(e):
