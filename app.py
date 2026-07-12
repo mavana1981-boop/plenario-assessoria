@@ -5108,6 +5108,59 @@ def diagnostico_prop(numero, ano):
     finally:
         conn.close()
 
+
+
+@app.route('/manifest.json')
+def pwa_manifest():
+    import json as _json
+    manifest = {
+        "name": "Pauta Plenário",
+        "short_name": "Pauta",
+        "description": "Assessoria legislativa — Câmara dos Deputados",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#0A1628",
+        "theme_color": "#0A1628",
+        "orientation": "portrait-primary",
+        "lang": "pt-BR",
+        "icons": [
+            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+        ]
+    }
+    from flask import Response
+    return Response(_json.dumps(manifest), mimetype='application/manifest+json')
+
+
+@app.route('/sw.js')
+def pwa_sw():
+    sw_code = """
+const CACHE = 'pauta-v1';
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(['/'])));
+  self.skipWaiting();
+});
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys().then(keys =>
+    Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+  ));
+  self.clients.claim();
+});
+self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
+  if (e.request.url.includes('/analisar') || e.request.url.includes('/gerar_')) return;
+  e.respondWith(
+    fetch(e.request).then(r => {
+      const clone = r.clone();
+      caches.open(CACHE).then(c => c.put(e.request, clone));
+      return r;
+    }).catch(() => caches.match(e.request))
+  );
+});
+"""
+    from flask import Response
+    return Response(sw_code, mimetype='application/javascript')
+
 @app.errorhandler(500)
 def handle_500(e):
     logger.error(f"500 error: {e}")
