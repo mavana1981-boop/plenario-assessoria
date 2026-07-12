@@ -4489,10 +4489,17 @@ function gerarBannerBP(){
 </script>
   <script>
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-          .then(r => console.log('[PWA] Service Worker registrado:', r.scope))
-          .catch(e => console.warn('[PWA] SW falhou:', e));
+      window.addEventListener('load', async () => {
+        try {
+          // Remove SWs antigos primeiro
+          const regs = await navigator.serviceWorker.getRegistrations();
+          for (const reg of regs) await reg.unregister();
+          // Registra novo
+          const reg = await navigator.serviceWorker.register('/sw.js', {scope: '/'});
+          console.log('[PWA] SW registrado:', reg.scope);
+        } catch(e) {
+          console.warn('[PWA] SW falhou:', e);
+        }
       });
     }
   </script>
