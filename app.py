@@ -442,6 +442,10 @@ with app.app_context():
             'ALTER TABLE notas ADD COLUMN IF NOT EXISTS responsavel_username TEXT' if USE_POSTGRES else 'ALTER TABLE notas ADD COLUMN responsavel_username TEXT',
             # Migração: adiciona id_principal na tabela orientacoes_grupo (substitui item_key)
             'ALTER TABLE orientacoes_grupo ADD COLUMN IF NOT EXISTS id_principal TEXT' if USE_POSTGRES else 'ALTER TABLE orientacoes_grupo ADD COLUMN id_principal TEXT',
+            # Metadados de proveniência do cache da pauta
+            'ALTER TABLE pauta_cache_db ADD COLUMN IF NOT EXISTS fetched_at TEXT' if USE_POSTGRES else 'ALTER TABLE pauta_cache_db ADD COLUMN fetched_at TEXT',
+            'ALTER TABLE pauta_cache_db ADD COLUMN IF NOT EXISTS reordered_at TEXT' if USE_POSTGRES else 'ALTER TABLE pauta_cache_db ADD COLUMN reordered_at TEXT',
+            'ALTER TABLE pauta_cache_db ADD COLUMN IF NOT EXISTS reordered_by TEXT' if USE_POSTGRES else 'ALTER TABLE pauta_cache_db ADD COLUMN reordered_by TEXT',
         ]
         for sql in migrações:
             try: c.execute(sql)
@@ -1408,8 +1412,21 @@ def fetch_pauta(evento_id, force_reload=False):
 
         logger.info(f"✅ Total final: {len(itens)} itens | PDF={len(ordem_oficial)} | API={len(api_por_codigo)}")
 
-        c.execute('INSERT OR REPLACE INTO pauta_cache_db (evento_id, json_pauta, last_updated) VALUES (?, ?, ?)',
-                  (evento_id, json.dumps(itens), now_str))
+        # Ao (re)carregar do PDF/API, gravamos fetched_at (proveniência) e limpamos
+        # os campos de reordenação manual — pois esta é a ordem oficial recém-buscada.
+        if USE_POSTGRES:
+            c.execute('''INSERT INTO pauta_cache_db (evento_id, json_pauta, last_updated, fetched_at, reordered_at, reordered_by)
+                         VALUES (%s, %s, %s, %s, NULL, NULL)
+                         ON CONFLICT (evento_id) DO UPDATE SET
+                           json_pauta=EXCLUDED.json_pauta,
+                           last_updated=EXCLUDED.last_updated,
+                           fetched_at=EXCLUDED.fetched_at,
+                           reordered_at=NULL,
+                           reordered_by=NULL''',
+                      (evento_id, json.dumps(itens), now_str, now_str))
+        else:
+            c.execute('INSERT OR REPLACE INTO pauta_cache_db (evento_id, json_pauta, last_updated, fetched_at, reordered_at, reordered_by) VALUES (?, ?, ?, ?, NULL, NULL)',
+                      (evento_id, json.dumps(itens), now_str, now_str))
         conn.commit()
         pauta_cache[cache_key] = {'timestamp': now, 'itens': itens}
         conn.close()
@@ -1518,12 +1535,18 @@ def view_pauta(evento_id):
     c = conn.cursor()
     last_updated = None
     last_saved_user = None
+    fetched_at = None
+    reordered_at = None
+    reordered_by = None
     try:
-        c.execute("SELECT last_updated, last_saved_by FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
+        c.execute("SELECT last_updated, last_saved_by, fetched_at, reordered_at, reordered_by FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
         row = c.fetchone()
         if row:
-            last_updated = row[0]
+            last_updated    = row[0]
             last_saved_user = row[1]
+            fetched_at      = row[2]
+            reordered_at    = row[3]
+            reordered_by    = row[4]
     except Exception:
         pass
     finally:
@@ -1658,6 +1681,9 @@ def view_pauta(evento_id):
                            from_cache=from_cache, user_role=current_user.role,
                            user_categoria=current_user.categoria,
                            last_updated=last_updated, last_saved_user=last_saved_user,
+                           fetched_at=fetched_at,
+                           reordered_at=reordered_at,
+                           reordered_by=reordered_by,
                            assessores=assessores,
                            data_evento=data_evento,
                            eh_responsavel_pauta=eh_responsavel_pauta,
@@ -4675,6 +4701,83 @@ def delete_usuario(user_id):
         logger.error(f"Erro delete_usuario: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+
+@app.route('/reordenar_pauta/<int:evento_id>', methods=['POST'])
+@login_required
+def reordenar_pauta(evento_id):
+    """Reordena os itens da pauta conforme a lista de id_principal recebida.
+    Persiste a nova ordem no cache com reordered_at + reordered_by, e essa ordem
+    passa a ser a definitiva (não é sobrescrita por leituras subsequentes do cache,
+    só por 'Atualizar Pauta' que rebusca do PDF/API oficiais)."""
+    if current_user.categoria == 'restrito':
+        return jsonify({'error': 'Sem permissão'}), 403
+    data = request.get_json() or {}
+    nova_ordem = data.get('ordem') or []
+    if not isinstance(nova_ordem, list) or not nova_ordem:
+        return jsonify({'error': 'Lista "ordem" obrigatória'}), 400
+
+    # Carrega itens atuais do cache
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            return jsonify({'error': 'Cache da pauta não encontrado — carregue a pauta antes de reordenar'}), 404
+        itens = json.loads(row[0])
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': f'Erro ao carregar cache: {e}'}), 500
+
+    # Reordena conforme a lista recebida — itens não citados vão para o final na ordem original
+    ordem_ids = [str(x) for x in nova_ordem]
+    por_id = {str(it.get('id_principal', '')): it for it in itens}
+
+    itens_reord = []
+    usados = set()
+    for id_p in ordem_ids:
+        it = por_id.get(id_p)
+        if it and id_p not in usados:
+            itens_reord.append(it)
+            usados.add(id_p)
+    # Itens que estavam no cache mas não vieram na nova ordem preservam-se ao fim
+    for it in itens:
+        id_p = str(it.get('id_principal', ''))
+        if id_p not in usados:
+            itens_reord.append(it)
+            usados.add(id_p)
+
+    # Renumera o campo "ordem"
+    for i, it in enumerate(itens_reord, start=1):
+        it['ordem'] = str(i)
+
+    now_str = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
+    quem = current_user.display_name() if hasattr(current_user, 'display_name') else current_user.username
+
+    try:
+        if USE_POSTGRES:
+            c.execute('''UPDATE pauta_cache_db SET json_pauta=%s, reordered_at=%s, reordered_by=%s, last_updated=%s
+                         WHERE evento_id=%s''',
+                      (json.dumps(itens_reord), now_str, quem, now_str, evento_id))
+        else:
+            c.execute('UPDATE pauta_cache_db SET json_pauta=?, reordered_at=?, reordered_by=?, last_updated=? WHERE evento_id=?',
+                      (json.dumps(itens_reord), now_str, quem, now_str, evento_id))
+        conn.commit()
+        # Invalida cache em memória para forçar releitura do disco
+        pauta_cache.pop(str(evento_id), None)
+        conn.close()
+        return jsonify({
+            'ok': True,
+            'reordered_at': now_str,
+            'reordered_by': quem,
+            'total': len(itens_reord),
+        })
+    except Exception as e:
+        conn.close()
+        logger.error(f'reordenar_pauta erro: {e}')
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/extra_pauta/<int:evento_id>', methods=['GET'])
