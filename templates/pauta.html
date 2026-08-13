@@ -149,6 +149,31 @@
         </span>
         <span id="ultimo-usuario" class="text-muted">
           {% if last_saved_user %} — por <strong>{{ last_saved_user }}</strong>{% endif %}
+        </span><br>
+
+        <!-- Proveniência do cache: quando a estrutura da pauta foi buscada do PDF/API oficial -->
+        <strong><i class="fas fa-file-download me-1"></i>Estrutura da pauta obtida em:</strong>
+        <span id="estrutura-obtida-em">
+          {% if fetched_at %}
+            <span class="badge bg-info text-dark">{{ fetched_at | datetimeformat('%d/%m/%Y %H:%M') }}</span>
+            <span class="text-muted small ms-1">(fonte: PDF/API oficial da Câmara)</span>
+          {% elif last_updated %}
+            <span class="badge bg-info text-dark">{{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</span>
+            <span class="text-muted small ms-1">(cache existente)</span>
+          {% else %}
+            <span class="text-muted">Sem registro</span>
+          {% endif %}
+        </span><br>
+
+        <!-- Reordenação manual (se houver) -->
+        <strong><i class="fas fa-arrows-alt-v me-1"></i>Reordenação manual:</strong>
+        <span id="reordenacao-info">
+          {% if reordered_at %}
+            <span class="badge bg-warning text-dark">{{ reordered_at | datetimeformat('%d/%m/%Y %H:%M') }}</span>
+            {% if reordered_by %}<span class="text-muted small ms-1">por <strong>{{ reordered_by }}</strong></span>{% endif %}
+          {% else %}
+            <span class="text-muted">Ordem preservada do PDF oficial (sem reordenação manual)</span>
+          {% endif %}
         </span>
       </div>
     </div>
@@ -229,6 +254,12 @@
         style="background:linear-gradient(135deg,#1A3A5C,#0d2a4a);"
         onclick="abrirModalBuscarProposicao()">
         <i class="fas fa-search me-2"></i>Buscar Proposição
+      </button>
+      <button class="btn btn-sm mb-3 ms-2 text-white"
+        style="background:linear-gradient(135deg,#6f42c1,#4a2a8a);"
+        onclick="abrirModalReordenar()"
+        title="Reordenar manualmente os itens da pauta quando a ordem divergir do site da Câmara">
+        <i class="fas fa-arrows-alt-v me-2"></i>Reordenar Itens
       </button>
       {% endif %}
       <button class="btn btn-sm mb-3 ms-2 text-white"
@@ -4505,6 +4536,176 @@ function gerarBannerBP(){
         }
       });
     }
+  </script>
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       MODAL: REORDENAR ITENS DA PAUTA
+       Uso: quando a ordem do sistema divergir do site da Câmara, o
+       usuário abre este modal, arrasta os itens para a ordem correta e
+       salva. A nova ordem é gravada permanente no cache (backend
+       /reordenar_pauta) com data/hora + usuário responsável.
+  ═══════════════════════════════════════════════════════════════════ -->
+  <div class="modal fade" id="modalReordenar" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header text-white" style="background:linear-gradient(135deg,#6f42c1,#4a2a8a);">
+          <h5 class="modal-title">
+            <i class="fas fa-arrows-alt-v me-2"></i>Reordenar Itens da Pauta
+          </h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-info small mb-3">
+            <i class="fas fa-info-circle me-1"></i>
+            <strong>Como usar:</strong> arraste os itens pela alça <i class="fas fa-grip-vertical"></i> à esquerda
+            para reordená-los. Ao salvar, a nova ordem substitui permanentemente a atual no cache
+            e fica registrada com data, hora e seu nome. Um <strong>"Atualizar Pauta"</strong>
+            posterior <u>desfaz a reordenação manual</u> e volta à ordem oficial do PDF/API.
+          </div>
+          <ul id="lista-reordenar" class="list-group">
+            <!-- Preenchido via JS ao abrir -->
+          </ul>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+            <i class="fas fa-times me-1"></i>Cancelar
+          </button>
+          <button type="button" class="btn text-white" id="btn-salvar-reordenacao"
+            style="background:linear-gradient(135deg,#6f42c1,#4a2a8a);"
+            onclick="salvarReordenacao()">
+            <i class="fas fa-save me-1"></i>Salvar Nova Ordem
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SortableJS: biblioteca leve para drag-and-drop -->
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+
+  <script>
+  /* ───── Reordenação manual da pauta ─────────────────────────────────── */
+  let _sortableInstance = null;
+
+  window.abrirModalReordenar = function() {
+    const modalEl = document.getElementById('modalReordenar');
+    const lista   = document.getElementById('lista-reordenar');
+    if (!modalEl || !lista) {
+      alert('Modal de reordenação não encontrado.');
+      return;
+    }
+
+    // Fonte de itens: prefere ITENS_DATA global; senão, extrai do DOM
+    let fonte = [];
+    if (window.ITENS_DATA && Array.isArray(window.ITENS_DATA) && window.ITENS_DATA.length) {
+      fonte = window.ITENS_DATA
+        .filter(it => it && it.id_principal && !it.eh_extra_pauta)
+        .map(it => ({
+          id:       String(it.id_principal),
+          ordem:    String(it.ordem || ''),
+          projeto:  it.projeto || it.projeto_original || '(sem código)',
+          ementa:   (it.ementa || '').substring(0, 140),
+        }));
+    }
+    // Fallback: lê linhas da tabela renderizada
+    if (!fonte.length) {
+      document.querySelectorAll('tr[data-id-principal], [data-id-principal]').forEach(el => {
+        const id = el.getAttribute('data-id-principal');
+        if (!id || fonte.find(f => f.id === String(id))) return;
+        const proj = el.querySelector('.col-projeto, .projeto-cell, td:nth-child(2)')?.textContent?.trim() || id;
+        fonte.push({ id: String(id), ordem: '', projeto: proj.substring(0,60), ementa: '' });
+      });
+    }
+
+    if (!fonte.length) {
+      alert('Nenhum item da pauta oficial encontrado para reordenar. Carregue a pauta primeiro.');
+      return;
+    }
+
+    // Preenche a lista
+    lista.innerHTML = fonte.map((it, i) => `
+      <li class="list-group-item d-flex align-items-center gap-3"
+          data-id="${it.id}" style="cursor:grab;">
+        <span class="text-muted" style="cursor:grab;font-size:1.2rem;">
+          <i class="fas fa-grip-vertical"></i>
+        </span>
+        <span class="badge bg-secondary" style="min-width:2.2rem;" data-badge-ordem>${i + 1}</span>
+        <div class="flex-grow-1">
+          <div class="fw-bold" style="color:#0d2137;">${escapeHtmlReord(it.projeto)}</div>
+          ${it.ementa ? `<div class="small text-muted">${escapeHtmlReord(it.ementa)}${it.ementa.length >= 140 ? '…' : ''}</div>` : ''}
+        </div>
+      </li>
+    `).join('');
+
+    // Instancia SortableJS (destrói anterior se houver)
+    if (_sortableInstance) { try { _sortableInstance.destroy(); } catch(e){} }
+    _sortableInstance = Sortable.create(lista, {
+      animation: 150,
+      handle: '.fa-grip-vertical',
+      ghostClass: 'bg-warning-subtle',
+      onEnd: renumerarBadgesReordenar,
+    });
+
+    new bootstrap.Modal(modalEl).show();
+  };
+
+  function renumerarBadgesReordenar() {
+    document.querySelectorAll('#lista-reordenar li').forEach((li, i) => {
+      const b = li.querySelector('[data-badge-ordem]');
+      if (b) b.textContent = i + 1;
+    });
+  }
+
+  function escapeHtmlReord(s) {
+    return String(s || '').replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  window.salvarReordenacao = async function() {
+    const btn = document.getElementById('btn-salvar-reordenacao');
+    const evtId = window.EVENTO_ID;
+    if (!evtId) { alert('EVENTO_ID indisponível.'); return; }
+
+    const ids = Array.from(document.querySelectorAll('#lista-reordenar li'))
+      .map(li => li.getAttribute('data-id'))
+      .filter(Boolean);
+
+    if (!ids.length) { alert('Lista vazia.'); return; }
+
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Salvando…';
+
+    try {
+      const r = await fetch(`/reordenar_pauta/${evtId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ordem: ids }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Falha ao salvar');
+
+      // Atualiza o quadro da sessão sem recarregar
+      const info = document.getElementById('reordenacao-info');
+      if (info && j.reordered_at) {
+        const dt = new Date(j.reordered_at.replace(' ', 'T'));
+        const fmt = dt.toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+        info.innerHTML = `<span class="badge bg-warning text-dark">${fmt}</span>
+          <span class="text-muted small ms-1">por <strong>${escapeHtmlReord(j.reordered_by || '')}</strong></span>
+          <span class="badge bg-success ms-2">✓ Salvo</span>`;
+      }
+
+      bootstrap.Modal.getInstance(document.getElementById('modalReordenar'))?.hide();
+
+      // Recarrega a página após 800ms para exibir a pauta na nova ordem
+      setTimeout(() => location.reload(), 800);
+    } catch (err) {
+      alert('Erro ao salvar reordenação: ' + err.message);
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
+  };
   </script>
 </body>
 </html>
