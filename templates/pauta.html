@@ -1759,73 +1759,282 @@
       // criado separadamente do botão "Criar Quadro do DTQ" em todos os fluxos
       // de analisarDestaque/_executarAnaliseDestaque.
       const innerDiv = box.querySelector('.analise-texto') || box.querySelector('div');
-      const analise  = (innerDiv ? innerDiv.innerText : box.innerText).trim();
+      const analiseHtml  = innerDiv ? innerDiv.innerHTML : box.innerHTML;
+      const analise      = (innerDiv ? innerDiv.innerText : box.innerText).trim();
 
-      if (numero && analise) destaques.push({ numero, descricao, autoria, projeto, analise });
+      if (numero && analise) destaques.push({ numero, descricao, autoria, projeto, analise, analiseHtml });
     });
 
     // Fallback: se nenhuma análise foi localizada via box, tenta pelos botões "Criar Quadro do DTQ",
     // usando o dataset.analise (texto da IA já salvo no próprio botão) sem cortar em 200 chars.
     if (destaques.length === 0) {
       document.querySelectorAll('[data-numero][onclick*="gerarQuadroDTQ"], .btn-dark[data-numero]').forEach(bq => {
-        const analiseTxt = bq.dataset.analise ? bq.dataset.analise.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim() : '';
+        const htmlOriginal = bq.dataset.analise || '';
+        const analiseTxt   = htmlOriginal.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
         if (!analiseTxt) return;
         destaques.push({
-          numero:    bq.dataset.numero    || '',
-          descricao: bq.dataset.descricao || '',
-          autoria:   bq.dataset.autoria   || '',
-          projeto:   bq.dataset.projeto   || '',
-          analise:   analiseTxt,
+          numero:      bq.dataset.numero    || '',
+          descricao:   bq.dataset.descricao || '',
+          autoria:     bq.dataset.autoria   || '',
+          projeto:     bq.dataset.projeto   || '',
+          analise:     analiseTxt,
+          analiseHtml: htmlOriginal,
         });
       });
     }
 
-    const popup = window.open('', '_blank', 'width=1000,height=700,scrollbars=yes,resizable=yes');
+    // ── Extrai texto íntegro e análise sucinta a partir do HTML estruturado ──
+    // O prompt do backend gera HTML com estas seções:
+    //   <p><strong>Objeto do Destaque:</strong> X</p>       → objeto = X
+    //   <blockquote>...</blockquote>                        → texto_integro
+    //   <p><strong>Análise:</strong><br>...</p>             → analise_longa
+    // Também há variações para destaque de emenda:
+    //   <p><strong>Objeto:</strong>...
+    //   <p><strong>Texto da Emenda:</strong></p><blockquote>
+    //   <p><strong>Voto SIM (...):</strong>...</p>
+    //   <p><strong>Voto NÃO (...):</strong>...</p>
+    function extrairSecoes(htmlOrText) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = htmlOrText || '';
+
+      // Texto íntegro = conteúdo do primeiro <blockquote> encontrado
+      const bq = tmp.querySelector('blockquote');
+      let texto_integro = bq ? bq.innerText.trim() : '';
+
+      // Objeto = primeira <p> que começa com "Objeto" ou "Emenda"
+      let objeto = '';
+      tmp.querySelectorAll('p').forEach(p => {
+        const t = p.innerText.trim();
+        if (!objeto && /^(Objeto|Emenda\s*n[º°])/i.test(t)) {
+          objeto = t.replace(/^Objeto( do Destaque)?:\s*/i, '').trim();
+        }
+      });
+
+      // Análise longa = todas as <p> que começam com "Análise", "Voto SIM", "Voto NÃO"
+      const partes_analise = [];
+      tmp.querySelectorAll('p').forEach(p => {
+        const t = p.innerText.trim();
+        if (/^(Análise|Voto\s+(SIM|NÃO|NAO))/i.test(t)) {
+          partes_analise.push(t);
+        }
+      });
+      const analise_longa = partes_analise.join(' ').trim();
+
+      // Análise sucinta: preferimos o objeto (1 frase). Se ausente, corta a análise longa em ~2 frases (máx ~280 chars).
+      let analise_sucinta = objeto;
+      if (!analise_sucinta && analise_longa) {
+        const frases = analise_longa.split(/(?<=[.!?])\s+/).filter(Boolean);
+        analise_sucinta = frases.slice(0, 2).join(' ').substring(0, 320);
+      }
+      // Fallback final: texto puro cortado
+      if (!analise_sucinta) {
+        analise_sucinta = (tmp.innerText || '').trim().split(/(?<=[.!?])\s+/).slice(0, 2).join(' ').substring(0, 320);
+      }
+
+      return { objeto, texto_integro, analise_sucinta, analise_longa };
+    }
+
+    destaques.forEach(d => {
+      const secoes = extrairSecoes(d.analiseHtml || d.analise);
+      d.texto_integro    = secoes.texto_integro;
+      d.analise_sucinta  = secoes.analise_sucinta;
+      d.analise_completa = secoes.analise_longa || d.analise;
+    });
+
+    // ── Aplica edições salvas em localStorage (se houver) ────────────────────
+    const LS_KEY = 'destaques_edicoes_v1';
+    const eventoId = window.EVENTO_ID || 'sem-evento';
+    let edicoes = {};
+    try { edicoes = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch(e) {}
+    destaques.forEach(d => {
+      const chave = `${eventoId}::${d.numero}`;
+      if (edicoes[chave]) {
+        if (edicoes[chave].texto_integro    != null) d.texto_integro    = edicoes[chave].texto_integro;
+        if (edicoes[chave].analise_sucinta  != null) d.analise_sucinta  = edicoes[chave].analise_sucinta;
+        if (edicoes[chave].analise_completa != null) d.analise_completa = edicoes[chave].analise_completa;
+        d.editado = true;
+      }
+    });
+
+    const popup = window.open('', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
     const pd = popup.document;
     pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Tabela de Destaques</title></head><body></body></html>'); pd.close();
+
     const st = pd.createElement('style');
-    st.textContent = `body{font-family:Arial,sans-serif;padding:24px;background:#fff}
-      h2{color:#1a1a2e;border-bottom:3px solid #1a1a2e;padding-bottom:8px;margin-bottom:16px}
-      table{width:100%;border-collapse:collapse;font-size:12px}
-      th{background:#1a1a2e;color:#fff;padding:8px 10px;text-align:left}
-      td{border:1px solid #ccc;padding:8px 10px;vertical-align:top}
-      tr:nth-child(even){background:#f5f7ff}
-      .num{font-weight:bold;color:#2c3e6b;white-space:nowrap}
-      .analise{font-size:11px;color:#444;max-width:400px}
-      .btn-print{margin-top:16px;padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px}
-      @media print{.btn-print{display:none}}`;
+    st.textContent = `
+      *{box-sizing:border-box}
+      body{font-family:Arial,sans-serif;padding:20px;background:#fff;margin:0}
+      h2{color:#1a1a2e;border-bottom:3px solid #1a1a2e;padding-bottom:8px;margin:0 0 12px 0;font-size:1.3rem}
+      .subtitulo{color:#666;font-size:12px;margin-bottom:14px}
+      .barra-acoes{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding:10px;background:#f5f7ff;border:1px solid #d0d8f0;border-radius:6px}
+      .barra-acoes button{padding:7px 14px;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:5px}
+      .btn-salvar{background:#1A6B3A;color:#fff}
+      .btn-salvar:hover{background:#125027}
+      .btn-reset{background:#B8860B;color:#fff}
+      .btn-reset:hover{background:#8a6408}
+      .btn-print{background:#1a1a2e;color:#fff}
+      .btn-print:hover{background:#000}
+      .aviso-edicao{margin-left:auto;font-size:11px;color:#666;align-self:center}
+      .aviso-edicao.dirty{color:#B8860B;font-weight:700}
+      table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+      th{background:#1a1a2e;color:#fff;padding:8px 10px;text-align:left;font-size:11px;letter-spacing:.5px}
+      td{border:1px solid #ccc;padding:6px 8px;vertical-align:top;word-wrap:break-word}
+      tr:nth-child(even){background:#f8faff}
+      .num{font-weight:bold;color:#2c3e6b;white-space:nowrap;font-size:11px}
+      .autoria{font-size:10.5px;color:#555}
+      .descricao{font-size:10.5px;color:#333}
+      .col-textointegro{background:#fffef5;font-style:italic;color:#333;font-size:11px;line-height:1.5;white-space:pre-wrap}
+      .col-sucinta{background:#f0f7f0;font-size:11.5px;color:#1a3a20;line-height:1.5;font-weight:500}
+      .col-completa{font-size:10.5px;color:#444;line-height:1.4;max-height:200px;overflow:auto}
+      [contenteditable="true"]{outline:none;transition:background .15s}
+      [contenteditable="true"]:focus{background:#fff8dc !important;box-shadow:inset 0 0 0 2px #B8860B}
+      [contenteditable="true"]:hover{background:rgba(184,134,11,.08)}
+      .badge-editado{display:inline-block;background:#B8860B;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:4px;vertical-align:middle}
+      .col-widths col:nth-child(1){width:34px}
+      .col-widths col:nth-child(2){width:100px}
+      .col-widths col:nth-child(3){width:130px}
+      .col-widths col:nth-child(4){width:180px}
+      .col-widths col:nth-child(5){width:26%}
+      .col-widths col:nth-child(6){width:22%}
+      .col-widths col:nth-child(7){width:auto}
+      @media print{
+        .barra-acoes{display:none}
+        [contenteditable="true"]:focus{background:transparent !important;box-shadow:none}
+        body{padding:0}
+        table{font-size:10px}
+        .col-completa{max-height:none;overflow:visible}
+      }`;
     pd.head.appendChild(st);
 
     const h2 = pd.createElement('h2');
     h2.textContent = `Tabela de Destaques — ${projetoFiltro || 'Todos'}`;
     pd.body.appendChild(h2);
 
+    const sub = pd.createElement('div');
+    sub.className = 'subtitulo';
+    sub.innerHTML = `<i>Gerado em ${new Date().toLocaleString('pt-BR')}. Todas as células de texto são editáveis — clique para modificar e depois clique em <b>Salvar edições</b>.</i>`;
+    pd.body.appendChild(sub);
+
     if (destaques.length === 0) {
-      const p = pd.createElement('p'); p.textContent = 'Nenhum destaque analisado encontrado.';
+      const p = pd.createElement('p');
+      p.textContent = 'Nenhum destaque analisado encontrado. Analise pelo menos um destaque antes de gerar a tabela.';
       pd.body.appendChild(p);
-    } else {
-      const tbl = pd.createElement('table');
-      const thead = pd.createElement('thead');
-      thead.innerHTML = '<tr><th>#</th><th>Número</th><th>Autoria</th><th>Descrição</th><th>Análise resumida</th></tr>';
-      tbl.appendChild(thead);
-      const tbody = pd.createElement('tbody');
-      destaques.forEach((d, i) => {
-        const tr = pd.createElement('tr');
-        tr.innerHTML = `<td>${i+1}</td>
-          <td class="num">${d.numero}</td>
-          <td>${d.autoria||'—'}</td>
-          <td>${d.descricao||'—'}</td>
-          <td class="analise">${d.analise||'—'}</td>`;
-        tbody.appendChild(tr);
-      });
-      tbl.appendChild(tbody);
-      pd.body.appendChild(tbl);
+      return;
     }
 
-    const btnPr = pd.createElement('button'); btnPr.className = 'btn-print';
-    btnPr.textContent = '🖨️ Imprimir / Salvar PDF';
-    btnPr.onclick = () => popup.print();
-    pd.body.appendChild(btnPr);
+    // Barra de ações
+    const barra = pd.createElement('div');
+    barra.className = 'barra-acoes';
+    barra.innerHTML = `
+      <button class="btn-salvar" id="btn-salvar-edicoes">💾 Salvar edições</button>
+      <button class="btn-reset"   id="btn-reset-edicoes">↺ Restaurar originais</button>
+      <button class="btn-print"   id="btn-imprimir">🖨️ Imprimir / Salvar PDF</button>
+      <span class="aviso-edicao" id="aviso-edicao">Edições salvas ficam gravadas neste navegador.</span>
+    `;
+    pd.body.appendChild(barra);
+
+    // Tabela
+    const tbl = pd.createElement('table');
+    tbl.innerHTML = `
+      <colgroup class="col-widths">
+        <col><col><col><col><col><col><col>
+      </colgroup>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Nº Destaque</th>
+          <th>Autoria</th>
+          <th>Descrição</th>
+          <th>Texto Íntegro do Objeto de Destaque</th>
+          <th>Análise Sucinta</th>
+          <th>Análise Completa</th>
+        </tr>
+      </thead>
+      <tbody></tbody>`;
+    const tbody = tbl.querySelector('tbody');
+    destaques.forEach((d, i) => {
+      const tr = pd.createElement('tr');
+      tr.setAttribute('data-numero', d.numero);
+      tr.innerHTML = `
+        <td>${i+1}</td>
+        <td class="num" contenteditable="true" data-campo="numero">${escapeHtmlDest(d.numero)}${d.editado ? '<span class="badge-editado">EDIT</span>' : ''}</td>
+        <td class="autoria" contenteditable="true" data-campo="autoria">${escapeHtmlDest(d.autoria || '—')}</td>
+        <td class="descricao" contenteditable="true" data-campo="descricao">${escapeHtmlDest(d.descricao || '—')}</td>
+        <td class="col-textointegro" contenteditable="true" data-campo="texto_integro">${escapeHtmlDest(d.texto_integro || '(texto íntegro não localizado — edite aqui manualmente)')}</td>
+        <td class="col-sucinta" contenteditable="true" data-campo="analise_sucinta">${escapeHtmlDest(d.analise_sucinta || '—')}</td>
+        <td class="col-completa" contenteditable="true" data-campo="analise_completa">${escapeHtmlDest(d.analise_completa || '—')}</td>`;
+      tbody.appendChild(tr);
+    });
+    pd.body.appendChild(tbl);
+
+    // ── Lógica de edição ─────────────────────────────────────────────────────
+    const aviso = pd.getElementById('aviso-edicao');
+    let dirty = false;
+    tbody.querySelectorAll('[contenteditable="true"]').forEach(cel => {
+      cel.addEventListener('input', () => {
+        dirty = true;
+        aviso.textContent = '● Alterações não salvas — clique em Salvar edições';
+        aviso.classList.add('dirty');
+      });
+    });
+
+    pd.getElementById('btn-salvar-edicoes').addEventListener('click', () => {
+      let ed = {};
+      try { ed = JSON.parse(window.opener.localStorage.getItem(LS_KEY) || '{}'); } catch(e) {}
+      tbody.querySelectorAll('tr').forEach(tr => {
+        const num = tr.getAttribute('data-numero');
+        if (!num) return;
+        const chave = `${eventoId}::${num}`;
+        ed[chave] = ed[chave] || {};
+        tr.querySelectorAll('[contenteditable="true"]').forEach(cel => {
+          const campo = cel.getAttribute('data-campo');
+          const valor = cel.innerText.replace(/EDIT\s*$/, '').trim();
+          ed[chave][campo] = valor;
+        });
+        ed[chave]._saved_at = new Date().toISOString();
+      });
+      try {
+        window.opener.localStorage.setItem(LS_KEY, JSON.stringify(ed));
+        dirty = false;
+        aviso.textContent = `✓ Salvo em ${new Date().toLocaleTimeString('pt-BR')} (persiste neste navegador)`;
+        aviso.classList.remove('dirty');
+      } catch(e) {
+        alert('Erro ao salvar: ' + e.message);
+      }
+    });
+
+    pd.getElementById('btn-reset-edicoes').addEventListener('click', () => {
+      if (!confirm('Restaurar valores originais da análise da IA? Suas edições locais serão apagadas.')) return;
+      try {
+        let ed = JSON.parse(window.opener.localStorage.getItem(LS_KEY) || '{}');
+        tbody.querySelectorAll('tr').forEach(tr => {
+          const num = tr.getAttribute('data-numero');
+          delete ed[`${eventoId}::${num}`];
+        });
+        window.opener.localStorage.setItem(LS_KEY, JSON.stringify(ed));
+        popup.location.reload();
+      } catch(e) {}
+      // Como recarregar preservando estado é complexo, o mais simples é fechar
+      // e pedir para o usuário reabrir a tabela.
+      alert('Edições removidas. Feche esta janela e reabra "Tabela de Destaques" para ver os valores originais da IA.');
+    });
+
+    pd.getElementById('btn-imprimir').addEventListener('click', () => popup.print());
+
+    // Aviso antes de fechar com edições não salvas
+    popup.addEventListener('beforeunload', (e) => {
+      if (dirty) {
+        e.preventDefault();
+        e.returnValue = 'Você tem edições não salvas. Deseja mesmo sair?';
+        return e.returnValue;
+      }
+    });
+  }
+
+  function escapeHtmlDest(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
   }
 
   async function gerarQuadroDTQ(btn) {
