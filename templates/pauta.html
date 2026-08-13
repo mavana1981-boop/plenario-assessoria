@@ -4162,11 +4162,20 @@ function imprimirBanner() {
             </div>
           </div>
           <div id="bp-nota-container">
-            <div class="d-flex align-items-center justify-content-between mb-2">
+            <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
               <strong class="small">Nota Técnica:</strong>
-              <div class="d-flex gap-2">
+              <div class="d-flex gap-2 flex-wrap" id="bp-nota-toolbar">
                 <button class="btn btn-sm btn-outline-primary" onclick="gerarNotaBP()">
                   <img src="/static/logo_gemini.svg" style="width:14px;height:14px;vertical-align:middle;" class="me-1">Gerar com IA
+                </button>
+                <button class="btn btn-sm btn-outline-warning" id="bp-btn-editar" onclick="editarNotaBP()">
+                  <i class="fas fa-edit me-1"></i>Editar Nota
+                </button>
+                <button class="btn btn-sm btn-success" id="bp-btn-salvar" style="display:none;" onclick="salvarNotaBP()">
+                  <i class="fas fa-save me-1"></i>Salvar Permanente
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" id="bp-btn-cancelar" style="display:none;" onclick="cancelarEdicaoBP()">
+                  <i class="fas fa-times me-1"></i>Cancelar
                 </button>
                 <button class="btn btn-sm btn-outline-success" onclick="imprimirNotaBP()">
                   <i class="fas fa-print me-1"></i>Imprimir PDF
@@ -4176,9 +4185,11 @@ function imprimirBanner() {
                 </button>
               </div>
             </div>
+            <div id="bp-nota-status" class="small mb-2" style="display:none;"></div>
             <div id="bp-nota" class="border rounded p-3 bg-light" style="min-height:200px;font-size:0.85rem;white-space:pre-wrap;">
               <span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>
             </div>
+            <textarea id="bp-nota-editor" class="form-control" style="display:none;min-height:260px;font-size:0.85rem;font-family:'Segoe UI',Arial,sans-serif;line-height:1.5;"></textarea>
           </div>
         </div>
       </div>
@@ -4435,6 +4446,14 @@ function abrirModalBuscarProposicao(){
   document.getElementById('bp-numero').value = '';
   document.getElementById('bp-ano').value = new Date().getFullYear();
   document.getElementById('bp-nota').innerHTML = '<span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>';
+  // Reseta modo de edição
+  const editor = document.getElementById('bp-nota-editor');
+  if (editor) { editor.style.display = 'none'; editor.value = ''; }
+  document.getElementById('bp-nota').style.display = 'block';
+  const btnE = document.getElementById('bp-btn-editar');   if (btnE) btnE.style.display = 'inline-flex';
+  const btnS = document.getElementById('bp-btn-salvar');   if (btnS) btnS.style.display = 'none';
+  const btnC = document.getElementById('bp-btn-cancelar'); if (btnC) btnC.style.display = 'none';
+  _bpEscondeStatus();
   new bootstrap.Modal(document.getElementById('modalBuscarProposicao')).show();
 }
 
@@ -4553,6 +4572,120 @@ function imprimirNotaBP(){
   const hr = pd.createElement('hr'); pd.body.appendChild(hr);
   const div = pd.createElement('div'); div.innerHTML = nota; pd.body.appendChild(div);
   const btnP = pd.createElement('button'); btnP.className='no-print'; btnP.style.cssText='margin-top:20px;padding:8px 20px;background:#1A3A5C;color:#fff;border:none;border-radius:4px;cursor:pointer;'; btnP.textContent='🖨️ Imprimir'; btnP.onclick=()=>popup.print(); pd.body.appendChild(btnP);
+}
+
+// ── Edição inline da nota técnica no modal Buscar Proposição ────────────────
+function _bpMostrarStatus(msg, tipo /* success | danger | info */){
+  const el = document.getElementById('bp-nota-status');
+  if (!el) return;
+  const cor = {success:'alert-success', danger:'alert-danger', info:'alert-info', warning:'alert-warning'}[tipo] || 'alert-info';
+  el.className = 'small mb-2 alert py-1 px-2 ' + cor;
+  el.innerHTML = msg;
+  el.style.display = 'block';
+}
+function _bpEscondeStatus(){
+  const el = document.getElementById('bp-nota-status');
+  if (el) el.style.display = 'none';
+}
+
+function editarNotaBP(){
+  if(!_bpDados){ alert('Busque uma proposição primeiro.'); return; }
+  const view   = document.getElementById('bp-nota');
+  const editor = document.getElementById('bp-nota-editor');
+  if (!view || !editor) return;
+
+  // Extrai APENAS o texto da nota (sem o alerta verde "Nota encontrada no banco")
+  // Strip do alerta success que buscarNotaBancoBP insere.
+  const tmp = document.createElement('div');
+  tmp.innerHTML = view.innerHTML;
+  tmp.querySelectorAll('.alert').forEach(a => a.remove());
+  const textoAtual = (tmp.innerText || '').trim();
+
+  editor.value = textoAtual === '' || /^Clique em .Gerar com IA/i.test(textoAtual)
+    ? '' : textoAtual;
+
+  view.style.display   = 'none';
+  editor.style.display = 'block';
+  editor.focus();
+
+  document.getElementById('bp-btn-editar').style.display   = 'none';
+  document.getElementById('bp-btn-salvar').style.display   = 'inline-flex';
+  document.getElementById('bp-btn-cancelar').style.display = 'inline-flex';
+
+  _bpMostrarStatus('<i class="fas fa-info-circle me-1"></i>Editando — ao salvar, a nota é gravada permanentemente no banco e sincronizada com todas as pautas que contêm esta proposição.', 'info');
+  window._bpEditandoBackup = view.innerHTML;  // backup para cancelar
+}
+
+async function salvarNotaBP(){
+  if(!_bpDados){ alert('Busque uma proposição primeiro.'); return; }
+  const editor = document.getElementById('bp-nota-editor');
+  const btn    = document.getElementById('bp-btn-salvar');
+  const conteudo = (editor.value || '').trim();
+  if (!conteudo){ alert('A nota não pode ficar vazia.'); return; }
+
+  const originalBtn = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Salvando…';
+
+  try{
+    const r = await fetch('/salvar_nota_proposicao', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ id_proposicao: _bpDados.id, nota: conteudo })
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'Falha ao salvar.');
+
+    // Aplica na view
+    const view = document.getElementById('bp-nota');
+    // Preserva quebras de linha do textarea convertendo \n em <br>
+    const html = conteudo.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])).replace(/\n/g,'<br>');
+    view.style.whiteSpace = 'normal';
+    view.innerHTML =
+      '<div class="alert alert-success py-1 px-2 mb-2 small">' +
+      '<i class="fas fa-check-circle me-1"></i><strong>Nota salva permanentemente</strong>' +
+      ' em ' + j.saved_at.replace(' ', ' às ').substring(0,19) +
+      ' por <strong>' + (j.saved_by || '') + '</strong>' +
+      (j.pautas_atualizadas ? ' <span class="badge bg-info text-dark ms-1">Sincronizada com ' + j.pautas_atualizadas + ' pauta' + (j.pautas_atualizadas > 1 ? 's' : '') + '</span>' : '') +
+      '</div>' + html;
+    _bpDados.nota = conteudo;
+
+    // Volta ao modo view
+    editor.style.display = 'none';
+    view.style.display   = 'block';
+    document.getElementById('bp-btn-editar').style.display   = 'inline-flex';
+    document.getElementById('bp-btn-salvar').style.display   = 'none';
+    document.getElementById('bp-btn-cancelar').style.display = 'none';
+
+    _bpMostrarStatus(
+      '<i class="fas fa-check-circle me-1"></i>Nota atualizada com sucesso' +
+      (j.pautas_atualizadas ? ` — ${j.pautas_atualizadas} pauta(s) sincronizada(s).` : '.'),
+      'success'
+    );
+    // esconde status após 6s
+    setTimeout(_bpEscondeStatus, 6000);
+  } catch(e){
+    _bpMostrarStatus('<i class="fas fa-exclamation-triangle me-1"></i>Erro ao salvar: ' + e.message, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalBtn;
+  }
+}
+
+function cancelarEdicaoBP(){
+  const view   = document.getElementById('bp-nota');
+  const editor = document.getElementById('bp-nota-editor');
+  if (window._bpEditandoBackup != null) {
+    view.innerHTML = window._bpEditandoBackup;
+    delete window._bpEditandoBackup;
+  }
+  editor.value = '';
+  editor.style.display = 'none';
+  view.style.display   = 'block';
+  document.getElementById('bp-btn-editar').style.display   = 'inline-flex';
+  document.getElementById('bp-btn-salvar').style.display   = 'none';
+  document.getElementById('bp-btn-cancelar').style.display = 'none';
+  _bpEscondeStatus();
 }
 
 function excluirExtraPauta(idProp, cardEl){
