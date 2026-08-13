@@ -3,6 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#0A1628">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Pauta">
+  <link rel="apple-touch-icon" sizes="192x192" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" sizes="512x512" href="/static/icon-512.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="/static/icon-512.png">
   <title>Assessoria - Plenário da Câmara dos Deputados</title>
   <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -142,6 +153,34 @@
       </div>
     </div>
 
+    <div class="d-flex align-items-center flex-wrap mb-2">
+      <!-- Quadro de boas-vindas -->
+      <div style="width:100%;background:#fffde7;border:1px solid #ffe082;border-radius:8px;padding:10px 16px;margin-bottom:10px;display:flex;align-items:center;gap:14px;">
+        {% if user_foto %}
+        <img src="{{ user_foto }}" alt="foto" style="width:44px;height:44px;border-radius:50%;object-fit:cover;border:2px solid #ffe082;flex-shrink:0;">
+        {% else %}
+        <div style="width:44px;height:44px;border-radius:50%;background:#ffe082;display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0;">
+          <i class="fas fa-user" style="color:#b8860b;"></i>
+        </div>
+        {% endif %}
+        <div>
+          <div style="font-weight:700;font-size:1rem;color:#5d4037;">
+            Olá, {{ user_nome_display.split()[0] if user_nome_display else current_user.username }} 👋
+          </div>
+          {% if itens_atribuidos %}
+          <div style="font-size:0.82rem;color:#5d4037;margin-top:2px;">
+            Há pauta publicada e foram atribuídos a você os itens:
+            <strong>{{ itens_atribuidos | map(attribute='projeto') | join(', ') }}</strong>
+          </div>
+          {% else %}
+          <div style="font-size:0.82rem;color:#8d6e63;margin-top:2px;font-style:italic;">
+            Não foram atribuídos itens de pauta para você.
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
     <div class="d-flex align-items-center flex-wrap">
       {% if user_categoria != 'restrito' %}
       <a href="{{ url_for('selecionar_data') }}" class="btn btn-outline-secondary btn-sm mb-3">
@@ -159,19 +198,10 @@
         class="btn btn-outline-success btn-sm mb-3 ms-2" target="_blank" rel="noopener">
         <i class="fas fa-file-export me-2"></i>Exportar resumo
       </a>
-      <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-iconografica"
-        onclick="
-          var info = 'Scripts: ' + document.querySelectorAll('script').length +
-                     ' | _abrirModal: ' + typeof window._abrirModalIconografica +
-                     ' | _carregada: ' + (window._iconograficaCarregada ? 'SIM' : 'NAO');
-          if(typeof window._abrirModalIconografica === 'function'){
-            window._abrirModalIconografica();
-          } else {
-            alert('Não carregada.\n' + info);
-          }
-        "
-        style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);">
-        <i class="fas fa-th-large me-2"></i>Pauta Iconográfica
+      <button class="btn btn-sm mb-3 ms-2 text-white" id="btn-pauta-banner"
+        onclick="var d=document.getElementById('modalPautaBanner');var f=typeof window._abrirPautaBanner;if(f==='function'){window._abrirPautaBanner();}else{alert('DEBUG Pauta Banner:\nmodal='+(d?'OK':'AUSENTE')+'\n_abrirPautaBanner='+f);}"
+        style="background:linear-gradient(135deg,#1A6B3A,#0d4a27);">
+        <i class="fas fa-newspaper me-2"></i>Pauta Banner
       </button>
       <button class="btn btn-sm mb-3 ms-2 text-white"
         style="background:linear-gradient(135deg,#25D366,#128C7E);"
@@ -189,10 +219,22 @@
       </span>
       {% endif %}
       {% endif %}
+      {% if user_categoria != 'restrito' %}
+      <button class="btn btn-sm mb-3 ms-2 text-white"
+        style="background:linear-gradient(135deg,#7B5E00,#B8920A);"
+        onclick="abrirModalAdicionarProposicao()">
+        <i class="fas fa-plus-circle me-2"></i>Extra Pauta
+      </button>
+      <button class="btn btn-sm mb-3 ms-2 text-white"
+        style="background:linear-gradient(135deg,#1A3A5C,#0d2a4a);"
+        onclick="abrirModalBuscarProposicao()">
+        <i class="fas fa-search me-2"></i>Buscar Proposição
+      </button>
+      {% endif %}
       <button class="btn btn-sm mb-3 ms-2 text-white"
         style="background:linear-gradient(135deg,#B8860B,#DAA520);"
-        data-bs-toggle="modal" data-bs-target="#modalOrientacoes"
-        onclick="carregarOrientacoes()">
+        onclick="var m=document.getElementById('modalOrientacoes');var f=typeof carregarOrientacoes;if(m&&f==='function'){carregarOrientacoes();new bootstrap.Modal(m).show();}else{alert('DEBUG Orientações:\nmodal='+(m?'OK':'AUSENTE')+'\ncarregarOrientacoes='+f);}"
+        >
         <i class="fas fa-vote-yea me-2"></i>Orientações
       </button>
 
@@ -434,7 +476,7 @@
                   </div>
                 </div>
 
-                <div class="mb-2">
+                <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
                   <button class="btn btn-outline-primary btn-gerar-analise" type="button"
                     data-ordem="{{ item.ordem }}"
                     data-projeto="{{ item.projeto }}"
@@ -445,6 +487,16 @@
                     onclick="gerarAnalise('{{ item.ordem }}', this)">
                     <img src="/static/logo_gemini.svg" alt="Gemini" style="width:16px;height:16px;vertical-align:middle;" class="me-2">
                     Gerar Análise
+                  </button>
+                  <button class="btn btn-outline-secondary btn-gerar-banner" type="button"
+                    data-ordem="{{ item.ordem }}"
+                    data-proposicao="{{ item.projeto | replace('"','') | replace("'",'') }}"
+                    data-ementa="{{ item.ementa | replace('"','') | replace("'",'') }}"
+                    data-autor="{{ item.autor | replace('"','') | replace("'",'') }}"
+                    data-relator="{{ item.relator | replace('"','') | replace("'",'') }}"
+                    data-id-principal="{{ item.id_principal }}"
+                    onclick="abrirModalBanner(this)">
+                    <i class="fas fa-image me-2"></i>Gerar Banner
                   </button>
                 </div>
                 <small class="text-muted">A análise será inserida automaticamente no campo de Resumo/Nota Técnica.</small>
@@ -533,13 +585,17 @@
 
               <!-- DESTAQUES -->
               <div class="mt-4">
-                <div class="d-flex align-items-center gap-2 mb-2">
+                <div class="d-flex align-items-center gap-2 mb-2 flex-wrap">
                   <h6 class="mb-0"><i class="fas fa-thumbtack text-warning me-2"></i>Destaques e Emendas Aglutinativas</h6>
                   <button class="btn btn-outline-warning btn-sm btn-buscar-destaques"
                           data-id-proposicao="{{ item.id_principal }}"
                           data-ordem="{{ item.ordem }}"
                           data-projeto="{{ item.projeto }}">
                     <i class="fas fa-search me-1"></i>Buscar Destaques
+                  </button>
+                  <button class="btn btn-outline-primary btn-sm"
+                          onclick="window.gerarTabelaDestaques('{{ item.projeto }}')">
+                    <i class="fas fa-table me-1"></i>Tabela de Destaques
                   </button>
                   <span class="spinner-busca-{{ item.ordem }}" style="display:none;">
                     <span class="spinner-border spinner-border-sm text-warning"></span>
@@ -581,9 +637,11 @@
     <!-- JS -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
   <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
 
   <script>
+    console.log('[PautaBanner] Template v3 carregado - 2026-06-26');
     const quillInstances = {};
 
     // Inicializa Quill quando collapse abre
@@ -598,6 +656,9 @@
           const textarea = collapseEl.querySelector(`#editor-resumo-materia-${ordem}`);
           const conteudo = textarea ? textarea.value : '';
 
+          // Template padrão quando não há conteúdo
+          const TEMPLATE_PADRAO = `<p><strong>📘 Resumo Técnico</strong></p><p><br></p><p><br></p><p><strong>🟢 Pontos Positivos</strong></p><p><br></p><p><br></p><p><strong>🔴 Pontos Negativos</strong></p><p><br></p><p><br></p><p><strong>⚖️ Riscos Políticos e de Imagem</strong></p><p><br></p><p><br></p><p><strong>↔️ Orientação Sugerida</strong></p><p><br></p>`;
+
           const quill = new Quill(`#quill-editor-${ordem}`, {
             theme: 'snow',
             modules: {
@@ -609,7 +670,21 @@
             }
           });
 
-          if (conteudo) quill.clipboard.dangerouslyPasteHTML(conteudo);
+          if (conteudo) {
+            // Verifica se já tem títulos de seção padronizados
+            const temTitulos = conteudo.includes('📘') || conteudo.includes('🟢') || conteudo.includes('🔴') || conteudo.includes('↔️') || conteudo.includes('⚖️');
+            if (temTitulos) {
+              // Já formatado — usa diretamente
+              quill.clipboard.dangerouslyPasteHTML(conteudo);
+            } else {
+              // Conteúdo antigo sem estrutura — insere template com conteúdo no Resumo
+              const conteudoLimpo = conteudo.replace(/<[^>]+>/g, '').trim();
+              const templateComConteudo = `<p><strong>📘 Resumo Técnico</strong></p><p>${conteudoLimpo}</p><p><br></p><p><strong>🟢 Pontos Positivos</strong></p><p><br></p><p><br></p><p><strong>🔴 Pontos Negativos</strong></p><p><br></p><p><br></p><p><strong>⚖️ Riscos Políticos e de Imagem</strong></p><p><br></p><p><br></p><p><strong>↔️ Orientação Sugerida</strong></p><p><br></p>`;
+              quill.clipboard.dangerouslyPasteHTML(templateComConteudo);
+            }
+          } else {
+            quill.clipboard.dangerouslyPasteHTML(TEMPLATE_PADRAO);
+          }
           quillInstances[ordem] = quill;
         });
       });
@@ -839,6 +914,62 @@
       }
     }
     setTimeout(enriquecerPartidos, 1500);
+    // Abrevia comissões e nomes longos via regex primeiro
+    function abreviarTexto(texto){
+      if(!texto) return '';
+      return texto
+        .replace(/Comissão\s+Especial\s+/gi, 'Com.Esp. ')
+        .replace(/Comissão\s+Mista\s+/gi, 'Com.Mista ')
+        .replace(/Comissão\s+de\s+/gi, 'Com. ')
+        .replace(/Comissão\s+/gi, 'Com. ')
+        .replace(/Deputad[oa]s?\s+/gi, 'Dep. ')
+        .replace(/\s{2,}/g, ' ').trim();
+    }
+
+    // Para nomes ainda longos (>60 chars), chama IA para abreviar
+    async function abreviarViaIA(texto, maxChars){
+      maxChars = maxChars || 40;
+      if(!texto || texto.length <= maxChars) return texto;
+      try {
+        const r = await fetch('/resumo_ementa', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            id_principal: 'abrev_'+texto.substring(0,10),
+            projeto: 'Abreviação',
+            ementa: 'Abrevia o seguinte nome de autoria parlamentar em no máximo '+maxChars+' caracteres, mantendo siglas e nomes próprios reconhecíveis. Retorne APENAS o texto abreviado, sem explicações: ' + texto,
+            autor: ''
+          })
+        });
+        const j = await r.json();
+        return (j.resumo||texto).substring(0, maxChars);
+      } catch(e){ return texto.substring(0, maxChars); }
+    }
+
+    async function prepararAutoresRelatores(){
+      if(!window.ITENS_DATA) return;
+      // Estima largura disponível para o texto de autor/relator
+      // (usa valores típicos — 2 colunas, 15 itens)
+      var estimCardW = Math.floor((794-8*2-5)/2);
+      var estimIcoW  = Math.min(60, Math.max(28, Math.round(123*0.18)));
+      var estimTxtW  = estimCardW - 4 - 10*2 - estimIcoW - 10;
+      // Máx chars que cabem em 8pt (mínimo) numa linha
+      var maxChars = Math.floor(estimTxtW / (8 * 0.55));
+
+      for(const item of window.ITENS_DATA){
+        item.autor_breve   = abreviarTexto(item.autor);
+        item.relator_breve = abreviarTexto(item.relator);
+        // Se ainda não cabe, usa IA
+        var metaFull = 'Autor: '+item.autor_breve+'  |  Relator: '+item.relator_breve;
+        if(metaFull.length > maxChars){
+          if(item.autor_breve.length > 35)
+            item.autor_breve = await abreviarViaIA(item.autor_breve, 35);
+          if(item.relator_breve.length > 35)
+            item.relator_breve = await abreviarViaIA(item.relator_breve, 35);
+        }
+      }
+    }
+
+    prepararAutoresRelatores();
     setTimeout(carregarTodosResumos, 1000);
       document.addEventListener('change', async (e) => {
         const sel = e.target.closest('.select-responsavel');
@@ -1326,14 +1457,17 @@
   window.ITENS_DATA = [
     {% for item in itens %}
     {
-      ordem:        {{ item.ordem | tojson }},
-      id_principal: {{ item.id_principal | tojson }},
-      projeto:      {{ item.projeto | tojson }},
-      ementa:       {{ item.ementa | tojson }},
-      autor:        {{ item.autor | tojson }},
-      relator:      {{ item.relator | tojson }},
-      orientacao:   {{ (item.orientacao or '') | tojson }},
-      resumo_ia:    ''
+      ordem:                  {{ item.ordem | tojson }},
+      id_principal:           {{ item.id_principal | tojson }},
+      projeto:                {{ item.projeto | tojson }},
+      ementa:                 {{ item.ementa | tojson }},
+      autor:                  {{ item.autor | tojson }},
+      relator:                {{ item.relator | tojson }},
+      orientacao:             {{ (item.orientacao or '') | tojson }},
+      resumo_ia:              '',
+      responsavel_username:   {{ (item.responsavel_username or '') | tojson }},
+      responsavel_nome:       "{{ (assessores | selectattr('username','equalto', item.responsavel_username) | list | first).nome if item.responsavel_username else '' }}",
+      responsavel_categoria:  "{{ (assessores | selectattr('username','equalto', item.responsavel_username) | list | first).categoria if item.responsavel_username else '' }}"
     }{% if not loop.last %},{% endif %}
     {% endfor %}
   ];
@@ -1421,10 +1555,12 @@
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
     try {
+      console.log('[DTQ] Buscando documentos para', idPrincipal);
       const r = await fetch('/listar_documentos/' + idPrincipal);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       const docs = j.documentos || [];
+      console.log('[DTQ] Documentos encontrados:', docs.length, docs.map(d=>d.label));
       if (docs.length === 0) {
         alert('Nenhum documento encontrado.');
         btn.disabled = false;
@@ -1438,7 +1574,7 @@
       modalEl.className = 'modal fade';
       modalEl.setAttribute('tabindex', '-1');
 
-      const mDialog  = document.createElement('div'); mDialog.className = 'modal-dialog';
+      const mDialog  = document.createElement('div'); mDialog.className = 'modal-dialog modal-lg';
       const mContent = document.createElement('div'); mContent.className = 'modal-content';
       const mHeader  = document.createElement('div'); mHeader.className = 'modal-header bg-primary text-white';
       const mTitle   = document.createElement('h6');  mTitle.className = 'modal-title';
@@ -1449,25 +1585,33 @@
       mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
 
       const mBody = document.createElement('div'); mBody.className = 'modal-body';
-      const mInfo = document.createElement('p'); mInfo.className = 'small text-muted mb-2';
-      mInfo.textContent = docs.length + ' documento(s). Use 👁 Ver para visualizar o texto do PDF.';
+      const mInfo = document.createElement('p'); mInfo.className = 'small text-muted mb-1';
+      mInfo.textContent = docs.length + ' documento(s). Selecione até 2 para comparar. Use 👁 Ver para visualizar.';
       mBody.appendChild(mInfo);
       mBody.appendChild(document.createElement('hr'));
 
-      // Lista de documentos com radio + botão Ver (igual ao dos destaques)
+      // Lista com CHECKBOX (até 2 selecionados) + Ver + PDF
       docs.forEach((d, i) => {
         const wrap = document.createElement('div');
         wrap.className = 'form-check mb-1 d-flex align-items-start gap-2';
 
         const inp = document.createElement('input');
         inp.className = 'form-check-input mt-1';
-        inp.type = 'radio'; inp.name = 'doc_par'; inp.id = 'dpar_' + i;
+        inp.type = 'checkbox';
+        inp.name = 'doc_cmp';
+        inp.id = 'dcmp_' + i;
         inp.value = String(i);
-        if (i === 0) inp.checked = true;
+        inp.dataset.url   = d.url;
+        inp.dataset.label = d.label;
+        // Limita a 2 selecionados
+        inp.addEventListener('change', () => {
+          const checked = mBody.querySelectorAll('input[name="doc_cmp"]:checked');
+          if (checked.length > 2) { inp.checked = false; return; }
+        });
 
         const lbl = document.createElement('label');
         lbl.className = 'form-check-label small flex-grow-1';
-        lbl.setAttribute('for', 'dpar_' + i);
+        lbl.setAttribute('for', 'dcmp_' + i);
         lbl.textContent = d.label;
 
         const btnVer = document.createElement('button');
@@ -1481,19 +1625,71 @@
         btnPdf.className = 'btn btn-outline-danger btn-sm py-0 px-1';
         btnPdf.style.fontSize = '0.7rem';
         btnPdf.textContent = '📄 PDF';
-        btnPdf.href = d.url;
-        btnPdf.target = '_blank';
-        btnPdf.rel = 'noopener';
+        btnPdf.href = d.url; btnPdf.target = '_blank'; btnPdf.rel = 'noopener';
 
         wrap.appendChild(inp); wrap.appendChild(lbl); wrap.appendChild(btnVer); wrap.appendChild(btnPdf);
         mBody.appendChild(wrap);
       });
 
+      // Área de resultado da comparação
+      const resultDiv = document.createElement('div');
+      resultDiv.id = 'cmp-resultado';
+      resultDiv.style.display = 'none';
+      resultDiv.className = 'mt-3';
+      mBody.appendChild(resultDiv);
+
       const mFooter = document.createElement('div'); mFooter.className = 'modal-footer';
+
       const btnFechar = document.createElement('button');
       btnFechar.type = 'button'; btnFechar.className = 'btn btn-secondary btn-sm';
       btnFechar.setAttribute('data-bs-dismiss', 'modal'); btnFechar.textContent = 'Fechar';
+
+      const btnComparar = document.createElement('button');
+      btnComparar.type = 'button';
+      btnComparar.className = 'btn btn-primary btn-sm';
+      btnComparar.innerHTML = '<i class="fas fa-exchange-alt me-1"></i>Comparar Textos';
+      btnComparar.addEventListener('click', async () => {
+        const checked = Array.from(mBody.querySelectorAll('input[name="doc_cmp"]:checked'));
+        if (checked.length < 2) {
+          resultDiv.innerHTML = '<div class="alert alert-warning py-1 small">Selecione exatamente 2 documentos para comparar.</div>';
+          resultDiv.style.display = 'block';
+          return;
+        }
+        const [d1, d2] = [checked[0], checked[1]];
+        btnComparar.disabled = true;
+        btnComparar.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Comparando...';
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = '<div class="text-center text-muted small py-3"><i class="fas fa-spinner fa-spin me-2"></i>A IA está analisando as diferenças entre os documentos...</div>';
+
+        try {
+          const r2 = await fetch('/comparar_documentos', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              url_doc1: d1.dataset.url, label_doc1: d1.dataset.label,
+              url_doc2: d2.dataset.url, label_doc2: d2.dataset.label,
+            })
+          });
+          const j2 = await r2.json();
+          if (j2.comparacao) {
+            resultDiv.innerHTML =
+              '<div class="border rounded p-3 bg-light">' +
+                '<h6 class="text-primary mb-2"><i class="fas fa-exchange-alt me-1"></i>Comparação de Textos</h6>' +
+                '<div class="small" style="white-space:pre-wrap;line-height:1.6;">' + j2.comparacao + '</div>' +
+              '</div>';
+          } else {
+            resultDiv.innerHTML = '<div class="alert alert-danger py-1 small">Erro: ' + (j2.error||'Falha na comparação') + '</div>';
+          }
+        } catch(e) {
+          resultDiv.innerHTML = '<div class="alert alert-danger py-1 small">Erro: ' + e.message + '</div>';
+        } finally {
+          btnComparar.disabled = false;
+          btnComparar.innerHTML = '<i class="fas fa-exchange-alt me-1"></i>Comparar Textos';
+        }
+      });
+
       mFooter.appendChild(btnFechar);
+      mFooter.appendChild(btnComparar);
 
       mContent.appendChild(mHeader); mContent.appendChild(mBody); mContent.appendChild(mFooter);
       mDialog.appendChild(mContent); modalEl.appendChild(mDialog);
@@ -1510,29 +1706,45 @@
   }
 
   function gerarTabelaDestaques(projetoFiltro) {
-    // Coleta todos os destaques analisados na página
+    // Coleta todos os destaques analisados na página.
+    // Estrutura HTML real: o botão com data-numero fica numa <tr>, e o box de
+    // análise (id="analise-destaque-...") fica na <tr> SEGUINTE, dentro de um
+    // <td colspan>. Por isso usamos a <tr> ANTERIOR (previousElementSibling)
+    // para localizar o botão de origem, em vez de closest('tr').
     const destaques = [];
     document.querySelectorAll('[id^="analise-destaque-"]').forEach(box => {
       if (box.style.display === 'none' || !box.innerHTML.trim()) return;
-      const tr = box.closest('tr');
-      const btnOrigem = tr ? tr.querySelector('[data-numero]') : null;
+
+      const trAnalise = box.closest('tr');
+      const trBotao    = trAnalise ? trAnalise.previousElementSibling : null;
+      const btnOrigem  = trBotao ? trBotao.querySelector('[data-numero]') : null;
+
       const numero    = btnOrigem ? btnOrigem.dataset.numero    : '';
       const descricao = btnOrigem ? btnOrigem.dataset.descricao : '';
-      const autoria   = btnOrigem ? btnOrigem.dataset.autoria   : '';
-      const projeto   = btnOrigem ? btnOrigem.dataset.projeto   : (projetoFiltro || '');
-      const analise   = box.querySelector('div') ? box.querySelector('div').innerText : box.innerText;
-      if (numero) destaques.push({ numero, descricao, autoria, projeto, analise });
+      const autoria    = btnOrigem ? btnOrigem.dataset.autoria   : '';
+      const projeto    = btnOrigem ? btnOrigem.dataset.projeto   : (projetoFiltro || '');
+
+      // O texto da análise está sempre num <div class="analise-texto">,
+      // criado separadamente do botão "Criar Quadro do DTQ" em todos os fluxos
+      // de analisarDestaque/_executarAnaliseDestaque.
+      const innerDiv = box.querySelector('.analise-texto') || box.querySelector('div');
+      const analise  = (innerDiv ? innerDiv.innerText : box.innerText).trim();
+
+      if (numero && analise) destaques.push({ numero, descricao, autoria, projeto, analise });
     });
 
-    // Se não encontrou pela div, coleta pelos botões de quadro
+    // Fallback: se nenhuma análise foi localizada via box, tenta pelos botões "Criar Quadro do DTQ",
+    // usando o dataset.analise (texto da IA já salvo no próprio botão) sem cortar em 200 chars.
     if (destaques.length === 0) {
       document.querySelectorAll('[data-numero][onclick*="gerarQuadroDTQ"], .btn-dark[data-numero]').forEach(bq => {
+        const analiseTxt = bq.dataset.analise ? bq.dataset.analise.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim() : '';
+        if (!analiseTxt) return;
         destaques.push({
           numero:    bq.dataset.numero    || '',
           descricao: bq.dataset.descricao || '',
           autoria:   bq.dataset.autoria   || '',
           projeto:   bq.dataset.projeto   || '',
-          analise:   bq.dataset.analise   ? bq.dataset.analise.replace(/<[^>]+>/g,'').substring(0,200) : '',
+          analise:   analiseTxt,
         });
       });
     }
@@ -1597,6 +1809,18 @@
     btn.disabled = true;
     btn.innerHTML = '⏳ Gerando quadro...';
 
+    // Abre a janela IMEDIATAMENTE (de forma síncrona, no gesto de clique do usuário)
+    // para evitar bloqueio de popup pelo browser. Preenche o conteúdo depois.
+    const popup = window.open('', '_blank', 'width=900,height=700,scrollbars=yes,resizable=yes');
+    if (!popup) {
+      alert('O navegador bloqueou a janela de pop-up. Permita pop-ups para este site e tente novamente.');
+      btn.disabled = false;
+      btn.innerHTML = '🖼️ Criar Quadro do DTQ';
+      return;
+    }
+    const pd = popup.document;
+    pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Quadro DTQ</title></head><body><p style="font-family:Arial,sans-serif;padding:30px;color:#666;">⏳ Gerando quadro...</p></body></html>'); pd.close();
+
     try {
       const r = await fetch('/gerar_quadro_dtq', {
         method: 'POST',
@@ -1604,12 +1828,10 @@
         body: JSON.stringify({ projeto, numero, descricao, analise_html: analise, url_documento: urlDoc, label_documento: labelDoc })
       });
       const j = await r.json();
-      if (!j.ok) { alert('Erro: ' + j.error); return; }
+      if (!j.ok) { alert('Erro: ' + j.error); popup.close(); return; }
       const d = j.dados;
 
-      // Constrói popup via DOM — sem document.write com template literal
-      const popup = window.open('', '_blank', 'width=900,height=700,scrollbars=yes,resizable=yes');
-      const pd = popup.document;
+      // Limpa o "carregando" e reconstrói o documento do popup já aberto
       pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Quadro DTQ</title></head><body></body></html>'); pd.close();
 
       const st = pd.createElement('style');
@@ -1724,6 +1946,7 @@
 
     } catch(e) {
       alert('Erro: ' + e.message);
+      if (popup && !popup.closed) popup.close();
     } finally {
       btn.disabled = false;
       btn.innerHTML = '🖼️ Criar Quadro do DTQ';
@@ -1886,7 +2109,14 @@
             btn.closest('td')?.appendChild(box);
           }
           box.style.display = 'block';
-          box.innerHTML = j.resumo;
+          box.innerHTML = '';
+          // Texto da análise SEMPRE num <div class="analise-texto"> próprio,
+          // separado do botão "Criar Quadro", para gerarTabelaDestaques conseguir
+          // localizar o texto de forma inequívoca.
+          const divAnalise = document.createElement('div');
+          divAnalise.className = 'analise-texto';
+          divAnalise.innerHTML = j.resumo;
+          box.appendChild(divAnalise);
           // Botão criar quadro
           const dBtn = document.createElement('div'); dBtn.className = 'mt-2 d-flex gap-2 flex-wrap';
           const bq = document.createElement('button'); bq.className = 'btn btn-sm btn-dark';
@@ -1909,11 +2139,35 @@
     }
 
     try {
+      console.log('[DTQ] Buscando documentos para', idPrincipal);
       const r = await fetch('/listar_documentos/' + idPrincipal);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       const docs = j.documentos || [];
-      if (docs.length === 0) { alert('Nenhum documento encontrado.'); return; }
+      console.log('[DTQ] Documentos encontrados:', docs.length, docs.map(d=>d.label));
+      if (docs.length === 0) {
+        // Para 'votação em separado', usa o texto da proposição diretamente
+        const ehSeparado = /em separado/i.test(descricao);
+        if (ehSeparado) {
+          // Chama analisar_destaque sem documento específico
+          btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+          const rS = await fetch('/analisar_destaque', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({id_principal: idPrincipal, descricao, numero, projeto})
+          });
+          const jS = await rS.json();
+          if (jS.resumo) {
+            const numKey = numero.replace(/\s/g, '-');
+            let box = document.getElementById('analise-destaque-' + numKey);
+            if (!box) { const tr=btn.closest('tr'); const ntr=tr?tr.nextElementSibling:null; if(ntr) box=ntr.querySelector('[id^="analise-destaque-"]'); }
+            if (!box) { box=document.createElement('div'); box.className='mt-2 p-2 border rounded bg-light'; btn.closest('td')?.appendChild(box); }
+            box.style.display='block'; box.innerHTML=jS.resumo;
+          } else { alert('Erro: ' + (jS.error||'Falha')); }
+          btn.disabled=false; btn.innerHTML='<i class="fas fa-robot"></i>';
+          return;
+        }
+        alert('Nenhum documento encontrado para análise.'); return;
+      }
 
       // === MONTA MODAL VIA DOM (sem innerHTML com dados dinâmicos) ===
       document.getElementById('modal-sel-doc')?.remove();
@@ -2015,8 +2269,13 @@
       modalEl.appendChild(mDialog);
       document.body.appendChild(modalEl);
 
-      const modal = new bootstrap.Modal(modalEl);
-      modal.show();
+      // Remove qualquer backdrop/modal ativo antes de abrir o novo
+      document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+      document.body.classList.remove('modal-open');
+      document.body.style.removeProperty('overflow');
+      document.body.style.removeProperty('padding-right');
+      const modal = new bootstrap.Modal(modalEl, {backdrop: true, keyboard: true});
+      setTimeout(() => modal.show(), 50);
 
       // === BOTÃO DEBUG ===
       btnDebug.addEventListener('click', async () => {
@@ -2117,7 +2376,7 @@
             // Monta o conteúdo com botões
             const inner = box.querySelector('div') || (() => { const d = window.document.createElement('div'); box.appendChild(d); return d; })();
             inner.innerHTML = '';
-            const dRes = window.document.createElement('div'); dRes.innerHTML = analiseHtml; inner.appendChild(dRes);
+            const dRes = window.document.createElement('div'); dRes.className = 'analise-texto'; dRes.innerHTML = analiseHtml; inner.appendChild(dRes);
             // Botões criar quadro + editar análise + tabela
             const dBtn = window.document.createElement('div'); dBtn.className = 'mt-2 d-flex gap-2 flex-wrap';
             const bq = window.document.createElement('button'); bq.className = 'btn btn-sm btn-dark';
@@ -2186,6 +2445,7 @@
             const inner = box.querySelector('div') || box;
             inner.innerHTML = '';
             const dRes = document.createElement('div');
+            dRes.className = 'analise-texto';
             dRes.innerHTML = j2.resumo;
             inner.appendChild(dRes);
             // Botão criar quadro + editar análise + tabela global
@@ -2258,8 +2518,17 @@
     } catch(e) {
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-robot"></i>';
+      alert('Erro ao analisar destaque: ' + e.message);
     }
   } // fim _executarAnaliseDestaque
+
+  // Expõe funções no escopo global para uso em onclick dinâmico
+  window.analisarDestaque        = analisarDestaque;
+  window._executarAnaliseDestaque = _executarAnaliseDestaque;
+  window.gerarQuadroDTQ          = gerarQuadroDTQ;
+  window.verTextoDoc             = verTextoDoc;
+  window.gerarTabelaDestaques    = gerarTabelaDestaques;
+
 
   async function limparResumosIA(eventoId) {
     if (!confirm("Remover resumos IA salvos? Serão regenerados ao recarregar.")) return;
@@ -2345,10 +2614,13 @@ const EVENTO_ID_ORI  = {{ evento_id|safe }};
 const ITENS_ORI = [
   {% for item in itens %}
   {
-    ordem:        "{{ item.ordem }}",
-    id_principal: "{{ item.id_principal }}",
-    projeto:      "{{ item.projeto | replace('"','') | replace("'",'') }}",
-    ementa:       {{ item.ementa | tojson }}
+    ordem:                "{{ item.ordem }}",
+    id_principal:         "{{ item.id_principal }}",
+    projeto:              "{{ item.projeto | replace('"','') | replace("'",'') }}",
+    ementa:               {{ item.ementa | tojson }},
+    responsavel_username: "{{ item.responsavel_username or '' }}",
+    responsavel_nome:     "{{ (assessores | selectattr('username','equalto', item.responsavel_username) | list | first).nome if item.responsavel_username else '' }}",
+    responsavel_foto:     "{{ (assessores | selectattr('username','equalto', item.responsavel_username) | list | first).foto if item.responsavel_username else '' }}"
   }{% if not loop.last %},{% endif %}
   {% endfor %}
 ];
@@ -2432,9 +2704,19 @@ function renderizarTabela() {
     const resumo = (resumoEl && resumoEl.textContent.trim()) || '';
     const ementaHtml = `<span style="color:#333">${item.ementa || ''}</span>` +
       (resumo ? `<br><span style="color:#1A6B3A;font-weight:500">Resumo: ${resumo}</span>` : '');
+
+    // Responsável: foto + nome em itálico azul
+    let respHtml = '';
+    if (item.responsavel_nome) {
+      const foto = item.responsavel_foto
+        ? `<img src="${item.responsavel_foto}" style="width:20px;height:20px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-right:4px;border:1px solid #ccc;">`
+        : `<i class="fas fa-user-circle" style="color:#0D2B5E;margin-right:4px;"></i>`;
+      respHtml = `<div style="margin-top:4px;font-size:0.72rem;color:#0D2B5E;font-style:italic;">${foto}${item.responsavel_nome}</div>`;
+    }
+
     tr.innerHTML = `
       <td class="text-center fw-bold align-top">${item.ordem}</td>
-      <td class="align-top"><strong>${item.projeto}</strong></td>
+      <td class="align-top"><strong>${item.projeto}</strong>${respHtml}</td>
       <td style="font-size:0.78rem; min-width:200px; white-space:normal; word-break:break-word;">${ementaHtml}</td>`;
 
     COLUNAS.forEach(col => {
@@ -2549,56 +2831,861 @@ async function exportarOrientacoesPDF() {
 </script>
 
 <!-- ═══ MODAL PAUTA ICONOGRÁFICA ══════════════════════════════════════════ -->
-<div class="modal fade" id="modalIconografica" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width:95vw;">
+<div class="modal fade" id="modalPautaBanner" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width:860px;">
     <div class="modal-content">
-      <div class="modal-header" style="background:linear-gradient(135deg,#0D2B5E,#1a3a6b);color:#fff;">
-        <h5 class="modal-title"><i class="fas fa-th-large me-2"></i>Pauta Iconográfica</h5>
-        <div class="ms-auto me-3 d-flex gap-2">
-          <span id="icon-status" class="badge bg-warning text-dark" style="font-size:0.75rem;"></span>
-        </div>
+      <div class="modal-header" style="background:linear-gradient(135deg,#1A6B3A,#0d4a27);color:#fff;">
+        <h5 class="modal-title"><i class="fas fa-newspaper me-2"></i>Pauta Banner</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body p-0" style="background:#f4ede1;">
-        <!-- Preview em tempo real -->
-        <div id="icon-preview-container" style="padding:16px;">
-          <div id="icon-preview" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:794px;margin:0 auto;">
-            <!-- Cards gerados via JS -->
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label fw-bold small"><i class="fas fa-image me-1"></i>Imagem de fundo (opcional)</label>
+          <input type="file" class="form-control form-control-sm" id="pb-imagem" accept="image/jpeg,image/png,image/webp">
+        </div>
+        <div id="pb-img-preview" style="display:none;margin-bottom:10px;">
+          <img id="pb-img-preview-src" style="max-height:80px;border-radius:4px;border:1px solid #ddd;">
+        </div>
+        <div class="mb-2">
+          <label class="form-label fw-bold small mb-1">
+            <i class="fas fa-star me-1" style="color:#DAA520;"></i>Selecione os projetos em destaque/prioridade
+          </label>
+          <div class="form-text mb-2">Marque os itens que aparecerão no card ⭐ Prioridade.</div>
+          <div id="pb-lista-prioridade"
+            style="max-height:200px;overflow-y:auto;border:1px solid #dee2e6;border-radius:6px;padding:8px;">
+            <div class="text-muted small fst-italic">Abrindo pauta...</div>
+          </div>
+        </div>
+        <div id="pb-resultado" style="display:none;">
+          <div style="display:flex;align-items:center;gap:8px;background:#FFF9E6;border:1px solid #F0C030;border-radius:6px;padding:8px 12px;margin-bottom:10px;">
+            <i class="fas fa-pencil-alt" style="color:#B8860B;"></i>
+            <span style="font-size:0.82rem;color:#7A5C00;"><strong>Modo edição:</strong> clique em qualquer campo para editar antes de baixar.</span>
+          </div>
+          <div id="pb-preview-outer" style="border:1px solid #ddd;border-radius:4px;overflow:auto;background:#C5D0DC;max-height:65vh;">
+            <div id="pb-preview-inner" style="transform-origin:top left;width:794px;"></div>
           </div>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
-        <button class="btn btn-primary" id="btn-gerar-iconografica"
-          onclick="window._gerarIconografica && window._gerarIconografica()">
-          <i class="fas fa-print me-1"></i>Imprimir / Salvar PDF
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
+        <button type="button" class="btn btn-sm text-white" id="btn-pb-gerar"
+          style="background:linear-gradient(135deg,#1A6B3A,#0d4a27);" onclick="gerarPautaBanner()">
+          <i class="fas fa-magic me-1"></i>Gerar Banner
+        </button>
+        <button type="button" class="btn btn-sm text-white" id="btn-pb-gerar-lg"
+          style="background:linear-gradient(135deg,#1A3A7A,#0d2a5c);" onclick="gerarPautaBannerLetraGrande()">
+          <i class="fas fa-text-height me-1"></i>Letra Grande
+        </button>
+        <button type="button" class="btn btn-outline-primary btn-sm" id="btn-pb-png"
+          style="display:none;" onclick="baixarPautaBannerPNG(this)">
+          <i class="fas fa-image me-1"></i>Baixar PNG
         </button>
       </div>
     </div>
   </div>
 </div>
 
+<script>
+// ── PAUTA BANNER ─────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded',function(){
+  document.getElementById('pb-imagem')?.addEventListener('change',function(){
+    const f=this.files[0],p=document.getElementById('pb-img-preview'),i=document.getElementById('pb-img-preview-src');
+    if(f){const r=new FileReader();r.onload=e=>{i.src=e.target.result;p.style.display='block';};r.readAsDataURL(f);}
+    else p.style.display='none';
+  });
+});
+window._abrirPautaBanner=function(){
+  document.getElementById('pb-resultado').style.display='none';
+  document.getElementById('btn-pb-png').style.display='none';
+  document.getElementById('pb-imagem').value='';
+  document.getElementById('pb-img-preview').style.display='none';
+  // Popula lista de prioridade com itens da pauta
+  const lista=document.getElementById('pb-lista-prioridade');
+  const itens=(window.ITENS_DATA||[]).filter(it=>{
+    const p=it.projeto_original||it.projeto||'';
+    const naoEhReq=/^REQ\s|^RQS\s|^RQU\s|^REC\s/i.test(p);
+    const naoEhRedacao=/Reda[cç][aã]o Final/i.test(it.projeto);
+    return !naoEhReq && !naoEhRedacao;
+  });
+  if(itens.length===0){
+    lista.innerHTML='<div class="text-muted small fst-italic">Nenhum item disponível.</div>';
+  } else {
+    lista.innerHTML=itens.map(it=>{
+      const temOrientacaoSim=(it.orientacao||'').toUpperCase()==='SIM';
+      // Por padrão nenhum item vem marcado como prioridade no Pauta Banner
+      return `<div class="form-check py-1" style="border-bottom:1px solid #f0f0f0;">`
+        +`<input class="form-check-input" type="checkbox" id="pb-pri-${it.id_principal}"
+           value="${it.id_principal}">`
+        +`<label class="form-check-label small" for="pb-pri-${it.id_principal}">`
+        +`<strong>Item ${it.ordem}</strong> — ${it.projeto}`
+        +`${temOrientacaoSim?' <span class="badge" style="background:#DAA520;font-size:0.65rem;">SIM</span>':''}`
+        +`</label></div>`;
+    }).join('');
+  }
+  new bootstrap.Modal(document.getElementById('modalPautaBanner')).show();
+};
+function _ePB(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+async function gerarPautaBanner(){
+  const btn=document.getElementById('btn-pb-gerar');
+  btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Gerando...';
+  try{
+    const itens=window.ITENS_DATA||[];
+    const imgFile=document.getElementById('pb-imagem').files[0];
+    let imgB64='',imgMime='';
+    if(imgFile){
+      imgB64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(imgFile);});
+      imgMime=imgFile.type;
+    }
+    const [logoOpoB64,logoMinB64]=await Promise.all([
+      fetch('/static/logo_oposicao.png').then(r=>r.blob()).then(b=>new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(b)})),
+      fetch('/static/logo_minoria.png').then(r=>r.blob()).then(b=>new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(b)})),
+    ]).catch(()=>['','']);
+    const dataEl=document.querySelector('[data-evento-data]');
+    const dataEvt=dataEl?.dataset?.eventoData||'';
+    let dataFmt='';
+    if(dataEvt){
+      // data-evento-data vem como DD/MM/YYYY do datetimeformat
+      const meses=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+      const partes=dataEvt.split('/');
+      if(partes.length===3){
+        const dia=parseInt(partes[0]),mes=parseInt(partes[1]),ano=partes[2];
+        if(!isNaN(dia)&&!isNaN(mes)) dataFmt=`${dia} de ${meses[mes-1]} de ${ano}`;
+      }
+    }
+    const urgencias=itens.filter(it=>/^REQ\s|^RQS\s|^RQU\s|^REC\s/i.test((it.projeto_original||it.projeto||'')));
+    const materias=itens.filter(it=>/Reda[cç][aã]o Final/i.test(it.projeto)&&!urgencias.includes(it));
+    // Prioridade: exclusivamente os checkboxes marcados pelo usuário (nenhuma marcação por padrão)
+    const checksSel=Array.from(document.querySelectorAll('#pb-lista-prioridade input[type=checkbox]:checked')).map(cb=>String(cb.value));
+    const prioridade=itens.filter(it=>checksSel.includes(String(it.id_principal))&&!urgencias.includes(it)&&!materias.includes(it));
+    const projetos=itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)&&!prioridade.includes(it));
+    const html=_buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64});
+    const inner=document.getElementById('pb-preview-inner');
+    inner.innerHTML=html;
+    const outerW=document.getElementById('pb-preview-outer').offsetWidth||700;
+    const scale=Math.min(1,(outerW-8)/794);
+    inner.style.transform=`scale(${scale})`;inner.style.width='794px';inner.style.transformOrigin='top left';
+    setTimeout(()=>{const h=inner.scrollHeight*scale;document.getElementById('pb-preview-outer').style.height=Math.min(h+20,window.innerHeight*0.6)+'px';},100);
+    _ativarEdicaoPautaBanner(inner);
+    document.getElementById('pb-resultado').style.display='block';
+    document.getElementById('btn-pb-png').style.display='inline-block';
+  }catch(e){alert('Erro: '+e.message);}
+  finally{btn.disabled=false;btn.innerHTML='<i class="fas fa-magic me-1"></i>Gerar Banner';}
+}
 
-<!-- Modal de alerta do monitoramento -->
-<div class="modal fade" id="modalMonitorAlerta" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content border-0 shadow-lg">
-      <div class="modal-header text-white" style="background:linear-gradient(135deg,#C0392B,#922B21);">
-        <h5 class="modal-title fw-bold">
-          <i class="fas fa-satellite-dish me-2"></i>
-          <span id="monitor-alerta-titulo">Item Em Análise</span>
+// ── PAUTA BANNER LETRA GRANDE ────────────────────────────────────────────────
+// Gera múltiplas páginas A4 (794px) com fonte mínima 16px
+// Separa: urgências / matérias / projetos — se muitos itens, cada seção em página própria
+async function gerarPautaBannerLetraGrande(){
+  const btn = document.getElementById('btn-pb-gerar-lg');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando...';
+
+  try{
+    const itens = window.ITENS_DATA || [];
+    const imgFile = document.getElementById('pb-imagem').files[0];
+    let imgB64='', imgMime='';
+    if(imgFile){
+      imgB64 = await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(imgFile);});
+      imgMime = imgFile.type;
+    }
+    const [logoOpoB64,logoMinB64] = await Promise.all([
+      fetch('/static/logo_oposicao.png').then(r=>r.blob()).then(b=>new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(b)})),
+      fetch('/static/logo_minoria.png').then(r=>r.blob()).then(b=>new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(b)})),
+    ]).catch(()=>['','']);
+
+    const dataEl = document.querySelector('[data-evento-data]');
+    const dataEvt = dataEl?.dataset?.eventoData || '';
+    let dataFmt = '';
+    if(dataEvt){
+      const meses=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+      const p=dataEvt.split('/');
+      if(p.length===3){const d=parseInt(p[0]),m=parseInt(p[1]),a=p[2];if(!isNaN(d)&&!isNaN(m))dataFmt=`${d} de ${meses[m-1]} de ${a}`;}
+    }
+
+    function _ePB(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+    // Separa itens por tipo
+    const urgencias = itens.filter(it=>/^REQ\s|^RQS\s|^RQU\s|^REC\s/i.test(it.projeto_original||it.projeto||''));
+    const materias  = itens.filter(it=>/Reda[cç][aã]o Final/i.test(it.projeto)&&!urgencias.includes(it));
+    const checksSel = Array.from(document.querySelectorAll('#pb-lista-prioridade input[type=checkbox]:checked')).map(cb=>String(cb.value));
+    const priIds    = new Set(checksSel);
+    const todosProj = itens.filter(it=>!urgencias.includes(it)&&!materias.includes(it)).sort((a,b)=>(a.ordem||0)-(b.ordem||0));
+
+    const oriCores={'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#2A5C8A','OBSTRUÇÃO':'#7A1A1A','NEGOCIAÇÃO':'#8A6A00','ABSTENÇÃO':'#555'};
+    const logoHtml=[logoOpoB64,logoMinB64].filter(Boolean).map(l=>`<img src="${l}" style="height:40px;object-fit:contain;">`).join('');
+    const cabFoto=imgB64?`<img src="data:${imgMime};base64,${imgB64}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;"><div style="position:absolute;inset:0;background:rgba(10,20,10,0.6);z-index:1;"></div>`:'';
+
+    function mkCab(num, total){
+      return `<div style="background:#0d2a0d;padding:16px 20px;position:relative;overflow:hidden;">
+        ${cabFoto}
+        <div style="position:relative;z-index:2;display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <div style="font-family:'Barlow Condensed',sans-serif;font-size:40px;font-weight:900;color:#fff;line-height:.88;letter-spacing:-1px;">PAUTA<br><span style="color:#E9B847">RESUMIDA</span></div>
+            <div style="font-size:12px;font-weight:700;color:rgba(255,255,255,.7);letter-spacing:2px;text-transform:uppercase;margin-top:4px;">Ordem do Dia — Câmara dos Deputados</div>
+            <div style="margin-top:6px;background:#1A6B3A;display:inline-flex;align-items:center;padding:3px 10px;border-radius:4px;">
+              <span style="color:#fff;font-size:14px;font-weight:700;">${dataFmt||'—'}</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+            <div style="background:#fff;border-radius:6px;padding:6px 10px;display:flex;gap:8px;align-items:center;">${logoHtml}</div>
+            <div style="color:rgba(255,255,255,.5);font-size:11px;font-weight:600;">Pág. ${num}/${total}</div>
+          </div>
+        </div>
+      </div><div style="height:5px;background:#E9B847;"></div>`;
+    }
+
+    function mkRod(){
+      return `<div style="background:#1A2A3A;padding:8px 16px;display:flex;justify-content:space-between;align-items:center;margin-top:auto;">
+        <div style="display:flex;gap:8px;align-items:center;">${logoHtml}</div>
+        <div style="text-align:right;font-size:10px;color:rgba(255,255,255,.7);">
+          <div style="font-weight:800;letter-spacing:1px;text-transform:uppercase;">Pauta Resumida — Ordem do Dia</div>
+          <div>${dataFmt||''}</div>
+        </div>
+      </div>`;
+    }
+
+    function mkItem(it, tipo){
+      const ori=(it.orientacao||'').toUpperCase();
+      const oriBadge=ori?`<span style="background:${oriCores[ori]||'#555'};color:#fff;font-size:11px;font-weight:900;padding:3px 10px;border-radius:4px;margin-left:8px;">${ori}</span>`:'';
+      const proj=_ePB(it.projeto||'');
+      const autor=_ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,70));
+      const rel=tipo!=='urg'?_ePB((it.relator||'').replace('Não atribuído','').substring(0,50)):'';
+      const res=_ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
+      const n=String(it.ordem);
+      const ehPri=priIds.has(String(it.id_principal))&&tipo!=='urg';
+      const bgNum=tipo==='urg'?'#8B3A3A':(ehPri?'#7A5500':'#2A4A8A');
+      const bgRow=ehPri?'background:#FFFBEA;border-left:4px solid #E9B847;':'background:#fff;';
+      return `<div style="padding:12px 14px;border-bottom:1px solid #eee;${bgRow}display:flex;gap:10px;align-items:flex-start;">
+        <div style="min-width:32px;height:32px;background:${bgNum};color:#fff;border-radius:5px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px;flex-shrink:0;">${ehPri?'⭐':n}</div>
+        <div>
+          <div style="font-size:18px;font-weight:800;color:${tipo==='urg'?'#5A1A1A':(ehPri?'#7A5500':'#1A2A5C')};">${proj}${oriBadge}</div>
+          ${autor?`<div style="font-size:16px;color:#444;margin-top:3px;">Autor: ${autor}</div>`:''}
+          ${rel?`<div style="font-size:16px;color:#666;">Rel.: ${rel}</div>`:''}
+          ${res?`<div style="font-size:16px;color:#333;margin-top:3px;line-height:1.4;">${res.substring(0,160)}</div>`:''}
+        </div>
+      </div>`;
+    }
+
+    function mkSecao(ico, titulo, cor, itens, tipo){
+      if(!itens.length) return '';
+      return `<div style="border-radius:8px;overflow:hidden;border:1.5px solid #ddd;margin-bottom:14px;">
+        <div style="background:${cor};padding:10px 14px;display:flex;align-items:center;gap:10px;">
+          <span style="font-size:18px;">${ico}</span>
+          <span style="font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;">${titulo}</span>
+        </div>
+        ${itens.map(it=>mkItem(it,tipo)).join('')}
+      </div>`;
+    }
+
+    // Monta páginas: página 1 = RQU+Matérias, restantes = Projetos
+    // Uma página por grupo — sem quebrar grupo entre páginas
+    const paginas = [];
+
+    const esqItens = [...materias, ...urgencias];
+    if(esqItens.length){
+      paginas.push({
+        secoes:[
+          {ico:'⚡',titulo:'Requerimentos de Urgência',cor:'#8B3A3A',itens:urgencias,tipo:'urg'},
+          {ico:'📄',titulo:'Matérias sobre a Mesa',    cor:'#2E7D52', itens:materias, tipo:'mat'},
+        ].filter(s=>s.itens.length)
+      });
+    }
+
+    // Projetos — pagina a cada 5 itens para caber bem em A4 com fonte 18px
+    const PROJ_POR_PAG = 5;
+    for(let i=0; i<todosProj.length; i+=PROJ_POR_PAG){
+      paginas.push({
+        secoes:[{ico:'🏛️',titulo:'Projetos em Discussão',cor:'#2A4A8A',itens:todosProj.slice(i,i+PROJ_POR_PAG),tipo:'proj'}]
+      });
+    }
+
+    if(!paginas.length) paginas.push({secoes:[]});
+    const total = paginas.length;
+
+    // Renderiza e captura cada página
+    const container = document.createElement('div');
+    container.style.cssText = 'position:fixed;left:-9999px;top:0;width:794px;z-index:-1;';
+    document.body.appendChild(container);
+    await new Promise(r=>setTimeout(r,500));
+
+    const dataURLs = [];
+    for(let p=0; p<paginas.length; p++){
+      btn.innerHTML = `<i class="fas fa-spinner fa-spin me-1"></i>Capturando ${p+1}/${total}...`;
+      const corpo = paginas[p].secoes.map(s=>mkSecao(s.ico,s.titulo,s.cor,s.itens,s.tipo)).join('');
+      container.innerHTML = `<div style="width:794px;background:#F5F5F3;font-family:'Source Sans 3',Arial,sans-serif;">
+        ${mkCab(p+1,total)}
+        <div style="padding:12px 12px 0;">${corpo}</div>
+        ${mkRod()}
+      </div>`;
+      const el = container.querySelector('div');
+      void el.offsetHeight;
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      await new Promise(r=>setTimeout(r,250));
+
+      // Captura altura real e redimensiona para A4 mantendo tudo visível
+      const canvasReal = await html2canvas(el,{
+        scale:3, useCORS:true, allowTaint:true,
+        backgroundColor:'#F5F5F3', logging:false,
+        width:794, height:el.scrollHeight,
+        windowWidth:794, windowHeight:el.scrollHeight,
+      });
+
+      // Canvas A4 exato — escala o conteúdo para caber sem cortar
+      const A4W=794*3, A4H=1123*3;
+      const finalC = document.createElement('canvas');
+      finalC.width=A4W; finalC.height=A4H;
+      const ctx=finalC.getContext('2d');
+      ctx.fillStyle='#F5F5F3';
+      ctx.fillRect(0,0,A4W,A4H);
+      // Escala proporcional: usa largura total, ajusta altura se necessário
+      const scaleY = canvasReal.height > A4H ? A4H/canvasReal.height : 1;
+      const drawW  = canvasReal.width  * scaleY;
+      const drawH  = canvasReal.height * scaleY;
+      ctx.drawImage(canvasReal, 0, 0, drawW, drawH);
+      dataURLs.push(finalC.toDataURL('image/png',1.0));
+    }
+    document.body.removeChild(container);
+
+    // Popup com imagens para impressão A4
+    const popup = window.open('','_blank','width=880,height=900,scrollbars=yes,resizable=yes');
+    if(!popup){alert('Permita pop-ups.');return;}
+    const imgsHTML = dataURLs.map((src,i)=>
+      `<div class="pagina"><img src="${src}"></div>`
+    ).join('');
+    const pd=popup.document;
+    pd.open();
+    pd.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Pauta — Letra Grande</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#555;font-family:Arial,sans-serif;}
+  .toolbar{background:#1a1a1a;color:#fff;padding:10px 18px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:99;}
+  .toolbar strong{flex:1;font-size:13px;}
+  .toolbar button{padding:7px 18px;border:none;border-radius:5px;cursor:pointer;font-weight:700;font-size:13px;}
+  .btn-print{background:#1A6B3A;color:#fff;} .btn-close{background:#555;color:#fff;}
+  .paginas{padding:16px;display:flex;flex-direction:column;align-items:center;gap:12px;}
+  .pagina img{width:794px;display:block;box-shadow:0 4px 20px rgba(0,0,0,.5);}
+  @media print{
+    body{background:#fff;} .toolbar{display:none!important;}
+    .paginas{padding:0;gap:0;}
+    .pagina{page-break-after:always;break-after:page;}
+    .pagina img{width:100%;}
+    @page{size:A4 portrait;margin:0;}
+  }
+</style></head><body>
+<div class="toolbar">
+  <strong>📋 Pauta Resumida — Letra Grande · ${total} página${total>1?'s':''}</strong>
+  <button class="btn-print" onclick="window.print()">🖨️ Imprimir / PDF</button>
+  <button class="btn-close" onclick="window.close()">✕ Fechar</button>
+</div>
+<div class="paginas">${imgsHTML}</div>
+</body></html>`);
+    pd.close();
+
+  }catch(e){
+    alert('Erro: '+e.message);
+    console.error(e);
+  }finally{
+    btn.disabled=false;
+    btn.innerHTML='<i class="fas fa-text-height me-1"></i>Letra Grande';
+  }
+}
+
+function _ativarEdicaoPautaBanner(c){c.querySelectorAll('[data-pb-edit]').forEach(el=>{el.contentEditable='true';el.style.outline='none';el.style.cursor='text';el.addEventListener('focus',function(){this.style.boxShadow='0 0 0 2px rgba(255,200,0,0.7)';this.style.borderRadius='2px';});el.addEventListener('blur',function(){this.style.boxShadow='';});});}
+function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgMime,logoOpoB64,logoMinB64}){
+  const C={v:'#1A6B3A',ve:'#0d4a27',a:'#E9B847',c:'#2C3E50',f:'#F4F6F8'};
+
+  const cabBgColor = 'background:#0d2a0d;';
+  const cabFotoEl = imgB64
+    ? `<img src="data:${imgMime};base64,${imgB64}"
+        style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;object-position:center top;display:block;z-index:0;">
+       <div style="position:absolute;top:0;left:0;width:100%;height:100%;background:linear-gradient(to right,rgba(0,0,0,0.72) 0%,rgba(0,0,0,0.20) 40%,rgba(0,0,0,0.20) 60%,rgba(0,0,0,0.72) 100%);z-index:1;"></div>`
+    : '';
+
+  const logoBox = (logoOpoB64||logoMinB64) ? `<div style="background:#fff;border-radius:5px;padding:6px 10px;display:flex;align-items:center;gap:8px;flex-shrink:0;">
+    ${logoOpoB64?`<img src="${logoOpoB64}" style="height:38px;width:auto;object-fit:contain;">`:''}
+    ${logoMinB64?`<img src="${logoMinB64}" style="height:38px;width:auto;object-fit:contain;">`:''}
+  </div>` : '';
+
+  function ePB(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+  const priIds = new Set(prioridade.map(it=>String(it.id_principal)));
+  const todosProj = [...prioridade,...projetos].sort((a,b)=>(a.ordem||0)-(b.ordem||0));
+
+  // ── Renderização dos itens ────────────────────────────────────────────────
+
+  function badgeOrientacao(it){
+    const ori=(it.orientacao||'').toUpperCase().trim();
+    if(!ori) return '';
+    const cores={
+      'SIM':         {bg:'#1A6B3A',fg:'#fff'},
+      'NÃO':         {bg:'#B91C1C',fg:'#fff'},
+      'NAO':         {bg:'#B91C1C',fg:'#fff'},
+      'LIBERADO':    {bg:'#5B6470',fg:'#fff'},
+      'OBSTRUÇÃO':   {bg:'#7A1A1A',fg:'#fff'},
+      'OBSTRUCAO':   {bg:'#7A1A1A',fg:'#fff'},
+      'ABSTENÇÃO':   {bg:'#8A6D00',fg:'#fff'},
+      'ABSTENCAO':   {bg:'#8A6D00',fg:'#fff'},
+      'NEGOCIAÇÃO':  {bg:'#1E5C8A',fg:'#fff'},
+      'NEGOCIACAO':  {bg:'#1E5C8A',fg:'#fff'},
+    };
+    const c=cores[ori]||{bg:'#6c757d',fg:'#fff'};
+    return`<span style="position:absolute;top:6px;right:8px;background:${c.bg};color:${c.fg};font-size:8px;font-weight:800;letter-spacing:0.5px;text-transform:uppercase;padding:2px 6px;border-radius:3px;white-space:nowrap;z-index:2;">${ePB(ori)}</span>`;
+  }
+
+  function itemUrgencia(it){
+    const n=String(it.ordem),p=ePB(it.projeto||'');
+    const a=ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,60));
+    const res=ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
+    return`<div style="position:relative;padding:8px 28px 8px 12px;border-bottom:1px solid #f0f0f0;display:flex;gap:7px;align-items:flex-start;font-size:10.5px;color:#222;">
+      ${badgeOrientacao(it)}
+      <div style="min-width:20px;height:20px;background:#7A1A1A;color:#fff;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9.5px;flex-shrink:0;">${n}</div>
+      <div data-pb-edit><b>${p}</b>${a?` <span style="color:#666;">(${a})</span>`:''}${res?`<div style="color:#444;margin-top:1px;font-size:10px;line-height:1.35;">${res.substring(0,120)}</div>`:''}</div>
+    </div>`;
+  }
+
+  function itemMateria(it){
+    const n=String(it.ordem),p=ePB(it.projeto||'');
+    const a=ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,60));
+    const res=ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
+    return`<div style="position:relative;padding:10px 80px 10px 12px;border-bottom:1px solid #f0f0f0;display:flex;gap:9px;align-items:flex-start;">
+      ${badgeOrientacao(it)}
+      <div style="min-width:26px;height:26px;background:#1A3A2A;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;flex-shrink:0;">${n}</div>
+      <div data-pb-edit style="font-size:11px;color:#1a1a1a;">
+        <div style="font-weight:800;color:#1A3A2A;">${p}</div>
+        ${a?`<div style="font-size:10px;color:#555;">Autor: ${a}</div>`:''}
+        ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,160)}</div>`:''}
+      </div>
+    </div>`;
+  }
+
+  function itemProjeto(it, compacto){
+    const n=String(it.ordem),p=ePB(it.projeto||'');
+    const a=ePB((it.autor||'').split(',').slice(0,2).join(', ').substring(0,55));
+    const rel=ePB((it.relator||'').replace('Não atribuído','').substring(0,40));
+    const res=ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
+    const ehPri=priIds.has(String(it.id_principal));
+    const maxRes = compacto ? 100 : 160;
+    const badgeN = ehPri
+      ? `<div style="display:flex;align-items:center;gap:2px;flex-shrink:0;">`
+        +`<div style="height:${compacto?20:26}px;background:#7A5500;color:#fff;border-radius:${compacto?3:4}px;padding:0 4px;display:flex;align-items:center;justify-content:center;font-size:${compacto?8:10}px;white-space:nowrap;">⭐ ${n}</div>`
+        +`</div>`
+      : `<div style="min-width:${compacto?20:26}px;height:${compacto?20:26}px;background:#1A2A5C;color:#fff;border-radius:${compacto?3:4}px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:${compacto?9:11}px;flex-shrink:0;">${n}</div>`;
+    const rowBg=ehPri?'background:#FFFBEA;border-left:3px solid #E9B847;':'';
+    const padV=compacto?'7px':'10px';
+    const padL=compacto?'10px':'12px';
+    const gap=compacto?'7px':'9px';
+    const padRight = compacto ? 70 : 90;
+    return`<div style="position:relative;padding:${padV} ${padRight}px ${padV} ${padL};border-bottom:1px solid #f0f0f0;${rowBg}display:flex;gap:${gap};align-items:flex-start;">
+      ${badgeOrientacao(it)}
+      ${badgeN}
+      <div data-pb-edit style="font-size:${compacto?10:11}px;color:#1a1a1a;">
+        <div style="font-weight:800;color:${ehPri?'#7A5500':'#1A2A5C'};">${p}</div>
+        ${a?`<div style="font-size:${compacto?9:10}px;color:#555;">Autor: ${a}</div>`:''}
+        ${(!compacto&&rel)?`<div style="font-size:10px;color:#777;">Rel.: ${rel}</div>`:''}
+        ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,maxRes)}</div>`:''}
+      </div>
+    </div>`;
+  }
+
+  function cardHeader(ico,titulo,cor){
+    return`<div style="background:${cor};padding:9px 13px;display:flex;align-items:center;gap:9px;">
+      <div style="width:28px;height:28px;background:rgba(255,255,255,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">${ico}</div>
+      <span style="font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#fff;" data-pb-edit>${titulo}</span>
+    </div>`;
+  }
+
+  function wrapCard(conteudo){
+    return`<div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid #c8d8c8;margin-bottom:10px;">${conteudo}</div>`;
+  }
+  function wrapCardCor(cor){
+    return function(conteudo){
+      return`<div style="background:#fff;border-radius:8px;overflow:hidden;border:1px solid ${cor};margin-bottom:10px;">${conteudo}</div>`;
+    };
+  }
+
+  // ── Decisão de layout ─────────────────────────────────────────────────────
+  // Conta itens em cada "lado"
+  const nEsq = (materias||[]).length + (urgencias||[]).length;
+  const nDir = todosProj.length;
+
+  // LAYOUT A — 2 colunas simétricas (equilibrado)
+  // LAYOUT B — vertical: urgências/matérias no topo (linha inteira),
+  //            projetos embaixo em 2 sub-colunas side-by-side
+  // Usa B quando projetos > 2× (matérias+urgências)
+  const usarLayoutVertical = nDir > 2 * Math.max(nEsq, 1);
+
+  const cardMaterias  = (materias&&materias.length)
+    ? wrapCard(cardHeader('📄','Matérias sobre a Mesa','#1A3A2A') + materias.map(itemMateria).join('')) : '';
+  const cardUrgencias = (urgencias&&urgencias.length)
+    ? wrapCardCor('#c8a8a8')(cardHeader('⚡','Requerimentos de Urgência','#7A1A1A') + urgencias.map(itemUrgencia).join('')) : '';
+
+  let corpo;
+
+  if(!usarLayoutVertical){
+    // LAYOUT A: 2 colunas — esquerda matérias+urgências, direita projetos
+    const cardProjetos = todosProj.length
+      ? wrapCardCor('#a8b8d8')(cardHeader('🏛️','Projetos em Discussão','#1A2A5C') + todosProj.map(it=>itemProjeto(it,false)).join('')) : '';
+    corpo = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 10px 0;align-items:start;">
+      <div style="min-width:0;">${cardMaterias}${cardUrgencias}</div>
+      <div style="min-width:0;">${cardProjetos}</div>
+    </div>`;
+
+  } else {
+    // LAYOUT B: linha superior com matérias+urgências, linha inferior com projetos em 2 sub-colunas
+    // Divide projetos em 2 sub-colunas com greedy por altura
+    const H = 80;
+    const sub1=[], sub2=[];
+    let h1=0, h2=0;
+    todosProj.forEach(it=>{
+      if(h1<=h2){sub1.push(it);h1+=H;}
+      else       {sub2.push(it);h2+=H;}
+    });
+
+    // Card de projetos com 2 sub-colunas internas
+    const projBody = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:0;align-items:start;">
+      <div style="border-right:1px solid #e8e8e8;">${sub1.map(it=>itemProjeto(it,true)).join('')}</div>
+      <div>${sub2.map(it=>itemProjeto(it,true)).join('')}</div>
+    </div>`;
+    const cardProjetosLargo = todosProj.length
+      ? wrapCardCor('#a8b8d8')(cardHeader('🏛️','Projetos em Discussão','#1A2A5C') + projBody) : '';
+
+    // Urgências/matérias em largura total acima dos projetos
+    const topoCards = [cardMaterias, cardUrgencias].filter(Boolean).join('');
+    const topoBloco = topoCards
+      ? `<div style="padding:10px 10px 0;">${topoCards}</div>` : '';
+
+    corpo = topoBloco
+      + `<div style="padding:${topoBloco?'0':'10px'} 10px 0;">${cardProjetosLargo}</div>`;
+  }
+
+  const rodape=`<div style="background:${C.c};padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      ${logoOpoB64?`<img src="${logoOpoB64}" style="height:26px;object-fit:contain;">`:''}
+      ${logoMinB64?`<img src="${logoMinB64}" style="height:26px;object-fit:contain;">`:''}
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:9px;font-weight:800;color:#fff;letter-spacing:1px;text-transform:uppercase;" data-pb-edit>Pauta Resumida — Ordem do Dia</div>
+      <div style="font-size:7.5px;color:rgba(255,255,255,.55);" data-pb-edit>Material de Apoio Parlamentar · ${dataFmt||new Date().toLocaleDateString('pt-BR')}</div>
+    </div>
+  </div>`;
+
+  return`<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<div class="pb-banner" style="width:794px;background:${C.f};font-family:'Source Sans 3',Arial,sans-serif;border-radius:8px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.2);">
+  <div style="${cabBgColor}padding:22px 18px 0;position:relative;overflow:hidden;">
+    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:${C.a};z-index:3;"></div>
+    ${cabFotoEl}
+    <div style="position:relative;z-index:2;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+        <div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:56px;font-weight:900;color:#fff;line-height:.85;letter-spacing:-1px;" data-pb-edit>PAUTA<br><span style="color:${C.a}">RESUMIDA</span></div>
+          <div style="font-family:'Barlow Condensed',sans-serif;font-size:12px;font-weight:700;color:rgba(255,255,255,.80);letter-spacing:2.5px;text-transform:uppercase;margin-top:7px;" data-pb-edit>Ordem do Dia — Câmara dos Deputados</div>
+        </div>
+        ${logoBox}
+      </div>
+      <table style="border-collapse:collapse;margin-top:12px;background:${C.v};border-radius:5px;"><tr>
+        <td style="padding:5px 4px 5px 12px;vertical-align:middle;line-height:0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></td>
+        <td style="padding:5px 12px 5px 4px;vertical-align:middle;color:#fff;font-family:'Barlow Condensed',sans-serif;font-size:14px;font-weight:700;white-space:nowrap;" data-pb-edit>${dataFmt||'—'}</td>
+      </tr></table>
+      <div style="height:14px;background:${C.f};margin:12px -18px 0;border-radius:12px 12px 0 0;"></div>
+    </div>
+  </div>
+  ${corpo}
+  <div style="padding:2px 10px 10px;"></div>
+  ${rodape}
+</div>`;
+}
+
+async function baixarPautaBannerPNG(btn){
+  const orig=btn.innerHTML;btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Gerando PNG...';
+  try{
+    const el=document.querySelector('#pb-preview-inner .pb-banner');
+    if(!el){alert('Gere o banner primeiro.');return;}
+    const inner=document.getElementById('pb-preview-inner');
+    const sc=inner.style.transform;
+    inner.style.transform='none';
+    // Força reflow e espera o browser repintar o layout sem o scale
+    void el.offsetHeight;
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    await new Promise(r=>setTimeout(r,150));
+    const canvas=await html2canvas(el,{scale:3,useCORS:true,allowTaint:true,backgroundColor:'#ffffff',logging:false,width:el.scrollWidth,height:el.scrollHeight,windowWidth:el.scrollWidth,windowHeight:el.scrollHeight});
+    inner.style.transform=sc;
+    // PNG A4 pronto para impressao: 794px * 3 = 2382px de largura (suficiente para impressao sem corte)
+    const a=document.createElement('a');a.download='pauta_banner_A4.png';a.href=canvas.toDataURL('image/png',1.0);document.body.appendChild(a);a.click();document.body.removeChild(a);
+  }catch(e){alert('Erro: '+e.message);}finally{btn.disabled=false;btn.innerHTML=orig;}
+}
+
+// ── BANNER DE PROPOSIÇÃO — renderização na div ───────────────────────────────
+function _ativarEdicaoBanner(c){
+  const sels=['.cab-titulo','.cab-subtitulo','.cab-desc','.dado-valor','.dado-label','.dado-detalhe','.mc-val','.resumo','.preve-item span','.critica-titulo','.critica-detalhe','.just-txt','.ori-badge-txt','.arg-body-txt','.pratica-item span','.rodape-txt'];
+  sels.forEach(s=>{(c||document).querySelectorAll(s).forEach(el=>{el.contentEditable='true';el.style.outline='none';el.style.cursor='text';el.addEventListener('focus',function(){this.style.boxShadow='0 0 0 2px rgba(255,200,0,0.6)';this.style.borderRadius='2px';});el.addEventListener('blur',function(){this.style.boxShadow='';});});});
+  const av=document.getElementById('banner-edit-aviso');if(av)av.style.display='flex';
+}
+async function exportarBannerPNG(btn){
+  console.log('[BannerPNG] clique recebido. _bannerHtmlAtual existe?', !!window._bannerHtmlAtual);
+  const orig=btn?btn.innerHTML:'';
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Gerando PNG...';}
+  try{
+    const inner=document.getElementById('banner-preview-inner');
+    console.log('[BannerPNG] inner encontrado?', !!inner, 'innerHTML length:', inner?inner.innerHTML.length:0);
+    const el=inner ? inner.querySelector('.banner') : null;
+    console.log('[BannerPNG] .banner encontrado dentro de inner?', !!el);
+    if(!el){
+      alert('Banner não encontrado no preview. Gere o banner primeiro e aguarde ele aparecer na tela antes de clicar em Baixar PNG.');
+      return;
+    }
+    const sc=inner.style.transform;
+    inner.style.transform='none';
+    void el.offsetHeight;
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    await new Promise(r=>setTimeout(r,150));
+    console.log('[BannerPNG] dimensões do elemento:', el.scrollWidth, 'x', el.scrollHeight);
+    const canvas=await html2canvas(el,{scale:2,useCORS:true,allowTaint:true,backgroundColor:'#ffffff',logging:true,width:el.scrollWidth,height:el.scrollHeight,windowWidth:el.scrollWidth,windowHeight:el.scrollHeight});
+    inner.style.transform=sc;
+    console.log('[BannerPNG] canvas gerado:', canvas.width, 'x', canvas.height);
+    const a=document.createElement('a');
+    a.download='banner_plenario.png';
+    a.href=canvas.toDataURL('image/png',1.0);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    console.log('[BannerPNG] download disparado');
+  }catch(e){
+    console.error('[BannerPNG] ERRO:', e);
+    alert('Erro ao gerar PNG: '+e.message);
+  }finally{
+    if(btn){btn.disabled=false;btn.innerHTML=orig;}
+  }
+}
+
+// ── BANNER PROPOSIÇÃO — LETRA GRANDE ─────────────────────────────────────
+async function exportarBannerLetraGrande(btn){
+  const inner = document.getElementById('banner-preview-inner');
+  const el    = inner ? inner.querySelector('.banner') : null;
+  if(!el){ alert('Gere o banner primeiro.'); return; }
+
+  const origTxt = btn ? btn.innerHTML : '';
+  if(btn){ btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Gerando...'; }
+
+  try{
+    // Pega orientação do modal
+    const oriVal  = (document.getElementById('banner-orientacao')?.value || '').trim().toUpperCase();
+    const oriCores = {'SIM':'#1A6B3A','NÃO':'#B91C1C','NAO':'#B91C1C','LIBERADO':'#1A3A7A',
+                      'OBSTRUÇÃO':'#7A1A1A','OBSTRUCAO':'#7A1A1A','NEGOCIAÇÃO':'#8A6A00',
+                      'NEGOCIACAO':'#8A6A00','ABSTENÇÃO':'#444','ABSTENCAO':'#444'};
+    const oriCor   = oriCores[oriVal] || '#1A2A3A';
+
+    // Aumenta temporariamente a fonte de todos os textos para 18px mínimo
+    const todosEls = el.querySelectorAll('*');
+    const fonteOriginal = [];
+    todosEls.forEach((e,i) => {
+      const fs = parseFloat(window.getComputedStyle(e).fontSize);
+      fonteOriginal.push(e.style.fontSize);
+      if(fs < 18) e.style.fontSize = '18px';
+    });
+
+    // Reflow
+    void el.offsetHeight;
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await new Promise(r => setTimeout(r, 200));
+
+    // Captura com scale 3 (alta resolução A4)
+    const sc = inner.style.transform;
+    inner.style.transform = 'none';
+    void el.offsetHeight;
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    const canvasBanner = await html2canvas(el, {
+      scale: 3,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+      width: el.scrollWidth,
+      height: el.scrollHeight,
+      windowWidth: el.scrollWidth,
+      windowHeight: el.scrollHeight,
+    });
+
+    // Restaura fontes originais
+    todosEls.forEach((e,i) => { e.style.fontSize = fonteOriginal[i]; });
+    inner.style.transform = sc;
+
+    // Adiciona faixa de orientação no topo
+    let canvas = canvasBanner;
+    if(oriVal){
+      const FAIXA_H = 90; // altura da faixa em px no canvas (scale 3)
+      const finalC = document.createElement('canvas');
+      finalC.width  = canvasBanner.width;
+      finalC.height = canvasBanner.height + FAIXA_H;
+      const ctx = finalC.getContext('2d');
+      // Faixa
+      ctx.fillStyle = oriCor;
+      ctx.fillRect(0, 0, finalC.width, FAIXA_H);
+      // Texto da orientação centralizado
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `900 ${FAIXA_H * 0.55}px 'Barlow Condensed', Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.letterSpacing = '4px';
+      ctx.fillText('ORIENTAÇÃO: ' + oriVal, finalC.width / 2, FAIXA_H / 2);
+      // Banner abaixo
+      ctx.drawImage(canvasBanner, 0, FAIXA_H);
+      canvas = finalC;
+    }
+
+    // Abre popup com a imagem para impressão A4
+    const popup = window.open('', '_blank', 'width=880,height=700,scrollbars=yes,resizable=yes');
+    if(!popup){ alert('Permita pop-ups.'); return; }
+    const dataURL = canvas.toDataURL('image/png', 1.0);
+    const pd = popup.document;
+    pd.open();
+    pd.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Banner — Letra Grande</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#555;font-family:Arial,sans-serif;}
+  .toolbar{background:#1a1a1a;color:#fff;padding:10px 18px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:99;}
+  .toolbar strong{flex:1;font-size:13px;}
+  .toolbar button{padding:7px 18px;border:none;border-radius:5px;cursor:pointer;font-weight:700;font-size:13px;}
+  .btn-print{background:#1A6B3A;color:#fff;}
+  .btn-dl{background:#1A3A7A;color:#fff;}
+  .btn-close{background:#555;color:#fff;}
+  .pagina{display:flex;justify-content:center;padding:16px;}
+  img{max-width:794px;display:block;box-shadow:0 4px 20px rgba(0,0,0,.5);}
+  @media print{
+    body{background:#fff;}
+    .toolbar{display:none!important;}
+    .pagina{padding:0;}
+    img{width:100%;max-width:100%;box-shadow:none;}
+    @page{size:A4 portrait;margin:0;}
+  }
+</style></head><body>
+<div class="toolbar">
+  <strong>🖼️ Banner Proposição — Letra Grande</strong>
+  <button class="btn-print" onclick="window.print()">🖨️ Imprimir / PDF</button>
+  <button class="btn-dl" onclick="const a=document.createElement('a');a.download='banner_letra_grande.png';a.href=document.getElementById('img').src;document.body.appendChild(a);a.click();document.body.removeChild(a);">⬇️ Baixar PNG</button>
+  <button class="btn-close" onclick="window.close()">✕ Fechar</button>
+</div>
+<div class="pagina"><img id="img" src="${dataURL}"></div>
+</body></html>`);
+    // Download direto via URL já disponível
+    popup._dataURL = dataURL;
+    pd.close();
+
+  }catch(e){
+    alert('Erro: '+e.message);
+  }finally{
+    if(btn){ btn.disabled=false; btn.innerHTML=origTxt; }
+  }
+}
+
+// Listener para o botão Letra Grande do banner individual
+document.addEventListener('click', function(ev){
+  const btn = ev.target.closest('#btn-banner-letra-grande');
+  if(btn) exportarBannerLetraGrande(btn);
+});
+
+// Listener robusto via delegação de evento — funciona mesmo se o botão for recriado/clonado
+document.addEventListener('click', function(ev){
+  const btnPng = ev.target.closest('#btn-exportar-banner-png');
+  if(btnPng){
+    console.log('[BannerPNG] clique detectado via delegação');
+    exportarBannerPNG(btnPng);
+  }
+});
+</script>
+
+<div class="modal fade" id="modalGerarBanner" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width:900px;">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#1a3a5c,#0d2137);">
+        <h5 class="modal-title text-white">
+          <i class="fas fa-image me-2"></i>Gerar Banner &mdash; <span id="banner-modal-titulo"></span>
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body text-center py-4">
-        <div style="font-size:3rem;margin-bottom:12px;">🔔</div>
-        <div id="monitor-alerta-corpo" style="font-size:1.15rem;font-weight:700;color:#2c3e50;"></div>
-        <div id="monitor-alerta-detalhe" class="text-muted mt-2" style="font-size:0.88rem;"></div>
-        <div id="monitor-alerta-horario" class="mt-2" style="font-size:0.8rem;color:#888;"></div>
+      <div class="modal-body">
+
+        <div class="row mb-3">
+          <div class="col-md-4">
+            <label class="form-label fw-bold small">Orientação da Minoria</label>
+            <select class="form-select form-select-sm" id="banner-orientacao">
+              <option value="SIM">SIM</option>
+              <option value="NÃO">NÃO</option>
+              <option value="NEGOCIAÇÃO">NEGOCIAÇÃO</option>
+              <option value="LIBERADO">LIBERADO</option>
+              <option value="OBSTRUÇÃO">OBSTRUÇÃO</option>
+              <option value="ABSTENÇÃO">ABSTENÇÃO</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-bold small">Regime</label>
+            <input type="text" class="form-control form-control-sm" id="banner-regime" placeholder="Ex: Urgência">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-bold small">Comissões</label>
+            <input type="text" class="form-control form-control-sm" id="banner-comissoes" value="Plenário">
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold small">
+            <i class="fas fa-image me-1"></i>Imagem de fundo do cabeçalho (opcional)
+          </label>
+          <input type="file" class="form-control form-control-sm" id="banner-imagem"
+            accept="image/jpeg,image/png,image/webp">
+          <div class="form-text">Será usada como fundo do cabeçalho, como no modelo de banner.</div>
+        </div>
+
+        <div id="banner-img-preview" class="mb-3" style="display:none;">
+          <img id="banner-img-preview-src"
+            style="max-height:110px;border-radius:6px;border:1px solid #ddd;display:block;">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold small">Contexto adicional para a IA (opcional)</label>
+          <div id="banner-aviso-nota" class="alert alert-warning py-2 px-3 mb-2" style="font-size:0.8rem;display:none;">
+            <i class="fas fa-exclamation-triangle me-1"></i>
+            <strong>Nota técnica vazia.</strong> Abra o item e preencha a nota antes de gerar o banner — a IA usa exclusivamente esse texto.
+          </div>
+          <textarea class="form-control form-control-sm" id="banner-resumo-extra" rows="2"
+            placeholder="Comentários adicionais para orientar a IA..."></textarea>
+        </div>
+
+        <div id="banner-resultado" style="display:none;">
+          <hr>
+          <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+            <label class="fw-bold small mb-0">
+              <i class="fas fa-check-circle text-success me-1"></i>Banner gerado
+            </label>
+            <button class="btn btn-outline-primary btn-sm" id="btn-exportar-banner-png" type="button">
+              <i class="fas fa-image me-1"></i>Baixar PNG
+            </button>
+            <button class="btn btn-sm text-white" id="btn-banner-letra-grande" type="button"
+              style="background:linear-gradient(135deg,#1A3A7A,#0d2a5c);">
+              <i class="fas fa-text-height me-1"></i>Letra Grande
+            </button>
+          </div>
+          <div id="banner-edit-aviso" style="display:none;align-items:center;gap:8px;
+            background:#FFF9E6;border:1px solid #F0C030;border-radius:6px;padding:8px 12px;margin-bottom:8px;">
+            <i class="fas fa-pencil-alt" style="color:#B8860B;"></i>
+            <span style="font-size:0.82rem;color:#7A5C00;">
+              <strong>Modo edição:</strong> clique em qualquer campo para editar antes de baixar.
+            </span>
+          </div>
+          <div id="banner-preview-outer"
+            style="border:1px solid #ddd;border-radius:4px;overflow:auto;background:#C5D0DC;">
+            <div id="banner-preview-inner" style="transform-origin:top left;display:block;"></div>
+          </div>
+        </div>
+
       </div>
-      <div class="modal-footer justify-content-center gap-2">
-        <button type="button" class="btn btn-danger fw-bold px-4" data-bs-dismiss="modal">
-          <i class="fas fa-check me-2"></i>Entendido
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-banner-gerar"
+          onclick="gerarBannerIA()">
+          <img src="/static/logo_gemini.svg" alt="Gemini"
+            style="width:15px;height:15px;vertical-align:middle;" class="me-1">
+          Gerar Banner com Gemini
         </button>
       </div>
     </div>
@@ -2606,622 +3693,818 @@ async function exportarOrientacoesPDF() {
 </div>
 
 <script>
-(function() {
-  // ── Agente de Monitoramento da Pauta ──────────────────────────────────────
-  // Faz polling via rota interna /monitor_status que tenta múltiplas fontes.
-  // Dispara popup apenas uma vez por status novo detectado.
+// ── BANNER: estado global ─────────────────────────────────────────────────
+let _bannerItemData = {};
+let _bannerHtmlAtual = '';
 
-  const EVENTO_ID_MON  = window.EVENTO_ID;
-  const INTERVALO_MS   = 45000;
+function abrirModalBanner(btn) {
+  const ordem = btn.dataset.ordem || '';
+  // Pega nota técnica do Quill (texto puro, sem HTML)
+  const quill = quillInstances[ordem];
+  const notaTecnica = quill ? quill.getText().trim() : '';
 
-  let _ativo           = false;
-  let _timer           = null;
-  let _baseline        = null;   // snapshot do primeiro fetch
-  let _jaAlertados     = new Set(); // "termo" — dispara só uma vez
-
-  // ── API pública ──────────────────────────────────────────────────────────
-  window.toggleMonitoramento = function() {
-    _ativo ? parar() : iniciar();
+  _bannerItemData = {
+    proposicao:   btn.dataset.proposicao  || '',
+    ementa:       btn.dataset.ementa      || '',
+    autor:        btn.dataset.autor       || '',
+    relator:      btn.dataset.relator     || '',
+    idPrincipal:  btn.dataset.idPrincipal || '',
+    ordem:        ordem,
+    notaTecnica:  notaTecnica,
   };
 
-  function iniciar() {
-    _ativo    = true;
-    _baseline = null;
-    _jaAlertados.clear();
-    setBotao(true);
-    setStatus('⏳ iniciando...');
-    checar();
-    _timer = setInterval(checar, INTERVALO_MS);
+  document.getElementById('banner-modal-titulo').textContent = _bannerItemData.proposicao;
+  document.getElementById('banner-regime').value             = '';
+  document.getElementById('banner-comissoes').value          = 'Plenário';
+  document.getElementById('banner-resumo-extra').value       = '';
+  document.getElementById('banner-imagem').value             = '';
+  document.getElementById('banner-img-preview').style.display = 'none';
+  document.getElementById('banner-resultado').style.display  = 'none';
+  _bannerHtmlAtual = '';
+
+  // Sincroniza orientação com o select da pauta se já estiver preenchido
+  const oriEl = document.querySelector('.orientacao[data-ordem="' + _bannerItemData.ordem + '"]');
+  if (oriEl && oriEl.value) {
+    document.getElementById('banner-orientacao').value = oriEl.value;
   }
 
-  function parar() {
-    _ativo = false;
-    clearInterval(_timer);
-    _timer = null;
-    setBotao(false);
-  }
+  // Avisa se não há nota técnica
+  const aviso = document.getElementById('banner-aviso-nota');
+  if (aviso) aviso.style.display = notaTecnica ? 'none' : 'block';
 
-  function setBotao(ativo) {
-    const btn   = document.getElementById('btn-monitorar');
-    const label = document.getElementById('btn-monitorar-label');
-    const txt   = document.getElementById('monitor-status-txt');
-    if (btn)   btn.style.background = ativo
-      ? 'linear-gradient(135deg,#C0392B,#922B21)'
-      : 'linear-gradient(135deg,#6c757d,#495057)';
-    if (label) label.textContent = ativo ? 'Monitorando...' : 'Monitorar';
-    if (!ativo && txt) txt.textContent = '';
-  }
+  new bootstrap.Modal(document.getElementById('modalGerarBanner')).show();
+}
 
-  function setStatus(txt) {
-    const el = document.getElementById('monitor-status-txt');
-    if (el) el.textContent = txt;
-  }
-
-  // ── Polling ───────────────────────────────────────────────────────────────
-  async function checar() {
-    if (!_ativo) return;
-    const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    setStatus('⏳ verificando...');
-    try {
-      // 1. Tenta API de votações direto no browser (sem passar pelo Railway)
-      const rVot = await fetch(
-        'https://dadosabertos.camara.leg.br/api/v2/votacoes?idEvento=' + EVENTO_ID_MON + '&itens=10&ordem=DESC',
-        {headers: {'Accept':'application/json'}, cache: 'no-store'}
-      );
-      if (rVot.ok) {
-        const jVot = await rVot.json();
-        const votacoes = jVot.dados || [];
-        console.log('[Monitor] API votações OK:', votacoes.length, 'votações');
-        if (votacoes.length > 0) {
-          processarVotacoes(votacoes);
-          setStatus('✓ ' + agora + ' (API votações)');
-          return;
-        }
-      }
-    } catch(e) {
-      console.log('[Monitor] API votações bloqueada:', e.message);
+// Preview da imagem no modal
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('banner-imagem')?.addEventListener('change', function () {
+    const file = this.files[0];
+    const prev = document.getElementById('banner-img-preview');
+    const img  = document.getElementById('banner-img-preview-src');
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = ev => { img.src = ev.target.result; prev.style.display = 'block'; };
+      reader.readAsDataURL(file);
+    } else {
+      prev.style.display = 'none';
     }
+  });
+});
 
-    try {
-      // 2. Tenta página HTML do evento direto no browser
-      const rHtml = await fetch(
-        'https://www.camara.leg.br/evento-legislativo/' + EVENTO_ID_MON,
-        {cache: 'no-store'}
-      );
-      if (rHtml.ok) {
-        const html = await rHtml.text();
-        const parser = new DOMParser();
-        const doc2 = parser.parseFromString(html, 'text/html');
-        doc2.querySelectorAll('script,style').forEach(el => el.remove());
-        const texto = (doc2.body?.textContent || '').replace(/\s+/g,' ').trim().toLowerCase();
-        console.log('[Monitor] HTML OK:', texto.length, 'chars');
-        processarTexto(texto);
-        setStatus('✓ ' + agora + ' (HTML)');
-        return;
-      }
-    } catch(e) {
-      console.log('[Monitor] HTML bloqueado:', e.message);
-    }
+async function gerarBannerIA() {
+  const btn = document.getElementById('btn-banner-gerar');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Gerando com Gemini...';
+  document.getElementById('banner-resultado').style.display = 'none';
 
-    try {
-      // 3. Fallback: rota interna /monitor_status
-      const rInt = await fetch('/monitor_status/' + EVENTO_ID_MON, {
-        cache: 'no-store', credentials: 'same-origin'
-      });
-      if (rInt.ok) {
-        const dados = await rInt.json();
-        console.log('[Monitor] Rota interna OK. fontes:', dados.fontes_status);
-        const texto = (dados.texto || '').toLowerCase();
-        if (texto.length > 10) processarTexto(texto);
-        (dados.itens || []).forEach(it => {
-          const sit = (it.situacao || '').toLowerCase();
-          if (sit) verificarTermo(sit, it.proposicao || 'Plenário');
-        });
-        setStatus('✓ ' + agora + ' (interno)');
-        return;
-      }
-    } catch(e) {
-      console.log('[Monitor] Rota interna falhou:', e.message);
-    }
+  try {
+    const formData = new FormData();
+    formData.append('proposicao',    _bannerItemData.proposicao);
+    formData.append('ementa',        _bannerItemData.ementa);
+    formData.append('autor',         _bannerItemData.autor);
+    formData.append('relator',       _bannerItemData.relator);
+    formData.append('regime',        document.getElementById('banner-regime').value);
+    formData.append('comissoes',     document.getElementById('banner-comissoes').value);
+    formData.append('orientacao',    document.getElementById('banner-orientacao').value);
+    formData.append('nota_tecnica',  _bannerItemData.notaTecnica || '');
+    formData.append('resumo_extra',  document.getElementById('banner-resumo-extra').value);
 
-    setStatus('⚠️ ' + agora + ' sem dados');
-  }
+    const imgFile = document.getElementById('banner-imagem').files[0];
+    if (imgFile) formData.append('imagem', imgFile);
 
-  // ── Processamento ─────────────────────────────────────────────────────────
-  const TERMOS = [
-    { t: 'em análise',      l: 'Em Análise',     e: '🔴' },
-    { t: 'em votação',      l: 'Em Votação',      e: '🗳️' },
-    { t: 'votação nominal', l: 'Votação Nominal', e: '🗳️' },
-    { t: 'em discussão',    l: 'Em Discussão',    e: '💬' },
-    { t: 'em apreciação',   l: 'Em Apreciação',   e: '🔵' },
-    { t: 'aprovado',        l: 'Aprovado',        e: '✅' },
-    { t: 'rejeitado',       l: 'Rejeitado',       e: '❌' },
-    { t: 'retirado de pauta', l: 'Retirado de Pauta', e: '↩️' },
-  ];
+    const r = await fetch('/gerar_banner_proposicao', { method: 'POST', body: formData });
+    const j = await r.json();
 
-  function processarTexto(texto) {
-    if (_baseline === null) {
-      // Primeira vez — salva quais termos já existem
-      _baseline = new Set(TERMOS.filter(({t}) => texto.includes(t)).map(({t}) => t));
-      console.log('[Monitor] Baseline termos:', [..._baseline]);
+    if (!j.success) {
+      alert('Erro ao gerar banner:\n' + (j.error || 'Falha desconhecida'));
       return;
     }
-    for (const {t, l, e} of TERMOS) {
-      if (_baseline.has(t)) continue; // já existia no início
-      if (!texto.includes(t)) continue;
-      verificarTermo(t, null, l, e, texto);
-    }
+
+    _bannerHtmlAtual = j.html;
+
+    // Usa o fragmento limpo (style + div.banner, sem doctype/head/scripts) que o backend
+    // já monta separadamente — mesmo padrão usado no Pauta Banner, que funciona corretamente
+    // com html2canvas.
+    const htmlUtil = j.banner_html_fragmento || j.html;
+
+    // Renderiza na div (sem iframe — evita cross-origin)
+    const inner = document.getElementById('banner-preview-inner');
+    inner.innerHTML = htmlUtil;
+    const outerW = document.getElementById('banner-preview-outer').offsetWidth || 700;
+    const scale  = Math.min(1, (outerW - 8) / 850);
+    inner.style.transform = 'scale(' + scale + ')';
+    inner.style.width = '850px';
+    inner.style.transformOrigin = 'top left';
+    setTimeout(() => {
+      const h = inner.scrollHeight * scale;
+      document.getElementById('banner-preview-outer').style.height = h + 'px'; // altura real do banner
+    }, 100);
+    _ativarEdicaoBanner(inner);
+    document.getElementById('banner-resultado').style.display = 'block';
+
+  } catch (err) {
+    alert('Erro de conexão: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<img src="/static/logo_gemini.svg" alt="Gemini" style="width:15px;height:15px;vertical-align:middle;" class="me-1"> Gerar Banner com Gemini';
   }
+}
 
-  function processarVotacoes(votacoes) {
-    for (const v of votacoes) {
-      const prop = v.proposicaoObjeto || v.descricao || '';
-      const sit  = v.dataHoraRegistro ? 'Em Votação' : '';
-      const apr  = v.aprovado;
-      if (!prop) continue;
-
-      if (_baseline === null) {
-        // Primeira chamada — salva estado inicial
-        _baseline = new Set();
-        return;
-      }
-
-      const chave = prop + '|' + sit;
-      if (sit && !_jaAlertados.has(chave)) {
-        _jaAlertados.add(chave);
-        const e = apr === true ? '✅' : apr === false ? '❌' : '🗳️';
-        const l = apr === true ? 'Aprovado' : apr === false ? 'Rejeitado' : 'Em Votação';
-        alertar(e + ' ' + prop, '', l);
-      }
-    }
+function imprimirBanner() {
+  if (!_bannerHtmlAtual) return;
+  const blob = new Blob([_bannerHtmlAtual], { type: 'text/html;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const popup = window.open(url, '_blank', 'width=900,height=750,scrollbars=yes,resizable=yes');
+  if (!popup) {
+    alert('Permita pop-ups para gerar o PDF.');
+    URL.revokeObjectURL(url);
+    return;
   }
-
-  function verificarTermo(termo, propCtx, label, emoji, textoFull) {
-    const chave = termo;
-    if (_jaAlertados.has(chave)) return;
-    _jaAlertados.add(chave);
-
-    label = label || termo;
-    emoji = emoji || '🔴';
-
-    // Tenta casar com item da pauta pelo número
-    const itensNossos = window.ITENS_DATA || [];
-    let itemCasado = null;
-    if (textoFull) {
-      const idx = textoFull.indexOf(termo);
-      const contexto = textoFull.substring(Math.max(0,idx-200), idx+300);
-      for (const it of itensNossos) {
-        const nums = (it.projeto||'').match(/\d{3,}/g) || [];
-        if (nums.some(n => contexto.includes(n))) { itemCasado = it; break; }
-      }
-    }
-    if (!itemCasado && propCtx) {
-      const nums = propCtx.match(/\d{3,}/g) || [];
-      itemCasado = itensNossos.find(it =>
-        (it.projeto||'').match(/\d{3,}/g)?.some(n => nums.includes(n))
-      );
-    }
-
-    const titulo  = itemCasado ? emoji + ' ' + itemCasado.projeto : emoji + ' Plenário';
-    const detalhe = itemCasado ? (itemCasado.ementa||'').substring(0,120) : (propCtx || '');
-    alertar(titulo, detalhe, label);
-  }
-
-  // ── Alerta ────────────────────────────────────────────────────────────────
-  function alertar(titulo, detalhe, situacao) {
-    console.log('[Monitor] ALERTA:', titulo, '|', situacao);
-    const agora = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'});
-    const s = id => document.getElementById(id);
-    if (s('monitor-alerta-titulo'))  s('monitor-alerta-titulo').textContent  = situacao || 'Mudança';
-    if (s('monitor-alerta-corpo'))   s('monitor-alerta-corpo').textContent   = titulo;
-    if (s('monitor-alerta-detalhe')) s('monitor-alerta-detalhe').textContent = detalhe || '';
-    if (s('monitor-alerta-horario')) s('monitor-alerta-horario').textContent = 'Detectado às ' + agora;
-
-    // Som
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      [0, 0.25, 0.5].forEach(t => {
-        const osc = ctx.createOscillator(), g = ctx.createGain();
-        osc.connect(g); g.connect(ctx.destination);
-        osc.frequency.value = 880;
-        g.gain.setValueAtTime(0.3, ctx.currentTime + t);
-        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.2);
-        osc.start(ctx.currentTime + t);
-        osc.stop(ctx.currentTime + t + 0.22);
-      });
-    } catch(_) {}
-
-    // Notificação nativa
-    if (Notification.permission === 'granted') {
-      new Notification('🔔 ' + titulo, {body: situacao, icon: '/static/logo_minoria.png'});
-    } else if (Notification.permission !== 'denied') {
-      Notification.requestPermission();
-    }
-
-    // Modal
-    try {
-      bootstrap.Modal.getOrCreateInstance(
-        document.getElementById('modalMonitorAlerta')
-      ).show();
-    } catch(_) {}
-  }
-
-})();
+  popup.addEventListener('load', () => {
+    setTimeout(() => { popup.print(); }, 400);
+  });
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
 </script>
 
 
+<!-- ═══ MODAL ADICIONAR PROPOSIÇÃO EXTRA PAUTA ═══════════════════════════ -->
+<div class="modal fade" id="modalAdicionarProposicao" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#7B5E00,#B8920A);color:#fff;">
+        <h5 class="modal-title"><i class="fas fa-plus-circle me-2"></i>Adicionar Proposição Extra Pauta</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">Digite a sigla, número e ano da proposição. O sistema buscará os dados na API da Câmara.</p>
+        <div class="row g-2">
+          <div class="col-4">
+            <label class="form-label small fw-bold">Sigla</label>
+            <select class="form-select form-select-sm" id="ep-sigla">
+              <option>PL</option><option>PLP</option><option>PEC</option>
+              <option>MPV</option><option>PDL</option><option>PRC</option>
+              <option>REQ</option><option>PLS</option>
+            </select>
+          </div>
+          <div class="col-4">
+            <label class="form-label small fw-bold">Número</label>
+            <input type="number" class="form-control form-control-sm" id="ep-numero" placeholder="Ex: 1234">
+          </div>
+          <div class="col-4">
+            <label class="form-label small fw-bold">Ano</label>
+            <input type="number" class="form-control form-control-sm" id="ep-ano" placeholder="Ex: 2025">
+          </div>
+        </div>
+        <div id="ep-resultado" class="mt-3" style="display:none;">
+          <div class="alert alert-warning py-2 small mb-0">
+            <i class="fas fa-star me-1" style="color:#B8860B;"></i>
+            <strong>Extra Pauta</strong>
+            <div id="ep-preview" class="mt-1"></div>
+          </div>
+        </div>
+        <div id="ep-erro" class="mt-2 text-danger small" style="display:none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-warning btn-sm" id="ep-btn-buscar" onclick="buscarProposicaoExtra()">
+          <i class="fas fa-search me-1"></i>Buscar
+        </button>
+        <button class="btn btn-sm text-white" id="ep-btn-adicionar" style="background:#7B5E00;display:none;" onclick="adicionarProposicaoExtra()">
+          <i class="fas fa-plus me-1"></i>Adicionar à Pauta
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL BUSCAR PROPOSIÇÃO ══════════════════════════════════════════ -->
+<div class="modal fade" id="modalBuscarProposicao" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable" style="max-width:900px;">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,#1A3A5C,#0d2a4a);color:#fff;">
+        <h5 class="modal-title"><i class="fas fa-search me-2"></i>Buscar Proposição</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-2 mb-3">
+          <div class="col-3">
+            <select class="form-select form-select-sm" id="bp-sigla">
+              <option>PL</option><option>PLP</option><option>PEC</option>
+              <option>MPV</option><option>PDL</option><option>PRC</option>
+              <option>REQ</option>
+            </select>
+          </div>
+          <div class="col-3">
+            <input type="number" class="form-control form-control-sm" id="bp-numero" placeholder="Número">
+          </div>
+          <div class="col-3">
+            <input type="number" class="form-control form-control-sm" id="bp-ano" placeholder="Ano">
+          </div>
+          <div class="col-3">
+            <button class="btn btn-primary btn-sm w-100" onclick="buscarProposicaoBP()">
+              <i class="fas fa-search me-1"></i>Buscar
+            </button>
+          </div>
+        </div>
+        <div id="bp-loading" style="display:none;" class="text-center text-muted py-3">
+          <i class="fas fa-spinner fa-spin me-2"></i>Buscando proposição e nota técnica...
+        </div>
+        <div id="bp-resultado" style="display:none;">
+          <div class="card mb-3">
+            <div class="card-header py-2" style="background:#1A3A5C;color:#fff;">
+              <strong id="bp-titulo"></strong>
+            </div>
+            <div class="card-body py-2 small">
+              <div><strong>Ementa:</strong> <span id="bp-ementa"></span></div>
+              <div class="mt-1"><strong>Autor:</strong> <span id="bp-autor"></span> &nbsp; <strong>Relator:</strong> <span id="bp-relator"></span></div>
+              <div class="mt-1"><strong>Situação:</strong> <span id="bp-situacao"></span></div>
+            </div>
+          </div>
+          <div id="bp-nota-container">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <strong class="small">Nota Técnica:</strong>
+              <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-primary" onclick="gerarNotaBP()">
+                  <img src="/static/logo_gemini.svg" style="width:14px;height:14px;vertical-align:middle;" class="me-1">Gerar com IA
+                </button>
+                <button class="btn btn-sm btn-outline-success" onclick="imprimirNotaBP()">
+                  <i class="fas fa-print me-1"></i>Imprimir PDF
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="gerarBannerBP()">
+                  <i class="fas fa-image me-1"></i>Gerar Banner
+                </button>
+              </div>
+            </div>
+            <div id="bp-nota" class="border rounded p-3 bg-light" style="min-height:200px;font-size:0.85rem;white-space:pre-wrap;">
+              <span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
-(function() {
-  const _imagens     = {}; // dataURL por id
-  const _imgBusy     = {}; // flag carregando
-  let _cardScale = {}; // escala individual por id (1.0 = padrão)
-  const IMG_H_BASE = 100; // altura padrão de imagem em px
+// ══════════════════════════════════════════════════════════════════════════
+// EXTRA PAUTA — Adicionar proposição manualmente
+// ══════════════════════════════════════════════════════════════════════════
+let _epDados = null;  // dados da proposição encontrada
+let _epOrdemCounter = 900;  // ordens extras começam em 900 para não conflitar
 
-  const C = {cream:"#f4ede1",ink:"#1e3550",inkSoft:"#34547a",forest:"#3d8b4a",leaf:"#7ab450",ruby:"#c0392b",amber:"#f4c542"};
+function abrirModalAdicionarProposicao(){
+  _epDados = null;
+  document.getElementById('ep-resultado').style.display = 'none';
+  document.getElementById('ep-erro').style.display = 'none';
+  document.getElementById('ep-btn-adicionar').style.display = 'none';
+  document.getElementById('ep-numero').value = '';
+  document.getElementById('ep-ano').value = new Date().getFullYear();
+  new bootstrap.Modal(document.getElementById('modalAdicionarProposicao')).show();
+}
 
-  function oriCfg(o){
-    o=(o||'').toUpperCase();
-    if(o==='SIM')        return{bg:'#2e7d32',icon:'check'};
-    if(o==='NÃO')        return{bg:'#c0392b',icon:'cross'};
-    if(o==='OBSTRUÇÃO')  return{bg:'#c0392b',icon:'lock'};
-    if(o==='NEGOCIAÇÃO') return{bg:'#e6a817',icon:'check'};
-    if(o==='LIBERADO')   return{bg:'#5e7184',icon:'check'};
-    if(o==='ABSTENÇÃO')  return{bg:'#9e9e9e',icon:'check'};
-    return{bg:'#9e9e9e',icon:'check'};
-  }
+async function buscarProposicaoExtra(){
+  const sigla  = document.getElementById('ep-sigla').value;
+  const numero = document.getElementById('ep-numero').value.trim();
+  const ano    = document.getElementById('ep-ano').value.trim();
+  const errEl  = document.getElementById('ep-erro');
+  const resEl  = document.getElementById('ep-resultado');
+  const btnAdd = document.getElementById('ep-btn-adicionar');
 
-  function svgIco(t,c){
-    if(t==='check')return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M20 33 L29 42 L45 24" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-    if(t==='cross')return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M22 22 L42 42 M42 22 L22 42" stroke="#fff" stroke-width="6" fill="none" stroke-linecap="round"/></svg>`;
-    if(t==='lock') return`<svg width="40" height="40" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="${c}"/><path d="M24 30 v-4 a8 8 0 0 1 16 0" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"/><rect x="22" y="30" width="20" height="16" rx="2" fill="#fff"/></svg>`;
-    return'';
-  }
+  errEl.style.display = 'none';
+  resEl.style.display = 'none';
+  btnAdd.style.display = 'none';
+  _epDados = null;
 
-  function e(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  if(!numero || !ano){ errEl.textContent = 'Preencha número e ano.'; errEl.style.display = 'block'; return; }
 
-  // Busca imagem via backend (Gemini para keywords + Pexels)
-  async function buscarImagem(resumo, id) {
-    try {
-      const r = await fetch('/buscar_imagem_item', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({resumo, id_principal: id})
-      });
-      if (!r.ok) return null;
-      const j = await r.json();
-      return j.imagem_url || null;
-    } catch { return null; }
-  }
+  const btn = document.getElementById('ep-btn-buscar');
+  btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando...';
 
-  const ICON_ORI_OPCOES = ['SIM','NÃO','NEGOCIAÇÃO','LIBERADO','OBSTRUÇÃO','ABSTENÇÃO','—'];
+  try{
+    const r = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo=${encodeURIComponent(sigla)}&numero=${numero}&ano=${ano}&itens=1`, {headers:{'Accept':'application/json'}});
+    if(!r.ok) throw new Error('Erro HTTP ' + r.status);
+    const dados = (await r.json()).dados || [];
+    if(!dados.length){ errEl.textContent = `${sigla} ${numero}/${ano} não encontrado na API da Câmara.`; errEl.style.display = 'block'; return; }
 
-  // Orientação local (editada na pauta iconográfica)
-  const _orientacoes = {}; // sobrescreve a orientação da pauta geral
-  const _marcadores  = {}; // texto customizado do marcador, ex: "PRIORIDADE", "URGENTE"
-
-  // Renderiza um card no preview
-  function renderCard(item, container) {
-    const id  = String(item.id_principal);
-    const scale = _cardScale[id] || 1.0;
-    const imgH = Math.round(IMG_H_BASE * scale);
-    // Orientação: local override > da pauta geral
-    const oriAtual = _orientacoes[id] !== undefined ? _orientacoes[id] : (item.orientacao||'');
-    const cfg = oriCfg(oriAtual);
-    const resumoEl = document.getElementById('resumo-ia-' + id);
-    const resumo = (resumoEl && resumoEl.textContent.trim()) || (window.resumoCache && window.resumoCache[String(item.id_principal)]) || item.resumo_ia || '';
-    const descricao = (resumo || item.ementa || '').substring(0, 180);
-    const imgSrc   = _imagens[id];
-    const marcador = _marcadores[id]; // texto do marcador ou undefined
-    const temMarcador = !!marcador;
-    const shadow   = temMarcador ? `0 0 0 3px ${C.amber},0 6px 14px rgba(0,0,0,.10)` : '0 3px 10px rgba(0,0,0,.06)';
-
-    const selectOri = ICON_ORI_OPCOES.map(o =>
-      `<option value="${o}" ${o===oriAtual?'selected':''}>${o}</option>`
-    ).join('');
-
-    container.innerHTML = `
-      <div style="background:#fff;border-radius:10px;padding:11px 12px 0;position:relative;
-        box-shadow:${shadow};overflow:hidden;font-family:Barlow,sans-serif;">
-        <div style="position:absolute;left:0;top:0;bottom:0;width:4px;background:${cfg.bg};"></div>
-        ${temMarcador ? `<div style="position:absolute;top:6px;right:6px;background:${C.amber};color:#fff;font-size:8px;font-weight:900;letter-spacing:.8px;padding:2px 6px;border-radius:4px;">★ ${e(marcador)}</div>` : ''}
-        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;padding-top:2px;">
-          <button class="icon-zoom-btn" data-id="${id}" data-fator="1.2" title="Aumentar" style="border:1px solid #ccc;border-radius:4px;padding:0px 7px;font-size:14px;background:#f8f8f8;cursor:pointer;line-height:1.6;">＋</button>
-          <button class="icon-zoom-btn" data-id="${id}" data-fator="0.83" title="Diminuir" style="border:1px solid #ccc;border-radius:4px;padding:0px 7px;font-size:14px;background:#f8f8f8;cursor:pointer;line-height:1.6;">－</button>
-          <select class="icon-ori-select" data-id="${id}"
-            style="font-size:10px;padding:2px 4px;border:1px solid ${cfg.bg};border-radius:4px;color:${cfg.bg};font-weight:700;background:#fff;cursor:pointer;">
-            ${selectOri}
-          </select>
-          <label style="cursor:pointer;background:#f0f0f0;border:1px solid #ccc;border-radius:4px;padding:2px 7px;font-size:10px;white-space:nowrap;color:#444;">
-            ${imgSrc ? 'Alterar foto' : 'Inserir foto'}
-            <input type="file" accept="image/*" class="d-none icon-img-inline" data-id="${id}">
-          </label>
-          <button class="icon-marcar-btn" data-id="${id}"
-            style="cursor:pointer;background:${temMarcador?C.amber:'#f0f0f0'};color:${temMarcador?'#fff':'#444'};border:1px solid ${temMarcador?C.amber:'#ccc'};border-radius:4px;padding:2px 7px;font-size:10px;white-space:nowrap;">
-            ${temMarcador ? `★ ${e(marcador)}` : 'Marcar'}
-          </button>
-        </div>
-
-        <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:4px;padding-left:2px;">
-          <div style="width:22px;height:22px;border-radius:50%;background:${C.inkSoft};color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">${e(item.ordem)}</div>
-          <div style="font-family:Barlow Condensed,sans-serif;font-size:15px;font-weight:800;color:${C.ink};line-height:1.1;">${e(item.projeto||'')}</div>
-        </div>
-
-        ${imgSrc ? `
-        <div class="icon-img-wrapper" data-id="${id}" style="width:100%;margin:5px 0;border-radius:6px;overflow:hidden;background:#f5f5f5;height:${imgH}px;position:relative;">
-          <img src="${imgSrc}" style="width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;">
-          <div class="icon-resize-e" data-id="${id}" style="position:absolute;top:0;right:0;width:10px;height:100%;cursor:ew-resize;background:rgba(30,53,80,0.18);display:flex;align-items:center;justify-content:center;">
-            <div style="width:3px;height:30px;border-radius:2px;background:rgba(255,255,255,0.7);"></div>
-          </div>
-          <div class="icon-resize-n" data-id="${id}" style="position:absolute;top:0;left:0;right:0;height:10px;cursor:ns-resize;background:rgba(30,53,80,0.18);display:flex;align-items:center;justify-content:center;">
-            <div style="width:30px;height:3px;border-radius:2px;background:rgba(255,255,255,0.7);"></div>
-          </div>
-          <div class="icon-resize-ne" data-id="${id}" style="position:absolute;top:0;right:0;width:18px;height:18px;cursor:nesw-resize;background:rgba(30,53,80,0.35);border-radius:0 6px 0 4px;"></div>
-        </div>` : ''}
-
-        <div style="font-size:9px;color:${C.inkSoft};line-height:1.5;padding-left:2px;">
-          <div><strong>Autor:</strong> ${e((item.autor||'N/D').substring(0,60))}</div>
-          <div><strong>Relator:</strong> ${e((item.relator||'N/D').substring(0,60))}</div>
-        </div>
-        <div style="display:flex;align-items:flex-end;gap:8px;margin-top:6px;padding-left:2px;padding-bottom:8px;">
-          <div style="flex:1;font-size:10px;color:#2c3e50;line-height:1.4;">${e(descricao)}</div>
-          <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
-            ${svgIco(cfg.icon, cfg.bg)}
-            <div style="font-size:8px;font-weight:900;color:${cfg.bg};margin-top:2px;letter-spacing:.5px;">${e(oriAtual||'—')}</div>
-          </div>
-        </div>
-        <div style="height:4px;background:linear-gradient(90deg,${C.leaf} 0%,${C.forest} 100%);margin-left:-12px;margin-right:-12px;"></div>
-      </div>`;
-
-    // Listeners de zoom (botões +/-)
-    container.querySelectorAll('.icon-zoom-btn').forEach(b => {
-      b.addEventListener('click', () => {
-        const fator = parseFloat(b.dataset.fator);
-        _cardScale[id] = Math.min(3.0, Math.max(0.4, (_cardScale[id]||1.0) * fator));
-        renderCard(item, container);
-      });
-    });
-
-    // Resize por arraste nas alças da imagem
-    function makeResizeListener(handle, mode) {
-      if (!handle) return;
-      function startResize(clientX, clientY) {
-        const wrapper = container.querySelector('.icon-img-wrapper');
-        if (!wrapper) return;
-        const startX = clientX, startY = clientY;
-        const startW = wrapper.offsetWidth;
-        const startH = wrapper.offsetHeight;
-        function onMove(cx, cy) {
-          if (mode === 'e' || mode === 'ne') {
-            const newW = Math.max(60, startW + (cx - startX));
-            wrapper.style.width = newW + 'px';
-          }
-          if (mode === 'n' || mode === 'ne') {
-            // arrastar para cima diminui, para baixo aumenta (invertido: top fixo)
-            const newH = Math.max(30, startH - (cy - startY));
-            wrapper.style.height = newH + 'px';
-            _cardScale[id] = newH / IMG_H_BASE;
-          }
-        }
-        function onMouseMove(e) { e.preventDefault(); onMove(e.clientX, e.clientY); }
-        function onTouchMove(e) { e.preventDefault(); onMove(e.touches[0].clientX, e.touches[0].clientY); }
-        function cleanup() {
-          document.removeEventListener('mousemove', onMouseMove);
-          document.removeEventListener('mouseup', cleanup);
-          document.removeEventListener('touchmove', onTouchMove);
-          document.removeEventListener('touchend', cleanup);
-        }
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', cleanup);
-        document.addEventListener('touchmove', onTouchMove, {passive:false});
-        document.addEventListener('touchend', cleanup);
-      }
-      handle.addEventListener('mousedown',  e => { e.preventDefault(); startResize(e.clientX, e.clientY); });
-      handle.addEventListener('touchstart', e => { e.preventDefault(); startResize(e.touches[0].clientX, e.touches[0].clientY); }, {passive:false});
-    }
-    makeResizeListener(container.querySelector('.icon-resize-e'),  'e');
-    makeResizeListener(container.querySelector('.icon-resize-n'),  'n');
-    makeResizeListener(container.querySelector('.icon-resize-ne'), 'ne');
-
-    // Listener: select de orientação
-    container.querySelector('.icon-ori-select')?.addEventListener('change', function() {
-      _orientacoes[id] = this.value;
-      renderCard(item, container);
-    });
-
-    // Listener: trocar imagem
-    container.querySelector('.icon-img-inline')?.addEventListener('change', function() {
-      const file = this.files[0]; if (!file) return;
-      const reader = new FileReader();
-      reader.onload = ev => { _imagens[id] = ev.target.result; renderCard(item, container); };
-      reader.readAsDataURL(file);
-    });
-
-    // Listener: marcar com texto customizado
-    container.querySelector('.icon-marcar-btn')?.addEventListener('click', function() {
-      if (temMarcador) {
-        // Já tem marcador — remove ou edita
-        const acao = confirm(`Marcador atual: "${marcador}"\n\nOK = editar   Cancelar = remover`);
-        if (acao) {
-          const novo = prompt('Texto do marcador:', marcador);
-          if (novo !== null) { if (novo.trim()) _marcadores[id] = novo.trim().toUpperCase(); else delete _marcadores[id]; }
-        } else {
-          delete _marcadores[id];
-        }
-      } else {
-        const txt = prompt('Texto do marcador (ex: PRIORIDADE, URGENTE, DESTAQUE):', 'PRIORIDADE');
-        if (txt && txt.trim()) _marcadores[id] = txt.trim().toUpperCase();
-      }
-      renderCard(item, container);
-    });
-  }
-
-  // Busca imagens para todos os itens
-  async function buscarTodasImagens(itens) {
-    const status = document.getElementById('icon-status');
-    let n = 0;
-    for (const item of itens) {
-      const id = String(item.id_principal);
-      if (_imagens[id]) { n++; continue; }
-      const resumoEl = document.getElementById('resumo-ia-' + id);
-      const resumo = (resumoEl && resumoEl.textContent.trim()) || item.resumo_ia || item.ementa || '';
-      const query = resumo.substring(0, 80);
-      if (!query) continue;
-      _imgBusy[id] = true;
-      if (status) status.textContent = `Buscando imagens… ${n+1}/${itens.length}`;
-      // Atualiza placeholder
-      const ph = document.querySelector(`.icon-img-placeholder[data-id="${id}"]`);
-      if (ph) ph.textContent = '⏳ Buscando…';
-      const dataUrl = await buscarImagem(query, id);
-      _imgBusy[id] = false;
-      if (dataUrl) _imagens[id] = dataUrl;
-      n++;
-      // Re-renderiza o card
-      const container = document.querySelector(`[data-card-id="${id}"]`);
-      if (container) {
-        const itemData = itens.find(i => String(i.id_principal) === id);
-        if (itemData) renderCard(itemData, container);
-      }
-    }
-    if (status) status.textContent = '✅ Pronto';
-  }
-
-  async function abrirModalIconografica() {
-    const preview = document.getElementById('icon-preview');
-    if (!preview) return;
-    const itens = window.ITENS_DATA || [];
-
-    // Limpa e renderiza grid
-    preview.innerHTML = '';
-    itens.forEach(item => {
-      const wrapper = document.createElement('div');
-      wrapper.dataset.cardId = String(item.id_principal);
-      preview.appendChild(wrapper);
-      renderCard(item, wrapper);
-    });
-
-    const modal = new bootstrap.Modal(document.getElementById('modalIconografica'));
-    modal.show();
-  }
-
-  async function b64url(url){
+    const prop = dados[0];
+    // Busca autores
+    let autor = 'N/D';
     try{
-      const r=await fetch(url);const blob=await r.blob();
-      return await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(blob);});
-    }catch{return null;}
+      const rA = await fetch(`https://dadosabertos.camara.leg.br/api/v2/proposicoes/${prop.id}/autores`,{headers:{'Accept':'application/json'}});
+      if(rA.ok){ const autores = (await rA.json()).dados||[]; autor = autores.slice(0,2).map(a=>a.nome).join(', ') + (autores.length>2?' e outros':''); }
+    }catch(e){}
+
+    _epDados = {
+      id_principal: String(prop.id),
+      projeto: `${prop.siglaTipo} ${prop.numero}/${prop.ano}`,
+      projeto_original: `${prop.siglaTipo} ${prop.numero}/${prop.ano}`,
+      ementa: prop.ementa || '',
+      autor,
+      relator: 'A definir',
+      orientacao: '',
+      situacao: prop.statusProposicao?.descricaoSituacao || 'N/D',
+      eh_extra_pauta: true,
+    };
+
+    document.getElementById('ep-preview').innerHTML =
+      `<strong>${_epDados.projeto}</strong> — ${_epDados.ementa.substring(0,120)}${_epDados.ementa.length>120?'...':''}`;
+    resEl.style.display = 'block';
+    btnAdd.style.display = 'inline-block';
+
+  }catch(e){
+    errEl.textContent = 'Erro: ' + e.message;
+    errEl.style.display = 'block';
+  }finally{
+    btn.disabled = false; btn.innerHTML = '<i class="fas fa-search me-1"></i>Buscar';
   }
+}
 
-  function buildPrintHTML(data){
-    var mid=Math.ceil(data.items.length/2);
-    var left=data.items.slice(0,mid), right=data.items.slice(mid);
+async function adicionarProposicaoExtra(){
+  if(!_epDados) return;
 
-    function card(it){
-      var cfg=oriCfg(it.orientacao);
-      var prio=it.marcador
-        ? '<div style="position:absolute;top:5px;right:5px;background:'+C.amber+';color:#fff;font-size:7px;font-weight:900;padding:2px 5px;border-radius:3px;">★ '+e(it.marcador)+'</div>'
-        : '';
-      var imgH = Math.round(100 * (it.scale||1.0));
-      var imgBlock=it.imagem
-        ? '<div style="width:100%;margin:5px 0;border-radius:5px;overflow:hidden;background:#f5f5f5;height:'+imgH+'px;"><img src="'+it.imagem+'" style="width:100%;height:'+imgH+'px;object-fit:contain;display:block;"></div>'
-        : '';
-      var ico=svgIco(cfg.icon,cfg.bg);
-      return '<div style="background:#fff;border-radius:8px;padding:9px 10px 0;position:relative;box-shadow:0 2px 6px rgba(0,0,0,.08);overflow:hidden;page-break-inside:avoid;border-top:3px solid '+cfg.bg+';">'
-        + prio
-        + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">'
-          + '<div style="width:19px;height:19px;border-radius:50%;background:'+C.inkSoft+';color:#fff;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">'+e(it.num)+'</div>'
-          + '<div style="font-family:Arial,sans-serif;font-size:13px;font-weight:800;color:'+C.ink+';line-height:1.1;flex:1;">'+e(it.codigo)+'</div>'
-          + ico
-        + '</div>'
-        + imgBlock
-        + '<div style="font-size:8px;color:'+C.inkSoft+';line-height:1.5;">'
-          + '<div><b>Autor:</b> '+e(it.autor)+'</div>'
-          + '<div><b>Relator:</b> '+e(it.relator)+'</div>'
-        + '</div>'
-        + '<div style="font-size:9px;color:#2c3e50;line-height:1.4;margin-top:3px;padding-bottom:7px;">'+e(it.descricao)+'</div>'
-        + '<div style="height:3px;background:'+cfg.bg+';margin-left:-10px;margin-right:-10px;"></div>'
-        + '<div style="text-align:center;padding:2px 0 3px;font-size:7.5px;font-weight:900;color:'+cfg.bg+';letter-spacing:.8px;">'+e(it.orientacao||'—')+'</div>'
-      + '</div>';
-    }
+  _epOrdemCounter++;
+  const ordem = _epOrdemCounter;
+  const id    = _epDados.id_principal;
+  const item  = {..._epDados, ordem: String(ordem)};
 
-    var logosMin = data.logo_min
-      ? '<img src="'+data.logo_min+'" style="height:38px;object-fit:contain;padding-right:10px;border-right:1.5px solid #ccc;">'
-      : '<span style="font-size:8px;font-weight:900;color:'+C.forest+';padding-right:10px;border-right:1.5px solid #ccc;">LIDERANÇA DA MINORIA</span>';
-    var logosOpo = data.logo_opo
-      ? '<img src="'+data.logo_opo+'" style="height:38px;object-fit:contain;padding-left:10px;">'
-      : '<span style="font-size:8px;font-weight:900;color:'+C.ruby+';padding-left:10px;">OPOSIÇÃO</span>';
-    var logosHeader = '<div style="display:flex;align-items:center;justify-content:center;margin-top:8px;border-top:1px solid #ddd;padding-top:8px;">'+logosMin+logosOpo+'</div>';
-
-    var cream=C.cream, ink=C.ink, inkSoft=C.inkSoft;
-    return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pauta Iconográfica</title>'
-      + '<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;700;800;900&family=Barlow+Condensed:wght@700;800;900&display=swap" rel="stylesheet">'
-      + '<style>@page{size:A4;margin:0}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}'
-      + 'body{margin:0;padding:0;background:'+cream+';font-family:Arial,sans-serif;color:'+ink+'}'
-      + '.page{width:794px;min-height:1123px;margin:0 auto;background:'+cream+';padding-bottom:30px;position:relative}'
-      + '.col{display:flex;flex-direction:column;gap:10px}'
-      + '</style></head><body>'
-      + '<div class="page">'
-      + '<div style="padding:16px 22px 6px;border-bottom:2px solid rgba(30,53,80,.15);">'
-        + '<div style="text-align:center;font-family:Arial,sans-serif;font-size:22px;font-weight:800;color:'+ink+';">'
-          + 'Pauta Iconográfica — Plenário da Câmara'
-          + '<span style="display:block;font-size:13px;font-weight:500;color:'+inkSoft+';">'+e(data.data)+'</span>'
-        + '</div>'
-        + logosHeader
-      + '</div>'
-      + '<div style="padding:10px 16px 0;display:grid;grid-template-columns:1fr 1fr;gap:10px;">'
-        + '<div class="col">'+left.map(card).join('')+'</div>'
-        + '<div class="col">'+right.map(card).join('')+'</div>'
-      + '</div>'
-      + '</div></body></html>';
-  }
-
-  async function gerarIconografica() {
-    const btn = document.getElementById('btn-gerar-iconografica');
-    if (btn) { btn.disabled=true; btn.innerHTML='<i class="fas fa-spinner fa-spin me-1"></i>Preparando…'; }
-
-    const [logo_min, logo_opo] = await Promise.all([b64url('/static/logo_minoria.png'), b64url('/static/logo_oposicao.png')]);
-    const dataEvento = (document.querySelector('[data-evento-data]')||{}).dataset?.eventoData||'';
-
-    const itens = (window.ITENS_DATA||[]).map(item => {
-      const id = String(item.id_principal);
-      const resumoEl = document.getElementById('resumo-ia-'+id);
-      const resumo = (resumoEl&&resumoEl.textContent.trim())||item.resumo_ia||'';
-      const oriAtual = _orientacoes[id] !== undefined ? _orientacoes[id] : (item.orientacao||'');
-      const marcador = _marcadores[id] || null;
-      return {
-        num: String(item.ordem||''), codigo: item.projeto||'',
-        autor: (item.autor||'N/D').substring(0,60),
-        relator: (item.relator||'N/D').substring(0,60),
-        descricao: (resumo||(item.ementa||'')).substring(0,180),
-        orientacao: oriAtual.toUpperCase(),
-        prioridade: !!marcador,
-        marcador: marcador,
-        imagem: _imagens[id]||null,
-        scale: _cardScale[id]||1.0,
-      };
-    });
-
-    itens.sort((a,b)=>(b.prioridade?1:0)-(a.prioridade?1:0));
-
-    bootstrap.Modal.getInstance(document.getElementById('modalIconografica'))?.hide();
-
-    const html = buildPrintHTML({data:dataEvento, items:itens, logo_min, logo_opo});
-    const blob = new Blob([html], {type: 'text/html;charset=utf-8'});
-    const url  = URL.createObjectURL(blob);
-    const w    = window.open(url, '_blank');
-    if (!w) { alert('Permita pop-ups para imprimir.'); URL.revokeObjectURL(url); return; }
-    // Revoga o URL após carregar para liberar memória
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
-
-    if (btn) { btn.disabled=false; btn.innerHTML='<i class="fas fa-print me-1"></i>Imprimir / Salvar PDF'; }
-  }
-
-  window._abrirModalIconografica = abrirModalIconografica;
-  window._gerarIconografica = gerarIconografica;
-  // Diagnóstico visual — remove após resolver
-  document.addEventListener('DOMContentLoaded', function() {
-    var el = document.getElementById('btn-iconografica');
-    if (el) el.title = 'CARREGADO OK';
+  // Adiciona ao ITENS_DATA global para Mensagens, Pauta Banner, etc.
+  if(!window.ITENS_DATA) window.ITENS_DATA = [];
+  window.ITENS_DATA.push({
+    ordem: String(ordem), id_principal: id,
+    projeto: item.projeto, projeto_original: item.projeto_original,
+    ementa: item.ementa, autor: item.autor, relator: item.relator,
+    orientacao: '', resumo_ia: '', responsavel_username: '',
+    responsavel_nome: '', responsavel_categoria: '', eh_extra_pauta: true,
   });
-  window._iconograficaCarregada = true;
-})();</script>
+
+  // Monta o card visual igual ao dos itens normais, mas com cor amarelo-escuro
+  const container = document.querySelector('.container.my-4') || document.body;
+  const card = document.createElement('div');
+  card.className = 'item-card mb-3';
+  card.dataset.idPrincipal = id;
+  card.style.cssText = 'border:2px solid #B8860B;border-radius:8px;background:#FFFBEA;';
+  card.id = `extra-pauta-${id}`;
+
+  card.innerHTML = `
+    <div class="card-body">
+      <div class="item-header d-flex align-items-center justify-content-between"
+           data-bs-toggle="collapse" data-bs-target="#col-ep-${id}" aria-expanded="false"
+           style="cursor:pointer;color:#7B5E00;font-weight:600;">
+        <div>
+          <span class="badge me-2" style="background:#B8860B;font-size:0.7rem;">⭐ EXTRA PAUTA</span>
+          <i class="fas fa-file-alt me-2" style="color:#B8860B;"></i>
+          Item ${ordem} — <strong>${item.projeto}</strong>
+          <button class="btn btn-sm btn-outline-danger ms-2 py-0 px-2" style="font-size:0.7rem;"
+            onclick="event.stopPropagation();excluirExtraPauta('${id}',this.closest('.item-card'))">
+            <i class="fas fa-trash-alt"></i> Excluir
+          </button>
+          <div class="item-info mt-1 text-muted fst-italic" style="font-size:0.82rem;">${item.ementa}</div>
+          <div class="item-info mt-1 small"><strong>Autor:</strong> ${item.autor}</div>
+        </div>
+        <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
+      </div>
+
+      <div class="collapse" id="col-ep-${id}">
+        <hr class="mt-2 mb-2">
+
+        <div class="mb-2">
+          <label class="form-label small"><strong>Gerar sugestão de análise:</strong></label>
+          <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
+            <button class="btn btn-outline-primary btn-gerar-analise btn-sm"
+              data-ordem="${ordem}" data-projeto="${item.projeto.replace(/"/g,'')}"
+              data-ementa="${item.ementa.replace(/"/g,'').replace(/'/g,'')}"
+              data-autor="${item.autor.replace(/"/g,'')}" data-relator="${item.relator}"
+              data-id-principal="${id}"
+              onclick="gerarAnalise('${ordem}', this)">
+              <img src="/static/logo_gemini.svg" style="width:16px;height:16px;vertical-align:middle;" class="me-1">Gerar Análise
+            </button>
+            <button class="btn btn-outline-secondary btn-gerar-banner btn-sm"
+              data-ordem="${ordem}" data-proposicao="${item.projeto.replace(/"/g,'')}"
+              data-ementa="${item.ementa.replace(/"/g,'').replace(/'/g,'')}"
+              data-autor="${item.autor.replace(/"/g,'')}" data-relator="${item.relator}"
+              data-id-principal="${id}"
+              onclick="abrirModalBanner(this)">
+              <i class="fas fa-image me-2"></i>Gerar Banner
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-2 position-relative">
+          <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
+          <textarea id="editor-resumo-materia-${ordem}" class="d-none"></textarea>
+          <div id="quill-editor-${ordem}" data-ordem="${ordem}" style="width:100%;background:#fff;min-height:300px;"></div>
+          <div id="overlay-${ordem}" class="editor-overlay" style="display:none;">
+            <div class="editor-spinner"></div>
+            <p>Analisando proposição...</p>
+          </div>
+        </div>
+
+        <div class="mt-2">
+          <label class="form-label small"><strong>Orientação:</strong></label>
+          <select class="form-control editable-field orientacao" data-ordem="${ordem}">
+            <option value="">Selecione</option>
+            <option value="SIM">SIM</option>
+            <option value="NÃO">NÃO</option>
+            <option value="LIBERADO">LIBERADO</option>
+            <option value="OBSTRUÇÃO">OBSTRUÇÃO</option>
+            <option value="ABSTENÇÃO">ABSTENÇÃO</option>
+            <option value="NEGOCIAÇÃO">NEGOCIAÇÃO</option>
+          </select>
+        </div>
+
+        <!-- Destaques -->
+        <div class="mt-4">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <h6 class="mb-0"><i class="fas fa-thumbtack text-warning me-2"></i>Destaques</h6>
+            <button class="btn btn-outline-warning btn-sm btn-buscar-destaques"
+              data-id-proposicao="${id}" data-ordem="${ordem}" data-projeto="${item.projeto}">
+              <i class="fas fa-search me-1"></i>Buscar Destaques
+            </button>
+            <button class="btn btn-outline-primary btn-sm" onclick="window.gerarTabelaDestaques('${item.projeto}')">
+              <i class="fas fa-table me-1"></i>Tabela de Destaques
+            </button>
+          </div>
+          <div id="tabela-destaques-${ordem}" style="display:none;">
+            <div class="table-responsive">
+              <table class="table table-sm table-striped align-middle">
+                <thead class="table-warning"><tr>
+                  <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo</th><th>Situação</th><th>IA</th>
+                </tr></thead>
+                <tbody id="tbody-destaques-${ordem}"></tbody>
+              </table>
+            </div>
+            <div id="sem-destaques-${ordem}" class="alert alert-info py-2" style="display:none;">Nenhum destaque encontrado.</div>
+          </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-3 mt-3">
+          <button class="btn btn-warning btn-sm save-btn" data-ordem="${ordem}" data-id-principal="${id}"
+            style="color:#1a1a1a;">Salvar</button>
+          <small class="text-muted" id="info-salvo-${ordem}"></small>
+        </div>
+      </div>
+    </div>`;
+
+  // Encontra o último item da pauta e insere depois
+  const items = document.querySelectorAll('.item-card');
+  const lastItem = items[items.length - 1];
+  if(lastItem) lastItem.after(card);
+  else container.appendChild(card);
+
+  // Inicializa Quill para o novo item quando o collapse abrir
+  const collapseEl = card.querySelector(`#col-ep-${id}`);
+  collapseEl.addEventListener('shown.bs.collapse', () => {
+    if(window.quillInstances && !window.quillInstances[ordem]){
+      const q = new Quill(`#quill-editor-${ordem}`, {
+        theme:'snow',
+        modules:{toolbar:[['bold','italic','underline'],[{'list':'ordered'},{'list':'bullet'}],['clean']]}
+      });
+      const TEMPLATE = `<p><strong>📘 Resumo Técnico</strong></p><p><br></p><p><strong>🟢 Pontos Positivos</strong></p><p><br></p><p><strong>🔴 Pontos Negativos</strong></p><p><br></p><p><strong>⚖️ Riscos Políticos e de Imagem</strong></p><p><br></p><p><strong>↔️ Orientação Sugerida</strong></p><p><br></p>`;
+      q.clipboard.dangerouslyPasteHTML(TEMPLATE);
+      window.quillInstances[ordem] = q;
+    }
+  });
+
+  // Salva no banco para persistência
+  try{
+    await fetch('/extra_pauta/' + window.EVENTO_ID, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        id_principal: id, projeto: item.projeto,
+        ementa: item.ementa, autor: item.autor, relator: item.relator,
+      })
+    });
+  }catch(e){ console.warn('Erro ao persistir extra pauta:', e); }
+
+  // Fecha o modal e abre o card
+  bootstrap.Modal.getInstance(document.getElementById('modalAdicionarProposicao'))?.hide();
+  setTimeout(() => { new bootstrap.Collapse(collapseEl, {toggle:true}); }, 400);
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// BUSCAR PROPOSIÇÃO — Nota técnica, PDF, Banner
+// ══════════════════════════════════════════════════════════════════════════
+let _bpDados = null;
+
+function abrirModalBuscarProposicao(){
+  _bpDados = null;
+  document.getElementById('bp-resultado').style.display = 'none';
+  document.getElementById('bp-loading').style.display = 'none';
+  document.getElementById('bp-numero').value = '';
+  document.getElementById('bp-ano').value = new Date().getFullYear();
+  document.getElementById('bp-nota').innerHTML = '<span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>';
+  new bootstrap.Modal(document.getElementById('modalBuscarProposicao')).show();
+}
+
+async function buscarProposicaoBP(){
+  const sigla  = document.getElementById('bp-sigla').value;
+  const numero = document.getElementById('bp-numero').value.trim();
+  const ano    = document.getElementById('bp-ano').value.trim();
+  if(!numero || !ano){ alert('Preencha número e ano.'); return; }
+
+  document.getElementById('bp-resultado').style.display = 'none';
+  document.getElementById('bp-loading').style.display = 'block';
+  _bpDados = null;
+
+  try{
+    // Usa backend para evitar CORS e ter fallbacks de busca
+    const r = await fetch(`/buscar_proposicao?sigla=${encodeURIComponent(sigla)}&numero=${encodeURIComponent(numero)}&ano=${encodeURIComponent(ano)}`);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const prop = await r.json();
+    if(!prop.found) throw new Error(prop.error || `${sigla} ${numero}/${ano} não encontrado.`);
+
+    _bpDados = {
+      id: prop.id, projeto: prop.projeto,
+      numero: prop.numero, ano: prop.ano, sigla: prop.sigla,
+      ementa: prop.ementa||'', autor: prop.autor, relator: prop.relator,
+      situacao: prop.situacao||'N/D',
+    };
+
+    document.getElementById('bp-titulo').textContent = _bpDados.projeto;
+    document.getElementById('bp-ementa').textContent = _bpDados.ementa;
+    document.getElementById('bp-autor').textContent   = _bpDados.autor;
+    document.getElementById('bp-relator').textContent = _bpDados.relator;
+    document.getElementById('bp-situacao').textContent= _bpDados.situacao;
+    document.getElementById('bp-nota').innerHTML = '<span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>';
+    document.getElementById('bp-resultado').style.display = 'block';
+
+    // Busca nota técnica no banco (inclui REQs de urgência relacionados)
+    buscarNotaBancoBP(_bpDados.id);
+
+  }catch(e){
+    alert('Erro: ' + e.message);
+  }finally{
+    document.getElementById('bp-loading').style.display = 'none';
+  }
+}
+
+async function buscarNotaBancoBP(idProposicao){
+  const nota = document.getElementById('bp-nota');
+  nota.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando nota técnica no banco...';
+  try{
+    // Passa nome e número/ano para ajudar a encontrar REQs de urgência
+    const bpProjeto  = (_bpDados && _bpDados.projeto)  ? encodeURIComponent(_bpDados.projeto)  : '';
+    const bpNumero   = (_bpDados && _bpDados.numero)   ? encodeURIComponent(_bpDados.numero)   : '';
+    const bpAno      = (_bpDados && _bpDados.ano)      ? encodeURIComponent(_bpDados.ano)      : '';
+    const bpUrl = '/notas_por_proposicao/' + idProposicao
+      + '?projeto=' + bpProjeto + '&numero=' + bpNumero + '&ano=' + bpAno;
+    const r = await fetch(bpUrl);
+    const j = await r.json();
+    if(j.found && j.notas && j.notas.length > 0){
+      const n = j.notas[0];
+      const dataStr = n.saved_at ? ' · Salvo em ' + n.saved_at.substring(0,10).split('-').reverse().join('/') + ' por ' + (n.saved_by||'') : '';
+      const tipoStr = (n.tipo === 'nota_req' || n.tipo === 'nota_req_pauta')
+        ? ' <span class="badge bg-warning text-dark">Via REQ de Urgência</span>' : '';
+      nota.style.whiteSpace = 'normal';
+      nota.innerHTML =
+        '<div class="alert alert-success py-1 px-2 mb-2 small">' +
+        '<i class="fas fa-check-circle me-1"></i><strong>Nota encontrada no banco</strong>' + tipoStr + dataStr +
+        '</div>' + n.resumo;
+      _bpDados.nota = n.resumo;
+      // Se há mais de uma nota, mostra aviso
+      if(j.notas.length > 1){
+        nota.innerHTML += '<div class="text-muted small mt-2">(' + j.notas.length + ' notas encontradas — exibindo a mais recente)</div>';
+      }
+    } else {
+      nota.innerHTML = '<span class="text-muted fst-italic">Nenhuma nota técnica no banco. Clique em "Gerar com IA" para gerar.</span>';
+    }
+  }catch(e){
+    nota.innerHTML = '<span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>';
+    console.warn('buscarNotaBancoBP:', e);
+  }
+}
+
+async function gerarNotaBP(){
+  if(!_bpDados){ alert('Busque uma proposição primeiro.'); return; }
+  const nota = document.getElementById('bp-nota');
+  nota.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Gerando análise com IA...';
+  try{
+    const r = await fetch('/analisar_ia', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        projeto: _bpDados.projeto, ementa: _bpDados.ementa,
+        autor: _bpDados.autor, relator: _bpDados.relator,
+        id_principal: _bpDados.id,
+      })
+    });
+    const j = await r.json();
+    if(j.resumo){
+      nota.innerHTML = j.resumo;
+      nota.style.whiteSpace = 'normal';
+      _bpDados.nota = j.resumo;
+    } else {
+      nota.innerHTML = '<span class="text-danger">Erro: ' + (j.error||'Falha na IA') + '</span>';
+    }
+  }catch(e){
+    nota.innerHTML = '<span class="text-danger">Erro: ' + e.message + '</span>';
+  }
+}
+
+function imprimirNotaBP(){
+  if(!_bpDados){ alert('Busque uma proposição primeiro.'); return; }
+  const nota = document.getElementById('bp-nota').innerHTML;
+  const popup = window.open('', '_blank', 'width=800,height=700,scrollbars=yes');
+  const pd = popup.document;
+  pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Nota Técnica</title><style>body{font-family:Arial,sans-serif;padding:30px;color:#222;line-height:1.6;}h2{color:#1A3A5C;border-bottom:2px solid #1A3A5C;padding-bottom:8px;}@media print{.no-print{display:none}}</style></head><body></body></html>'); pd.close();
+  const h2 = pd.createElement('h2'); h2.textContent = _bpDados.projeto; pd.body.appendChild(h2);
+  const sub = pd.createElement('p'); sub.style.color='#555'; sub.style.fontSize='13px'; sub.textContent = 'Ementa: ' + _bpDados.ementa; pd.body.appendChild(sub);
+  const hr = pd.createElement('hr'); pd.body.appendChild(hr);
+  const div = pd.createElement('div'); div.innerHTML = nota; pd.body.appendChild(div);
+  const btnP = pd.createElement('button'); btnP.className='no-print'; btnP.style.cssText='margin-top:20px;padding:8px 20px;background:#1A3A5C;color:#fff;border:none;border-radius:4px;cursor:pointer;'; btnP.textContent='🖨️ Imprimir'; btnP.onclick=()=>popup.print(); pd.body.appendChild(btnP);
+}
+
+function excluirExtraPauta(idProp, cardEl){
+  if(!confirm('Excluir esta proposição extra pauta?')) return;
+  fetch('/extra_pauta/' + window.EVENTO_ID + '/' + idProp, {method:'DELETE'})
+    .then(r => r.json())
+    .then(j => {
+      if(j.ok){
+        cardEl?.remove();
+        // Remove do ITENS_DATA
+        if(window.ITENS_DATA) window.ITENS_DATA = window.ITENS_DATA.filter(it => String(it.id_principal) !== String(idProp) || !it.eh_extra_pauta);
+      } else { alert('Erro ao excluir: ' + (j.error||'')); }
+    })
+    .catch(e => alert('Erro: ' + e.message));
+}
+
+async function carregarExtraPauta(){
+  if(!window.EVENTO_ID) return;
+  try{
+    const r = await fetch('/extra_pauta/' + window.EVENTO_ID);
+    if(!r.ok) return;
+    const itens = await r.json();
+    for(const item of itens){
+      // Não duplica se já existe na tela
+      if(document.getElementById('extra-pauta-' + item.id_principal)) continue;
+      await adicionarExtraPautaCarregado(item);
+    }
+  }catch(e){ console.warn('Erro ao carregar extra pauta:', e); }
+}
+
+// Versão silenciosa de adicionar (sem modal, sem salvar no banco novamente)
+async function adicionarExtraPautaCarregado(item){
+  _epOrdemCounter++;
+  const ordem = _epOrdemCounter;
+  const id    = item.id_principal;
+  item.ordem  = String(ordem);
+
+  if(!window.ITENS_DATA) window.ITENS_DATA = [];
+  if(!window.ITENS_DATA.find(it => String(it.id_principal)===String(id) && it.eh_extra_pauta)){
+    window.ITENS_DATA.push({
+      ordem: String(ordem), id_principal: id,
+      projeto: item.projeto, projeto_original: item.projeto,
+      ementa: item.ementa, autor: item.autor, relator: item.relator,
+      orientacao: '', resumo_ia: '', responsavel_username: '',
+      responsavel_nome: '', responsavel_categoria: '', eh_extra_pauta: true,
+    });
+  }
+
+  const container = document.querySelector('.container.my-4') || document.body;
+  const card = document.createElement('div');
+  card.className = 'item-card mb-3';
+  card.dataset.idPrincipal = id;
+  card.style.cssText = 'border:2px solid #B8860B;border-radius:8px;background:#FFFBEA;';
+  card.id = 'extra-pauta-' + id;
+
+  const dataStr = item.created_at ? ' · Adicionado em ' + item.created_at.substring(0,10).split('-').reverse().join('/') + ' por ' + (item.created_by||'') : '';
+
+  card.innerHTML = `
+    <div class="card-body">
+      <div class="item-header d-flex align-items-center justify-content-between"
+           data-bs-toggle="collapse" data-bs-target="#col-ep-${id}" aria-expanded="false"
+           style="cursor:pointer;color:#7B5E00;font-weight:600;">
+        <div>
+          <span class="badge me-2" style="background:#B8860B;font-size:0.7rem;">⭐ EXTRA PAUTA</span>
+          <i class="fas fa-file-alt me-2" style="color:#B8860B;"></i>
+          Item ${ordem} — <strong>${item.projeto}</strong>
+          <button class="btn btn-sm btn-outline-danger ms-2 py-0 px-2" style="font-size:0.7rem;"
+            onclick="event.stopPropagation();excluirExtraPauta('${id}',this.closest('.item-card'))">
+            <i class="fas fa-trash-alt"></i> Excluir
+          </button>
+          <div class="item-info mt-1 text-muted fst-italic" style="font-size:0.82rem;">${item.ementa}</div>
+          <div class="item-info mt-1 small"><strong>Autor:</strong> ${item.autor}${dataStr}</div>
+        </div>
+        <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
+      </div>
+      <div class="collapse" id="col-ep-${id}">
+        <hr class="mt-2 mb-2">
+        <div class="mb-2">
+          <label class="form-label small"><strong>Gerar sugestão de análise:</strong></label>
+          <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
+            <button class="btn btn-outline-primary btn-gerar-analise btn-sm"
+              data-ordem="${ordem}" data-projeto="${item.projeto.replace(/"/g,'')}"
+              data-ementa="${item.ementa.replace(/"/g,'').replace(/'/g,'')}"
+              data-autor="${item.autor.replace(/"/g,'')}" data-relator="${item.relator||'N/D'}"
+              data-id-principal="${id}" onclick="gerarAnalise('${ordem}', this)">
+              <img src="/static/logo_gemini.svg" style="width:16px;height:16px;vertical-align:middle;" class="me-1">Gerar Análise
+            </button>
+            <button class="btn btn-outline-secondary btn-gerar-banner btn-sm"
+              data-ordem="${ordem}" data-proposicao="${item.projeto.replace(/"/g,'')}"
+              data-ementa="${item.ementa.replace(/"/g,'').replace(/'/g,'')}"
+              data-autor="${item.autor.replace(/"/g,'')}" data-relator="${item.relator||'N/D'}"
+              data-id-principal="${id}" onclick="abrirModalBanner(this)">
+              <i class="fas fa-image me-2"></i>Gerar Banner
+            </button>
+          </div>
+        </div>
+        <div class="mt-2 position-relative">
+          <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
+          <textarea id="editor-resumo-materia-${ordem}" class="d-none"></textarea>
+          <div id="quill-editor-${ordem}" data-ordem="${ordem}" style="width:100%;background:#fff;min-height:300px;"></div>
+          <div id="overlay-${ordem}" class="editor-overlay" style="display:none;">
+            <div class="editor-spinner"></div><p>Analisando proposição...</p>
+          </div>
+        </div>
+        <div class="mt-2">
+          <label class="form-label small"><strong>Orientação:</strong></label>
+          <select class="form-control editable-field orientacao" data-ordem="${ordem}">
+            <option value="">Selecione</option>
+            <option value="SIM">SIM</option><option value="NÃO">NÃO</option>
+            <option value="LIBERADO">LIBERADO</option><option value="OBSTRUÇÃO">OBSTRUÇÃO</option>
+            <option value="ABSTENÇÃO">ABSTENÇÃO</option><option value="NEGOCIAÇÃO">NEGOCIAÇÃO</option>
+          </select>
+        </div>
+        <div class="mt-4">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <h6 class="mb-0"><i class="fas fa-thumbtack text-warning me-2"></i>Destaques</h6>
+            <button class="btn btn-outline-warning btn-sm btn-buscar-destaques"
+              data-id-proposicao="${id}" data-ordem="${ordem}" data-projeto="${item.projeto}">
+              <i class="fas fa-search me-1"></i>Buscar Destaques
+            </button>
+          </div>
+          <div id="tabela-destaques-${ordem}" style="display:none;">
+            <div class="table-responsive">
+              <table class="table table-sm table-striped align-middle">
+                <thead class="table-warning"><tr>
+                  <th>Número</th><th>Autoria</th><th>Descrição</th><th>Tipo</th><th>Situação</th><th>IA</th>
+                </tr></thead>
+                <tbody id="tbody-destaques-${ordem}"></tbody>
+              </table>
+            </div>
+            <div id="sem-destaques-${ordem}" class="alert alert-info py-2" style="display:none;">Nenhum destaque encontrado.</div>
+          </div>
+        </div>
+        <div class="d-flex align-items-center gap-3 mt-3">
+          <button class="btn btn-warning btn-sm save-btn" data-ordem="${ordem}" data-id-principal="${id}"
+            style="color:#1a1a1a;">Salvar</button>
+          <small class="text-muted" id="info-salvo-${ordem}"></small>
+        </div>
+      </div>
+    </div>`;
+
+  const items = document.querySelectorAll('.item-card');
+  const lastItem = items[items.length - 1];
+  if(lastItem && lastItem !== card) lastItem.after(card);
+  else container.appendChild(card);
+
+  card.querySelector(`#col-ep-${id}`)?.addEventListener('shown.bs.collapse', () => {
+    if(window.quillInstances && !window.quillInstances[ordem]){
+      const q = new Quill(`#quill-editor-${ordem}`, {
+        theme:'snow', modules:{toolbar:[['bold','italic','underline'],[{'list':'ordered'},{'list':'bullet'}],['clean']]}
+      });
+      const TEMPLATE = `<p><strong>📘 Resumo Técnico</strong></p><p><br></p><p><strong>🟢 Pontos Positivos</strong></p><p><br></p><p><strong>🔴 Pontos Negativos</strong></p><p><br></p><p><strong>⚖️ Riscos Políticos e de Imagem</strong></p><p><br></p><p><strong>↔️ Orientação Sugerida</strong></p><p><br></p>`;
+      q.clipboard.dangerouslyPasteHTML(TEMPLATE);
+      window.quillInstances[ordem] = q;
+    }
+  });
+}
+
+// Chama ao carregar a página (após 1.5s para garantir que DOM esteja pronto)
+setTimeout(carregarExtraPauta, 1500);
+
+function gerarBannerBP(){
+  if(!_bpDados){ alert('Busque uma proposição primeiro.'); return; }
+  // Popula o modal de gerar banner com os dados da proposição buscada
+  // e abre normalmente
+  const btnFake = {
+    dataset: {
+      proposicao: _bpDados.projeto, ementa: _bpDados.ementa,
+      autor: _bpDados.autor, relator: _bpDados.relator,
+      idPrincipal: _bpDados.id, ordem: '999',
+    }
+  };
+  // Fecha modal buscar e abre modal de banner
+  bootstrap.Modal.getInstance(document.getElementById('modalBuscarProposicao'))?.hide();
+  setTimeout(() => abrirModalBanner(btnFake), 400);
+}
+</script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', async () => {
+        try {
+          // Remove SWs antigos primeiro
+          const regs = await navigator.serviceWorker.getRegistrations();
+          for (const reg of regs) await reg.unregister();
+          // Registra novo
+          const reg = await navigator.serviceWorker.register('/sw.js', {scope: '/'});
+          console.log('[PWA] SW registrado:', reg.scope);
+        } catch(e) {
+          console.warn('[PWA] SW falhou:', e);
+        }
+      });
+    }
+  </script>
 </body>
 </html>
