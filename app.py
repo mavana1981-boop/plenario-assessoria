@@ -16,6 +16,7 @@ GEMINI_MODEL = "gemini-2.0-flash"  # fallback fixo
 _gemini_modelo_cache = {"modelo": None}  # cache em memória
 
 GEMINI_PREFERENCIA = [
+    "gemini-2.5-flash-lite-preview-06-17",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
     "gemini-2.0-flash",
@@ -105,7 +106,7 @@ def groq_post(prompt, max_tokens=1500, temperatura=0.3):
         json={"model": "llama-3.3-70b-versatile",
               "messages": [{"role": "user", "content": prompt}],
               "max_tokens": max_tokens, "temperature": temperatura},
-        timeout=30
+        timeout=15
     )
     r.raise_for_status()
     return r.json()['choices'][0]['message']['content']
@@ -122,7 +123,7 @@ def cloudflare_post(prompt, max_tokens=1500, temperatura=0.3):
         headers={"Authorization": f"Bearer {cf_token}", "Content-Type": "application/json"},
         json={"messages": [{"role": "user", "content": prompt}],
               "max_tokens": max_tokens, "temperature": temperatura},
-        timeout=60
+        timeout=15
     )
     r.raise_for_status()
     return r.json()['result']['response']
@@ -139,19 +140,7 @@ def ia_chain(prompt, max_tokens=1500, temperatura=0.3, contexto=""):
     gem_ok  = bool(os.environ.get('GEMINI_API_KEY', ''))
     logger.info(f"ia_chain [{contexto}] chaves: GEMINI={'✅' if gem_ok else '❌'} GROQ={'✅' if groq_ok else '❌'} CF={'✅' if cf_ok else '❌'}")
 
-    # 1. Groq (llama-3.3-70b, 30 RPM gratuito) — primeiro por ser mais rápido e confiável
-    groq_key = os.environ.get('GROQ_API_KEY', '')
-    if groq_key:
-        try:
-            texto = groq_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
-            if texto and texto.strip():
-                logger.info(f"ia_chain [{contexto}]: Groq OK")
-                return texto, 'groq'
-        except Exception as e:
-            logger.warning(f"ia_chain [{contexto}]: Groq falhou — {e}")
-            erros.append(f"Groq: {e}")
-
-    # 2. Gemini (fallback)
+    # 1. Gemini (modelo detectado automaticamente)
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     if gemini_key:
         try:
@@ -162,8 +151,21 @@ def ia_chain(prompt, max_tokens=1500, temperatura=0.3, contexto=""):
                 return texto, 'gemini'
         except Exception as e:
             logger.warning(f"ia_chain [{contexto}]: Gemini falhou — {e}")
+            # Limpa cache para tentar detectar novo modelo na próxima chamada
             _gemini_modelo_cache["modelo"] = None
             erros.append(f"Gemini: {e}")
+
+    # 2. Groq (llama-3.3-70b, 30 RPM gratuito)
+    groq_key = os.environ.get('GROQ_API_KEY', '')
+    if groq_key:
+        try:
+            texto = groq_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
+            if texto and texto.strip():
+                logger.info(f"ia_chain [{contexto}]: Groq OK")
+                return texto, 'groq'
+        except Exception as e:
+            logger.warning(f"ia_chain [{contexto}]: Groq falhou — {e}")
+            erros.append(f"Groq: {e}")
 
     # 3. Cloudflare Workers AI (llama-3.1-70b, 500 RPM gratuito)
     cf_account = os.environ.get('CF_ACCOUNT_ID', '')
@@ -395,18 +397,6 @@ with app.app_context():
             last_updated TEXT,
             last_saved_by TEXT)''')
 
-        c.execute('''CREATE TABLE IF NOT EXISTS extra_pauta (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            evento_id INTEGER NOT NULL,
-            id_proposicao TEXT NOT NULL,
-            projeto TEXT,
-            ementa TEXT,
-            autor TEXT,
-            relator TEXT,
-            created_by TEXT,
-            created_at TEXT,
-            UNIQUE(evento_id, id_proposicao))''')
-
         c.execute('''CREATE TABLE IF NOT EXISTS resumos_ia (
             evento_id INTEGER,
             id_proposicao TEXT,
@@ -549,28 +539,6 @@ class User(UserMixin):
             return f"{self.username} - {self.categoria}"
         return self.username
 
-
-@app.after_request
-def inject_pwa_tags(response):
-    """Injeta tags PWA em todas as páginas HTML para garantir standalone em qualquer rota."""
-    if response.content_type and 'text/html' in response.content_type:
-        data = response.get_data(as_text=True)
-        if '<head>' in data and 'manifest.json' not in data:
-            pwa_tags = (
-                '<link rel="manifest" href="/manifest.json">'
-                '<meta name="theme-color" content="#0A1628">'
-                '<meta name="mobile-web-app-capable" content="yes">'
-                '<meta name="apple-mobile-web-app-capable" content="yes">'
-                '<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">'
-                '<meta name="apple-mobile-web-app-title" content="Pauta">'
-                '<link rel="apple-touch-icon" sizes="192x192" href="/static/icon-192.png">'
-                '<link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">'
-            )
-            data = data.replace('<head>', '<head>' + pwa_tags, 1)
-            response.set_data(data)
-    return response
-
-
 @login_manager.user_loader
 def load_user(user_id):
     conn = get_conn()
@@ -608,58 +576,6 @@ def fetch_eventos_por_data(data):
         logger.error(f"Erro ao buscar eventos: {e}")
         return []
 
-def _extrair_sigla_num_ano(texto):
-    """Extrai (sigla_curta, numero, ano) de QUALQUER formato de menção a projeto
-    legislativo. Cobre siglas por extenso e abreviadas, com ou sem nº, com
-    barra, vírgula, espaço ou 'de' como separador."""
-    PADROES = [
-        # Complementar (extenso)
-        (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PLP'),
-        (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*(\d[\d.]*)\s+(?:de\s+)?(\d{4})', 'PLP'),
-        (r'Projeto\s+de\s+Lei\s+Complementar\s+(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PLP'),
-        (r'Projeto\s+de\s+Lei\s+Complementar\s+(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'PLP'),
-        # PEC (extenso)
-        (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PEC'),
-        (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*(\d[\d.]*)\s+(?:de\s+)?(\d{4})', 'PEC'),
-        (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PEC'),
-        (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'PEC'),
-        # MPV (extenso)
-        (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'MPV'),
-        (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'MPV'),
-        (r'Medida\s+Provis[oó]ria\s+(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'MPV'),
-        (r'Medida\s+Provis[oó]ria\s+(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'MPV'),
-        # PDL (extenso)
-        (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PDL'),
-        (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'PDL'),
-        (r'Projeto\s+de\s+Decreto\s+Legislativo\s+(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PDL'),
-        (r'Projeto\s+de\s+Decreto\s+Legislativo\s+(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'PDL'),
-        # PL (extenso) — com nº
-        (r'Projeto\s+de\s+Lei\s+n[º°.]\s*(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})', 'PL'),
-        (r'Projeto\s+de\s+Lei\s+n[º°.]\s*(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'PL'),
-        # PL (extenso) — sem nº
-        (r'Projeto\s+de\s+Lei\s+(\d[\d.]*)\s*/\s*(\d{4})\b', 'PL'),
-        (r'Projeto\s+de\s+Lei\s+(\d[\d.]*)\s*,\s*(?:de\s+)?(\d{4})\b', 'PL'),
-        (r'Projeto\s+de\s+Lei\s+(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', 'PL'),
-        # Siglas curtas — com nº
-        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PLS|PL)\s+n[º°.]\s*(\d[\d.]*)\s*[,/]\s*(?:de\s+)?(\d{4})\b', None),
-        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PLS|PL)\s+n[º°.]\s*(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', None),
-        # Siglas curtas — sem nº (barra, vírgula, espaço)
-        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PLS|PL)\s+(\d[\d.]*)/( \d{4})\b', None),
-        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PLS|PL)\s+(\d[\d.]*)\s*,\s*(?:de\s+)?(\d{4})\b', None),
-        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PLS|PL)\s+(\d[\d.]*)/(\d{4})\b', None),
-        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PLS|PL)\s+(\d[\d.]*)\s+(?:de\s+)?(\d{4})\b', None),
-    ]
-    for item in PADROES:
-        padrao, sigla_fixa = item
-        m = re.search(padrao, texto, re.IGNORECASE)
-        if not m:
-            continue
-        if sigla_fixa:
-            return sigla_fixa, m.group(1).replace('.', ''), m.group(2)
-        else:
-            return m.group(1).upper(), m.group(2).replace('.', ''), m.group(3)
-    return '', '', ''
-
 def extrair_ref_pl(projeto, ementa):
     """
     Se for REQ/RQS/RQU/REC, extrai a referência ao PL/PEC/PLP/MPV da ementa.
@@ -676,9 +592,29 @@ def extrair_ref_pl(projeto, ementa):
     ementa_str = str(ementa or '')
 
     # Padrões do mais específico para o mais genérico
-    sigla, num, ano = _extrair_sigla_num_ano(ementa_str)
-    if sigla and num and ano:
-        return f"{projeto_base} ao {sigla} {num}/{ano}"
+    padroes = [
+        # Sigla curta com número: "PLP nº 221/2024", "PL nº 1811/2026"
+        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})\b', 3, None),
+        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s+(\d+),?\s*de\s+(\d{4})\b', 3, None),
+        (r'\b(PLP|PLC|PEC|MPV|PDL|PLV|PDS|PRS|PL)\s*(\d{3,5})[/\-](\d{4})\b', 3, None),
+        # Texto por extenso — ordem importa: Complementar antes de Lei simples
+        (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PLP'),
+        (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PEC'),
+        (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'MPV'),
+        (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PDL'),
+        (r'Projeto\s+de\s+Lei\s+n[º°.]?\s*(\d+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PL'),
+    ]
+
+    for item in padroes:
+        padrao, n_grupos, sigla_fixa = item
+        m = re.search(padrao, ementa_str, re.IGNORECASE)
+        if m:
+            if n_grupos == 3:
+                sigla, num, ano = m.group(1).upper(), m.group(2), m.group(3)
+            else:
+                sigla, num, ano = sigla_fixa, m.group(1), m.group(2)
+            return f"{projeto_base} ao {sigla} {num}/{ano}"
+
     return projeto_base
 
 def buscar_ordem_oficial(evento_id, data_evento=''):
@@ -1153,25 +1089,37 @@ def fetch_pauta(evento_id, force_reload=False):
     cache_key = str(evento_id)
     notas = load_notas()
 
+    # ── Cache em memória (por worker) ────────────────────────────────────────
+    # TTL de 30 minutos — reduz leituras ao banco
+    CACHE_MEM_TTL = timedelta(minutes=30)
     if not force_reload and cache_key in pauta_cache:
         cached = pauta_cache[cache_key]
-        if now - cached['timestamp'] < CACHE_DURATION:
+        if now - cached['timestamp'] < CACHE_MEM_TTL:
+            # Reaplica notas frescas mesmo com cache em memória
+            for item in cached['itens']:
+                key = f"PROP_{item.get('id_principal','')}"
+                if key in notas:
+                    item['resumo_materia'] = notas[key].get('resumo_materia', item.get('resumo_materia', ''))
+                    item['orientacao']     = notas[key].get('orientacao', item.get('orientacao', ''))
+                    item['saved_by']       = notas[key].get('saved_by', item.get('saved_by', ''))
+                    item['saved_at']       = notas[key].get('saved_at', item.get('saved_at', ''))
             return cached['itens'], False
 
     conn = get_conn()
     c = conn.cursor()
 
+    # ── Cache no banco (compartilhado entre workers) ──────────────────────────
+    # Se NÃO é force_reload e existe cache no banco → usa sempre, sem expirar
+    # O scraping só acontece se: force_reload=True OU banco vazio
     if not force_reload:
         try:
             c.execute("SELECT json_pauta, last_updated FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
             row = c.fetchone()
             if row:
                 itens = json.loads(row[0])
-                # Reaplica notas e corrige título de REQ sempre
+                # Reaplica notas frescas do banco (sempre atualizadas)
                 for item in itens:
-                    # projeto_original = código limpo (sem " ao PL...")
                     orig = item.get('projeto_original') or item.get('projeto', '')
-                    # Garante que projeto_original seja o código base
                     item['projeto_original'] = orig.split(' ao ')[0].strip()
                     item['projeto'] = extrair_ref_pl(item['projeto_original'], item.get('ementa', ''))
                     key = f"PROP_{item['id_principal']}"
@@ -1181,11 +1129,33 @@ def fetch_pauta(evento_id, force_reload=False):
                         item['resumo_parecer'] = notas[key].get('resumo_parecer', item.get('resumo_parecer', ''))
                         item['saved_by']       = notas[key].get('saved_by', item.get('saved_by', ''))
                         item['saved_at']       = notas[key].get('saved_at', item.get('saved_at', ''))
+                # Salva em memória para os próximos requests deste worker
                 pauta_cache[cache_key] = {'timestamp': now, 'itens': itens}
                 conn.close()
                 return itens, True
         except Exception:
             pass
+
+    # ── Scraping (só chega aqui se force_reload ou banco vazio) ──────────────
+    # Lock: verifica se outro worker já está fazendo scraping
+    try:
+        c.execute("SELECT last_updated FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
+        row_lock = c.fetchone()
+        if row_lock and not force_reload:
+            # Outro worker inseriu cache enquanto esperávamos — usa ele
+            itens = json.loads(c.execute(
+                "SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,)
+            ).fetchone()[0])
+            for item in itens:
+                key = f"PROP_{item.get('id_principal','')}"
+                if key in notas:
+                    item['resumo_materia'] = notas[key].get('resumo_materia', item.get('resumo_materia', ''))
+                    item['orientacao']     = notas[key].get('orientacao', item.get('orientacao', ''))
+            pauta_cache[cache_key] = {'timestamp': now, 'itens': itens}
+            conn.close()
+            return itens, True
+    except Exception:
+        pass
 
     try:
         # Busca data do evento
@@ -2304,50 +2274,13 @@ def analisar_ia():
     cabecalho = "Voce e um assessor legislativo da Camara dos Deputados, trabalhando para a Oposicao e Minoria.\n\n"
     dados = "Proposicao: %s\nAutores: %s\nRelator: %s\nEmenta: %s\n%s\n\n" % (str(projeto), str(autor), str(relator), str(ementa), str(contexto_doc))
     instrucao = "Gere uma nota tecnica em texto puro com esta estrutura. Cada titulo com emoji deve estar sozinho na linha, seguido de linha em branco.\n\n"
-    regras = "Regras: sem HTML, sem asteriscos, sem markdown. Seja completo e nao corte a analise.\n"
+    regras = "Regras: sem HTML, sem asteriscos, sem markdown. Maximo 500 palavras.\n"
 
     prompt = cabecalho + dados + instrucao + estrutura + regras + secao_criticas
 
     # ── Cadeia tripla: Groq → Cloudflare → Gemini ───────────────────────────
     try:
-        # Para análise técnica completa, usa Gemini primeiro (melhor para textos longos)
-        # Groq pode truncar por limite de tokens/minuto no plano gratuito
-        texto = None
-        fonte = None
-        _erros_ia = []
-
-        # 1. Gemini
-        _gkey = os.environ.get('GEMINI_API_KEY', '')
-        if _gkey:
-            try:
-                texto = gemini_post(_gkey, prompt, max_tokens=3000, temperatura=0.3, tentativas=2)
-                if texto and texto.strip():
-                    fonte = 'gemini'
-            except Exception as _e:
-                _erros_ia.append(f'Gemini: {_e}')
-                logger.warning(f'analisar_ia: Gemini falhou — {_e}')
-
-        # 2. Groq
-        if not texto:
-            _grok = os.environ.get('GROQ_API_KEY', '')
-            if _grok:
-                try:
-                    texto = groq_post(prompt, max_tokens=3000, temperatura=0.3)
-                    if texto and texto.strip():
-                        fonte = 'groq'
-                except Exception as _e:
-                    _erros_ia.append(f'Groq: {_e}')
-                    logger.warning(f'analisar_ia: Groq falhou — {_e}')
-
-        # 3. Cloudflare
-        if not texto:
-            try:
-                texto, fonte = ia_chain(prompt, max_tokens=3000, contexto="analisar_ia")
-            except Exception as _e:
-                _erros_ia.append(f'Cloudflare: {_e}')
-
-        if not texto:
-            raise Exception('; '.join(_erros_ia))
+        texto, fonte = ia_chain(prompt, max_tokens=1500, contexto="analisar_ia")
     except Exception as e:
         import traceback
         logger.error(f"ia_chain falhou em analisar_ia: {e}\n{traceback.format_exc()[-300:]}")
@@ -3069,7 +3002,7 @@ Com base na descrição e análise acima, gere APENAS um JSON válido (sem markd
 Responda APENAS com o JSON, sem ```json, sem comentários."""
 
     try:
-        texto, fonte = ia_chain(prompt, temperatura=0.2, contexto="gerar_quadro_dtq")
+        texto, fonte = ia_chain(prompt, max_tokens=512, temperatura=0.2, contexto="gerar_quadro_dtq")
         texto = re.sub(r'```(?:json)?|```', '', texto).strip()
         dados = json.loads(texto)
         return jsonify({'ok': True, 'dados': dados, 'fonte': fonte})
@@ -3488,7 +3421,7 @@ Gere análise em HTML:
 Não use ### ou ** fora do HTML."""
 
             try:
-                    texto_resp, fonte = ia_chain(prompt_emenda, contexto="destaque_emenda_pdf")
+                    texto_resp, fonte = ia_chain(prompt_emenda, max_tokens=512, contexto="destaque_emenda_pdf")
                     aviso = '<p><em style="color:#cc6600;">⚠️ Analisado via fallback IA.</em></p><br>' if fonte != 'groq' else ''
                     return jsonify({'resumo': aviso + texto_resp, 'doc_usado': tipo_doc})
             except Exception as e:
@@ -3535,7 +3468,7 @@ Gere análise HTML específica para a **Emenda nº {num_emenda_desc}** ({numero}
 Não use ### ou ** fora do HTML. Não repita análise de outras emendas."""
 
             try:
-                    texto_resp, fonte = ia_chain(prompt_emenda, contexto="destaque_emenda_sem_pdf")
+                    texto_resp, fonte = ia_chain(prompt_emenda, max_tokens=600, contexto="destaque_emenda_sem_pdf")
                     aviso = '<p><em style="color:#cc6600;">⚠️ Analisado via fallback IA.</em></p><br>' if fonte != 'groq' else ''
                     return jsonify({'resumo': aviso + texto_resp, 'doc_usado': tipo_doc})
             except Exception as e:
@@ -3643,7 +3576,7 @@ Gere a análise em HTML com EXATAMENTE este formato:
 Não use ### ou ** fora do HTML."""
 
     try:
-        texto, fonte = ia_chain(prompt, contexto="destaque_normal")
+        texto, fonte = ia_chain(prompt, max_tokens=512, contexto="destaque_normal")
         aviso = '<p><em style="color:#cc6600;">⚠️ Analisado via fallback IA.</em></p><br>' if fonte != 'groq' else ''
         return jsonify({'resumo': aviso + texto, 'doc_usado': tipo_doc})
     except Exception as e:
@@ -4175,7 +4108,7 @@ def buscar_imagem_item():
     if gemini_key and not keywords:
         try:
             r = requests.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/" + detectar_modelo_gemini(gemini_key) + ":generateContent?key=" + gemini_key,
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + gemini_key,
                 headers={"Content-Type": "application/json"},
                 json={"contents": [{"parts": [{"text": prompt_kw}]}],
                       "generationConfig": {"maxOutputTokens": 20, "temperature": 0.1}},
@@ -4282,8 +4215,32 @@ def resumo_ementa_impl(data):
             # ("Projeto de Lei Complementar nº 221, de 2024")
             sigla_ref = num_ref = ano_ref = ''
 
+            def _extrair_pl_ref(texto):
+                """Extrai (sigla, numero, ano) do PL referenciado no texto."""
+                padroes = [
+                    # Sigla curta: PLP 221/2024 ou PL nº 221, de 2024
+                    (r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 3),
+                    (r'\b(PLP|PLC|PEC|MPV|PDL|PL)\s+([\d.]+)[/\-](\d{4})', 3),
+                    # Texto por extenso com sigla inferida
+                    (r'Projeto\s+de\s+Lei\s+Complementar\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PLP'),
+                    (r'Proposta\s+de\s+Emenda\s+[AÀ]\s+Constitui[cç][aã]o\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PEC'),
+                    (r'Medida\s+Provis[oó]ria\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'MPV'),
+                    (r'Projeto\s+de\s+Decreto\s+Legislativo\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PDL'),
+                    (r'Projeto\s+de\s+Lei\s+n[º°.]?\s*([\d.]+)[,\s/]+(?:de\s+)?(\d{4})', 2, 'PL'),
+                ]
+                for item in padroes:
+                    padrao, n_grupos = item[0], item[1]
+                    sigla_fixa = item[2] if len(item) > 2 else None
+                    m = re.search(padrao, texto, re.IGNORECASE)
+                    if m:
+                        if n_grupos == 3:
+                            return m.group(1).upper(), m.group(2).replace('.',''), m.group(3)
+                        else:
+                            return sigla_fixa, m.group(1).replace('.',''), m.group(2)
+                return '', '', ''
+
             for txt in [ementa_completa, projeto]:
-                sigla_ref, num_ref, ano_ref = _extrair_sigla_num_ano(txt)
+                sigla_ref, num_ref, ano_ref = _extrair_pl_ref(txt)
                 if sigla_ref and num_ref and ano_ref:
                     logger.info(f"REQ {id_principal}: PL extraído de '{txt[:60]}' → {sigla_ref} {num_ref}/{ano_ref}")
                     break
@@ -4361,7 +4318,7 @@ def resumo_ementa_impl(data):
 
     if contexto_pl and eh_req:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo PRÓPRIO do que este REQUERIMENTO pede em UMA linha (máximo 120 caracteres). Seja direto e objetivo.
+Gere um resumo PRÓPRIO (máximo 2-3 linhas, máximo 180 caracteres) do que este REQUERIMENTO pede.
 NÃO copie a ementa. Escreva com suas próprias palavras.
 - Se for urgência: comece com "Urgência para o PL que (explique o PL em poucas palavras)"
 - Se for adiamento/retirada: comece com "Adiamento/Retirada do PL que..."
@@ -4373,7 +4330,7 @@ Ementa: {ementa}{contexto_pl}
 Responda APENAS com o resumo, sem introdução, sem aspas."""
     else:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo PRÓPRIO do que esta proposição trata na prática em UMA linha (máximo 120 caracteres). Seja direto e objetivo.
+Gere um resumo PRÓPRIO (máximo 2-3 linhas, máximo 180 caracteres) do que esta proposição trata na prática.
 NÃO copie a ementa. Escreva com suas próprias palavras, de forma simples e direta.
 - Explique o efeito prático para o cidadão ou para o parlamento
 - Não repita o número da proposição
@@ -4386,7 +4343,7 @@ Responda APENAS com o resumo, sem introdução, sem aspas."""
 
     # Usa ia_chain: Groq → Cloudflare → Gemini
     try:
-        texto, fonte = ia_chain(prompt, max_tokens=80, temperatura=0.4, contexto="resumo_ementa")
+        texto, fonte = ia_chain(prompt, max_tokens=120, temperatura=0.4, contexto="resumo_ementa")
         texto = texto.strip()
         # Rejeita se for igual ou muito similar à ementa
         ementa_norm = re.sub(r'\s+', ' ', ementa.strip().lower())
@@ -4440,7 +4397,7 @@ def enriquecer_ementa():
                 pass
 
             if ementa_pl:
-                prompt = f"""Você é um especialista legislativo. Explique em UMA frase direta o objeto deste requerimento para os parlamentares.
+                prompt = f"""Você é um especialista legislativo. Explique em UMA frase direta (máx 20 palavras) o objeto deste requerimento para os parlamentares.
 
 Requerimento: {projeto}
 Ementa do requerimento: {ementa}
@@ -4488,7 +4445,7 @@ Responda APENAS com a frase, sem introdução, sem aspas, sem ponto final."""
     if not ementa_e_vaga(ementa):
         return jsonify({'ementa_enriquecida': ementa, 'complemento': ''})
 
-    prompt = f"""Você é um especialista legislativo. Em UMA frase direta, explique de forma simples o que esta proposição trata na prática para os cidadãos.
+    prompt = f"""Você é um especialista legislativo. Em UMA frase direta (máximo 20 palavras), explique de forma simples o que esta proposição trata na prática para os cidadãos.
 Não repita o número da lei. Use linguagem clara e objetiva.
 
 Proposição: {projeto}
@@ -4519,7 +4476,7 @@ def complementar_ementa():
     if not groq_key:
         return jsonify({'complemento': ementa})
 
-    prompt = f"""Você é um especialista legislativo. Sobre a proposição abaixo, escreva em UMA frase direta o que ela trata, de forma clara para leigos.
+    prompt = f"""Você é um especialista legislativo. Sobre a proposição abaixo, escreva em UMA frase direta (máximo 30 palavras) o que ela trata, de forma clara para leigos.
 Se a ementa já for clara, retorne ela resumida.
 
 Proposição: {projeto}
@@ -4675,573 +4632,6 @@ def delete_usuario(user_id):
         logger.error(f"Erro delete_usuario: {e}")
         return jsonify({'error': str(e)}), 500
 
-
-
-@app.route('/extra_pauta/<int:evento_id>', methods=['GET'])
-@login_required
-def listar_extra_pauta(evento_id):
-    """Lista todas as proposições extra pauta de um evento."""
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        c.execute('''CREATE TABLE IF NOT EXISTS extra_pauta (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            evento_id INTEGER NOT NULL,
-            id_proposicao TEXT NOT NULL,
-            projeto TEXT, ementa TEXT, autor TEXT, relator TEXT,
-            created_by TEXT, created_at TEXT,
-            UNIQUE(evento_id, id_proposicao))''')
-        c.execute('SELECT id_proposicao, projeto, ementa, autor, relator, created_by, created_at FROM extra_pauta WHERE evento_id=? ORDER BY created_at', (evento_id,))
-        rows = c.fetchall()
-        return jsonify([{
-            'id_principal': r[0], 'projeto': r[1], 'ementa': r[2],
-            'autor': r[3], 'relator': r[4],
-            'created_by': r[5], 'created_at': r[6], 'eh_extra_pauta': True,
-        } for r in rows])
-    except Exception as e:
-        logger.error(f'listar_extra_pauta: {e}')
-        return jsonify([])
-    finally:
-        conn.close()
-
-
-@app.route('/extra_pauta/<int:evento_id>', methods=['POST'])
-@login_required
-def salvar_extra_pauta(evento_id):
-    """Salva (ou atualiza) uma proposição extra pauta."""
-    data = request.get_json()
-    id_prop = str(data.get('id_principal', ''))
-    if not id_prop:
-        return jsonify({'error': 'id_principal obrigatório'}), 400
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        c.execute('''CREATE TABLE IF NOT EXISTS extra_pauta (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            evento_id INTEGER NOT NULL,
-            id_proposicao TEXT NOT NULL,
-            projeto TEXT, ementa TEXT, autor TEXT, relator TEXT,
-            created_by TEXT, created_at TEXT,
-            UNIQUE(evento_id, id_proposicao))''')
-        now_str = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
-        if USE_POSTGRES:
-            c.execute('''INSERT INTO extra_pauta (evento_id, id_proposicao, projeto, ementa, autor, relator, created_by, created_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (evento_id, id_proposicao) DO UPDATE SET
-                  projeto=EXCLUDED.projeto, ementa=EXCLUDED.ementa,
-                  autor=EXCLUDED.autor, relator=EXCLUDED.relator''',
-                (evento_id, id_prop, data.get('projeto',''), data.get('ementa',''),
-                 data.get('autor',''), data.get('relator',''),
-                 current_user.display_name(), now_str))
-        else:
-            c.execute('''INSERT OR REPLACE INTO extra_pauta
-                (evento_id, id_proposicao, projeto, ementa, autor, relator, created_by, created_at)
-                VALUES (?,?,?,?,?,?,?,?)''',
-                (evento_id, id_prop, data.get('projeto',''), data.get('ementa',''),
-                 data.get('autor',''), data.get('relator',''),
-                 current_user.display_name(), now_str))
-        conn.commit()
-        return jsonify({'ok': True, 'created_at': now_str})
-    except Exception as e:
-        logger.error(f'salvar_extra_pauta: {e}')
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conn.close()
-
-
-@app.route('/extra_pauta/<int:evento_id>/<id_proposicao>', methods=['DELETE'])
-@login_required
-def excluir_extra_pauta(evento_id, id_proposicao):
-    """Remove uma proposição extra pauta."""
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        c.execute('DELETE FROM extra_pauta WHERE evento_id=? AND id_proposicao=?', (evento_id, id_proposicao))
-        conn.commit()
-        return jsonify({'ok': True})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conn.close()
-
-
-
-@app.route('/nota_proposicao/<id_proposicao>', methods=['GET'])
-@login_required
-def get_nota_proposicao(id_proposicao):
-    """Busca a nota técnica salva de uma proposição, por id_principal.
-    Tenta também ids de REQs de urgência relacionados ao mesmo PL."""
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        # Busca direta pelo id
-        prop_key = f"PROP_{id_proposicao}"
-        c.execute(
-            "SELECT resumo_materia, orientacao, saved_by, saved_at FROM notas "
-            "WHERE item_key=? AND (resumo_materia IS NOT NULL AND resumo_materia != '') "
-            "ORDER BY saved_at DESC LIMIT 1",
-            (prop_key,)
-        )
-        row = c.fetchone()
-        if row:
-            return jsonify({
-                'found': True,
-                'resumo': row[0], 'orientacao': row[1],
-                'saved_by': row[2], 'saved_at': row[3],
-                'fonte': 'banco'
-            })
-
-        # Não encontrou — retorna not found (sem erro)
-        return jsonify({'found': False})
-    except Exception as e:
-        logger.error(f'get_nota_proposicao: {e}')
-        return jsonify({'found': False, 'error': str(e)})
-    finally:
-        conn.close()
-
-
-@app.route('/notas_por_proposicao/<id_proposicao>', methods=['GET'])
-@login_required
-def notas_por_proposicao(id_proposicao):
-    """Busca nota de um PL E de REQs de urgência relacionados, em qualquer evento.
-    Query params opcionais: projeto (ex: PL 1234/2023), numero, ano, sigla."""
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        prop_key = f"PROP_{id_proposicao}"
-
-        # 1. Busca direta pela chave PROP_{id} em TODOS os eventos
-        c.execute(
-            "SELECT n.resumo_materia, n.orientacao, n.saved_by, n.saved_at, n.evento_id "
-            "FROM notas n "
-            "WHERE n.item_key = ? "
-            "AND n.resumo_materia IS NOT NULL AND TRIM(n.resumo_materia) != '' "
-            "ORDER BY n.saved_at DESC LIMIT 5",
-            (prop_key,)
-        )
-        rows = c.fetchall()
-        resultado = [{'resumo': r[0], 'orientacao': r[1], 'saved_by': r[2],
-                      'saved_at': r[3], 'tipo': 'nota_direta'} for r in rows]
-
-        # 2. Fallback: LIKE no item_key (cobre variações int/str do id)
-        if not resultado:
-            c.execute(
-                "SELECT n.resumo_materia, n.orientacao, n.saved_by, n.saved_at "
-                "FROM notas n "
-                "WHERE n.item_key LIKE ? "
-                "AND n.resumo_materia IS NOT NULL AND TRIM(n.resumo_materia) != '' "
-                "ORDER BY n.saved_at DESC LIMIT 5",
-                (f'%{id_proposicao}%',)
-            )
-            rows2 = c.fetchall()
-            resultado = [{'resumo': r[0], 'orientacao': r[1], 'saved_by': r[2],
-                          'saved_at': r[3], 'tipo': 'nota_like'} for r in rows2]
-
-        # 3. REQs de urgência: busca notas de outros itens que mencionam este id
-        #    A nota do REQ pode referenciar o PL no texto, então buscamos pelo id E pelo nome
-        if not resultado:
-            c.execute(
-                "SELECT n.resumo_materia, n.orientacao, n.saved_by, n.saved_at "
-                "FROM notas n "
-                "WHERE (n.resumo_materia LIKE ? OR n.resumo_parecer LIKE ?) "
-                "AND n.resumo_materia IS NOT NULL AND TRIM(n.resumo_materia) != '' "
-                "ORDER BY n.saved_at DESC LIMIT 3",
-                (f'%{id_proposicao}%', f'%{id_proposicao}%')
-            )
-            rows3 = c.fetchall()
-            resultado += [{'resumo': r[0], 'orientacao': r[1], 'saved_by': r[2],
-                           'saved_at': r[3], 'tipo': 'nota_req'} for r in rows3]
-
-        # 4. Busca REQs de urgência via pauta_cache_db
-        #    Estratégia: varre itens da pauta buscando REQs cujo campo ementa/projeto
-        #    menciona o numero+ano do PL buscado, obtém o id_principal do REQ
-        #    e busca a nota desse REQ no banco.
-        #    Também aceita nome do projeto via query param (ex: ?projeto=PL+1234/2023)
-        projeto_nome = request.args.get('projeto', '')  # ex: "PL 1234/2023"
-        numero_pl    = request.args.get('numero', '')
-        ano_pl       = request.args.get('ano', '')
-
-        if not resultado:
-            try:
-                import json as _json
-                c.execute(
-                    "SELECT json_pauta FROM pauta_cache_db ORDER BY last_updated DESC LIMIT 30"
-                )
-                ids_req_candidatos = []
-                _ids_verificados_api = set()
-                for (jp,) in c.fetchall():
-                    if not jp: continue
-                    try:
-                        itens = _json.loads(jp) if isinstance(jp, str) else jp
-                    except Exception:
-                        continue
-                    if not isinstance(itens, list): continue
-                    for it in itens:
-                        ref_id  = str(it.get('id_principal') or '')
-                        ementa  = str(it.get('ementa') or '')
-                        projeto = str(it.get('projeto_original') or it.get('projeto') or '')
-
-                        if ref_id == str(id_proposicao):
-                            continue  # é o próprio PL, não o REQ
-
-                        # Condições de match: id do PL na ementa/projeto do REQ
-                        # OU nome do projeto na ementa do REQ
-                        # OU numero+ano na ementa do REQ
-                        match = False
-                        if str(id_proposicao) in ementa:
-                            match = True
-                        if projeto_nome and projeto_nome in ementa:
-                            match = True
-                        if numero_pl and ano_pl:
-                            if numero_pl in ementa and ano_pl in ementa:
-                                match = True
-                        # REQ de urgência: projeto começa com REQ/RQS/RQU
-                        eh_req = bool(re.match(r'^REQ|^RQS|^RQU|^REC', projeto, re.I))
-                        if match and eh_req and ref_id and ref_id not in ids_req_candidatos:
-                            ids_req_candidatos.append(ref_id)
-
-                        # REQ sem referência explícita ao PL na ementa:
-                        # verifica via API /relacionadas se este REQ aponta para o PL buscado
-                        if eh_req and not match and ref_id and ref_id not in ids_req_candidatos:
-                            _ids_verificados_api.add(ref_id)
-
-                # Busca notas para cada REQ candidato
-                for req_id in ids_req_candidatos[:5]:
-                    req_key = f"PROP_{req_id}"
-                    c.execute(
-                        "SELECT resumo_materia, orientacao, saved_by, saved_at FROM notas "
-                        "WHERE item_key=? AND resumo_materia IS NOT NULL AND TRIM(resumo_materia) != '' "
-                        "ORDER BY saved_at DESC LIMIT 1",
-                        (req_key,)
-                    )
-                    row_req = c.fetchone()
-                    if row_req:
-                        resultado.append({
-                            'resumo': row_req[0], 'orientacao': row_req[1],
-                            'saved_by': row_req[2], 'saved_at': row_req[3],
-                            'tipo': 'nota_req_pauta'
-                        })
-                # Para REQs sem referência explícita na ementa,
-                # consulta a API da Câmara /proposicoes/{id_req}/relacionadas
-                for req_id_check in list(_ids_verificados_api)[:10]:
-                    if req_id_check in ids_req_candidatos:
-                        continue
-                    try:
-                        r_rel = requests.get(
-                            f'https://dadosabertos.camara.leg.br/api/v2/proposicoes/{req_id_check}/relacionadas',
-                            headers={'Accept': 'application/json'}, timeout=5
-                        )
-                        if r_rel.ok:
-                            for rel in (r_rel.json().get('dados') or []):
-                                if str(rel.get('id')) == str(id_proposicao):
-                                    ids_req_candidatos.append(req_id_check)
-                                    break
-                    except Exception:
-                        pass
-
-                if ids_req_candidatos:
-                    logger.info(f'notas_por_proposicao: REQ candidatos para {id_proposicao}: {ids_req_candidatos}')
-            except Exception as _e:
-                logger.warning(f'Busca REQ via pauta_cache_db falhou: {_e}')
-
-        # Debug: mostra TODAS as chaves quando não achar
-        try:
-            c.execute("SELECT COUNT(*) FROM notas WHERE item_key LIKE 'PROP_%'")
-            total = c.fetchone()[0]
-            c.execute("SELECT item_key, saved_at FROM notas WHERE item_key LIKE ? ORDER BY saved_at DESC LIMIT 5",
-                      (f'%{id_proposicao}%',))
-            matches = c.fetchall()
-            if not resultado and not matches:
-                # Mostra TODAS as chaves para diagnóstico
-                c.execute("SELECT item_key FROM notas WHERE item_key LIKE 'PROP_%' ORDER BY saved_at DESC")
-                todas = [r[0] for r in c.fetchall()]
-                logger.info(f'notas_por_proposicao id={id_proposicao}: NÃO ENCONTRADO. '
-                            f'Todas as {total} chaves: {todas}')
-            else:
-                logger.info(f'notas_por_proposicao id={id_proposicao}: {len(resultado)} nota(s). '
-                            f'Matches: {matches}')
-        except Exception as _de:
-            logger.info(f'notas_por_proposicao id={id_proposicao}: {len(resultado)} nota(s). debug_err={_de}')
-        return jsonify({'found': bool(resultado), 'notas': resultado})
-    except Exception as e:
-        logger.error(f'notas_por_proposicao: {e}')
-        return jsonify({'found': False, 'notas': [], 'error': str(e)})
-    finally:
-        conn.close()
-
-
-
-@app.route('/buscar_proposicao', methods=['GET'])
-@login_required
-def buscar_proposicao():
-    """Busca proposição na API da Câmara com fallbacks.
-    Params: sigla, numero, ano
-    Tenta: busca exata → busca sem sigla → busca por número próximo"""
-    sigla  = request.args.get('sigla', 'PL').upper().strip()
-    numero = request.args.get('numero', '').strip()
-    ano    = request.args.get('ano', '').strip()
-
-    if not numero or not ano:
-        return jsonify({'found': False, 'error': 'número e ano obrigatórios'}), 400
-
-    import requests as _req
-
-    def _buscar(sig, num, an):
-        url = (f'https://dadosabertos.camara.leg.br/api/v2/proposicoes'
-               f'?siglaTipo={sig}&numero={num}&ano={an}&itens=1')
-        r = _req.get(url, headers={'Accept': 'application/json'}, timeout=10)
-        if r.ok:
-            dados = r.json().get('dados', [])
-            if dados:
-                return dados[0]
-        return None
-
-    prop = None
-
-    # 1. Busca exata
-    prop = _buscar(sigla, numero, ano)
-
-    # 2. Tenta siglas alternativas comuns
-    if not prop:
-        for sig_alt in ['PL', 'PLP', 'PEC', 'MPV', 'PDL', 'PLC']:
-            if sig_alt == sigla:
-                continue
-            prop = _buscar(sig_alt, numero, ano)
-            if prop:
-                break
-
-    # 3. Busca pelo número na pauta_cache_db (o número na pauta pode ser diferente da API)
-    if not prop:
-        try:
-            import json as _json
-            conn = get_conn()
-            c = conn.cursor()
-            c.execute("SELECT json_pauta FROM pauta_cache_db ORDER BY last_updated DESC LIMIT 10")
-            for (jp,) in c.fetchall():
-                if not jp: continue
-                itens = _json.loads(jp) if isinstance(jp, str) else jp
-                if not isinstance(itens, list): continue
-                for it in itens:
-                    proj = str(it.get('projeto', '') or it.get('projeto_original', ''))
-                    # Verifica se o número e ano batem
-                    if numero in proj and ano in proj:
-                        id_p = it.get('id_principal')
-                        if id_p:
-                            r2 = _req.get(
-                                f'https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_p}',
-                                headers={'Accept': 'application/json'}, timeout=10
-                            )
-                            if r2.ok:
-                                prop = r2.json().get('dados')
-                                if prop:
-                                    break
-                if prop:
-                    break
-            conn.close()
-        except Exception as _e:
-            logger.warning(f'buscar_proposicao fallback pauta_cache: {_e}')
-
-    if not prop:
-        return jsonify({'found': False, 'error': f'{sigla} {numero}/{ano} não encontrado'})
-
-    # Busca autores
-    autor = 'N/D'
-    try:
-        ra = _req.get(
-            f'https://dadosabertos.camara.leg.br/api/v2/proposicoes/{prop["id"]}/autores',
-            headers={'Accept': 'application/json'}, timeout=8
-        )
-        if ra.ok:
-            autores = ra.json().get('dados', [])
-            autor = ', '.join(a['nome'] for a in autores[:2])
-            if len(autores) > 2: autor += ' e outros'
-    except Exception:
-        pass
-
-    # Busca relator (última tramitação com "Relator")
-    relator = 'Não atribuído'
-    try:
-        rt = _req.get(
-            f'https://dadosabertos.camara.leg.br/api/v2/proposicoes/{prop["id"]}/tramitacoes?itens=20&ordem=DESC',
-            headers={'Accept': 'application/json'}, timeout=8
-        )
-        if rt.ok:
-            for t in rt.json().get('dados', []):
-                despacho = t.get('despacho', '') or ''
-                if 'relator' in despacho.lower():
-                    m = re.search(r'Dep\.?\s+\w+(?:\s+\w+)?', despacho)
-                    if m: relator = m.group(0); break
-    except Exception:
-        pass
-
-    status = (prop.get('statusProposicao') or {})
-    return jsonify({
-        'found': True,
-        'id': str(prop['id']),
-        'projeto': f"{prop.get('siglaTipo','?')} {prop.get('numero','?')}/{prop.get('ano','?')}",
-        'sigla': prop.get('siglaTipo', sigla),
-        'numero': str(prop.get('numero', numero)),
-        'ano': str(prop.get('ano', ano)),
-        'ementa': prop.get('ementa', ''),
-        'autor': autor,
-        'relator': relator,
-        'situacao': status.get('descricaoSituacao', 'N/D'),
-    })
-
-
-
-@app.route('/diagnostico_prop/<numero>/<ano>', methods=['GET'])
-@login_required
-def diagnostico_prop(numero, ano):
-    """Diagnóstico: encontra o id_principal de uma proposição no pauta_cache_db
-    buscando pelo número e ano. Útil quando o id da API difere do id salvo."""
-    import json as _json
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        c.execute("SELECT json_pauta, last_updated FROM pauta_cache_db ORDER BY last_updated DESC LIMIT 30")
-        achados = []
-        for (jp, lu) in c.fetchall():
-            if not jp: continue
-            try:
-                itens = _json.loads(jp) if isinstance(jp, str) else jp
-            except Exception:
-                continue
-            if not isinstance(itens, list): continue
-            for it in itens:
-                proj = str(it.get('projeto', '') or it.get('projeto_original', ''))
-                if numero in proj and ano in proj:
-                    id_p = str(it.get('id_principal', ''))
-                    # Verifica se tem nota salva
-                    c.execute("SELECT saved_at, saved_by FROM notas WHERE item_key=? AND resumo_materia IS NOT NULL AND TRIM(resumo_materia)!=''",
-                              (f'PROP_{id_p}',))
-                    nota = c.fetchone()
-                    achados.append({
-                        'id_principal': id_p,
-                        'projeto': proj,
-                        'pauta_date': lu,
-                        'tem_nota': bool(nota),
-                        'nota_salva_em': nota[0] if nota else None,
-                        'nota_salva_por': nota[1] if nota else None,
-                    })
-        return jsonify({'numero': numero, 'ano': ano, 'achados': achados})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conn.close()
-
-
-
-@app.route('/manifest.json')
-def pwa_manifest():
-    import json as _json
-    manifest = {
-        "name": "Pauta Plenário",
-        "short_name": "Pauta",
-        "description": "Assessoria legislativa — Câmara dos Deputados",
-        "start_url": "/login",
-        "scope": "/",
-        "display": "standalone",
-        
-        "background_color": "#0A1628",
-        "theme_color": "#0A1628",
-        "orientation": "portrait-primary",
-        "lang": "pt-BR",
-        "prefer_related_applications": False,
-        "icons": [
-            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
-            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable"},
-            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
-            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
-        ],
-        "screenshots": [
-            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "form_factor": "narrow"}
-        ]
-    }
-    from flask import Response
-    resp = Response(_json.dumps(manifest), mimetype='application/manifest+json')
-    resp.headers['Cache-Control'] = 'no-cache'
-    return resp
-
-
-@app.route('/sw.js')
-def pwa_sw():
-    sw_code = """
-const CACHE = 'pauta-v3';
-const OFFLINE_URL = '/offline.html';
-
-self.addEventListener('install', e => {
-  e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll([OFFLINE_URL, '/static/icon-192.png', '/static/icon-512.png']))
-  );
-  self.skipWaiting();
-});
-
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    )
-  );
-  self.clients.claim();
-});
-
-self.addEventListener('fetch', e => {
-  if (e.request.method !== 'GET') return;
-  e.respondWith(
-    fetch(e.request).catch(() =>
-      caches.match(e.request).then(r => r || caches.match(OFFLINE_URL))
-    )
-  );
-});
-"""
-    from flask import Response
-    resp = Response(sw_code, mimetype='application/javascript')
-    resp.headers['Service-Worker-Allowed'] = '/'
-    resp.headers['Cache-Control'] = 'no-cache'
-    return resp
-
-
-
-@app.route('/static/icon-<size>.png')
-def pwa_icon(size):
-    import os
-    from flask import send_from_directory, abort
-    static_dir = os.path.join(os.path.dirname(__file__), 'static')
-    fname = f'icon-{size}.png'
-    fpath = os.path.join(static_dir, fname)
-    if os.path.exists(fpath):
-        return send_from_directory(static_dir, fname, mimetype='image/png')
-    abort(404)
-
-
-
-@app.route('/favicon.ico')
-def favicon():
-    import os
-    from flask import send_from_directory, Response
-    static_dir = os.path.join(os.path.dirname(__file__), 'static')
-    fpath = os.path.join(static_dir, 'icon-192.png')
-    if os.path.exists(fpath):
-        return send_from_directory(static_dir, 'icon-192.png', mimetype='image/png')
-    # Retorna PNG 1x1 transparente como fallback
-    import base64
-    px = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==')
-    return Response(px, mimetype='image/png')
-
-
-
-@app.route('/offline.html')
-def offline():
-    from flask import Response
-    return Response("""<!DOCTYPE html><html><head><meta charset=UTF-8>
-<meta name=viewport content="width=device-width,initial-scale=1">
-<title>Pauta — Offline</title>
-<style>body{font-family:Arial,sans-serif;background:#0A1628;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;}
-h1{color:#E9B847;}p{opacity:.7;}</style></head>
-<body><div><h1>Pauta Plenário</h1><p>Sem conexão. Conecte-se para acessar.</p></div></body></html>""",
-    mimetype='text/html')
-
 @app.errorhandler(500)
 def handle_500(e):
     logger.error(f"500 error: {e}")
@@ -5289,702 +4679,6 @@ def diagnostico():
     finally:
         conn.close()
     return jsonify(resultado)
-
-
-
-@app.route('/gerar_banner_proposicao', methods=['POST'])
-@login_required
-def gerar_banner_proposicao():
-    """Gera banner HTML estilo panfleto jornalistico — layout fiel ao modelo de referencia."""
-    import base64 as _b64
-    from datetime import datetime as _dt
-
-    proposicao   = request.form.get('proposicao', '')
-    ementa       = request.form.get('ementa', '')
-    autor        = request.form.get('autor', '')
-    relator      = request.form.get('relator', '')
-    regime       = request.form.get('regime', 'Ordinario')
-    comissoes    = request.form.get('comissoes', 'Plenario')
-    orientacao   = request.form.get('orientacao', 'SIM')
-    nota_tecnica = request.form.get('nota_tecnica', '')
-    resumo_extra = request.form.get('resumo_extra', '')
-
-    # Imagem de fundo do cabecalho — guarda base64+mime separados para usar via <img> real
-    # (CSS background com data URL longa falha silenciosamente no html2canvas)
-    imagem_b64 = ''
-    imagem_mime = ''
-    if 'imagem' in request.files:
-        f = request.files['imagem']
-        if f and f.filename:
-            raw  = f.read()
-            ext  = f.filename.rsplit('.', 1)[-1].lower()
-            imagem_mime = {'jpg':'image/jpeg','jpeg':'image/jpeg','png':'image/png','webp':'image/webp'}.get(ext,'image/jpeg')
-            imagem_b64  = _b64.b64encode(raw).decode('utf-8')
-
-    def _logo(nome):
-        try:
-            with open(os.path.join(app.root_path, 'static', nome), 'rb') as fh:
-                return 'data:image/png;base64,' + _b64.b64encode(fh.read()).decode('utf-8')
-        except Exception:
-            return ''
-
-    logo_min = _logo('logo_minoria.png')
-    logo_opo = _logo('logo_oposicao.png')
-
-    # Cores por orientacao
-    ORI_CFG = {
-        'SIM':        {'cor':'#1B6B3A','txt':'#fff','label':'SIM',        'emoji':'&#9989;'},
-        'NAO':        {'cor':'#C9111E','txt':'#fff','label':'NAO',        'emoji':'&#10060;'},
-        'NÃO':        {'cor':'#C9111E','txt':'#fff','label':'NÃO',        'emoji':'&#10060;'},
-        'NEGOCIACAO': {'cor':'#D4A017','txt':'#1a1a1a','label':'NEGOCIAÇÃO','emoji':'&#129309;'},
-        'NEGOCIAÇÃO': {'cor':'#D4A017','txt':'#1a1a1a','label':'NEGOCIAÇÃO','emoji':'&#129309;'},
-        'LIBERADO':   {'cor':'#0B5394','txt':'#fff','label':'LIBERADO',   'emoji':'&#128275;'},
-        'OBSTRUCAO':  {'cor':'#C9111E','txt':'#fff','label':'OBSTRUÇÃO',  'emoji':'&#128683;'},
-        'OBSTRUÇÃO':  {'cor':'#C9111E','txt':'#fff','label':'OBSTRUÇÃO',  'emoji':'&#128683;'},
-        'ABSTENCAO':  {'cor':'#555555','txt':'#fff','label':'ABSTENÇÃO',  'emoji':'&#8866;'},
-        'ABSTENÇÃO':  {'cor':'#555555','txt':'#fff','label':'ABSTENÇÃO',  'emoji':'&#8866;'},
-    }
-    cfg = ORI_CFG.get(orientacao.upper(), {'cor':'#1B6B3A','txt':'#fff','label':orientacao.upper(),'emoji':'&#128203;'})
-    ORI_COR   = cfg['cor']
-    ORI_TXT   = cfg['txt']
-    ORI_LABEL = cfg['label']
-    ORI_EMOJI = cfg['emoji']
-
-    # Prompt IA
-    ctx = ''
-    if nota_tecnica and len(nota_tecnica.strip()) > 40:
-        ctx += '\n\nNOTA TECNICA:\n' + nota_tecnica[:4000]
-    if resumo_extra:
-        ctx += '\n\nCONTEXTO ADICIONAL:\n' + resumo_extra
-
-    prompt = (
-        'Voce e um assessor legislativo senior da Oposicao e Minoria na Camara dos Deputados, '
-        'com perfil ideologico conservador: defende liberalismo economico, pautas de seguranca '
-        'publica e combate ao crime, e costuma se posicionar contra agendas progressistas.\n\n'
-        'PROPOSICAO: ' + proposicao + '\nEMENTA: ' + ementa + '\nAUTOR: ' + autor + '\n'
-        'RELATOR: ' + relator + '\nREGIME: ' + regime + '\nCOMISSOES: ' + comissoes + '\nORIENTACAO: ' + orientacao + ctx + '\n\n'
-        'Gere APENAS um JSON valido, sem markdown:\n'
-        '{\n'
-        '  "titulo_curto": "(sigla+numero+ano, ex: PL 1838/2026, max 18 chars)",\n'
-        '  "subtitulo": "(frase de impacto em MAIUSCULAS, max 8 palavras)",\n'
-        '  "descricao_curta": "(1 frase clara do que o projeto faz, max 120 chars)",\n'
-        '  "dado_chave_label": "(label do dado mais impactante, ex: JORNADA MAXIMA, max 20 chars)",\n'
-        '  "dado_chave_valor": "(valor do dado, ex: 40 HORAS SEMANAIS, max 25 chars)",\n'
-        '  "dado_chave_detalhe": "(complemento, ex: 2 DESCANSOS SEMANAIS REMUNERADOS, max 35 chars)",\n'
-        '  "resumo_executivo": "(3-4 frases claras, max 200 palavras)",\n'
-        '  "o_que_preve": [\n'
-        '    {"texto": "descricao completa do item, 1-2 frases"},\n'
-        '    {"texto": "..."},\n'
-        '    {"texto": "..."},\n'
-        '    {"texto": "..."},\n'
-        '    {"texto": "..."}\n'
-        '  ],\n'
-        '  "criticas": [\n'
-        '    {"titulo": "Critica 1", "detalhe": "explicacao 1-2 frases"},\n'
-        '    {"titulo": "Critica 2", "detalhe": "explicacao 1-2 frases"},\n'
-        '    {"titulo": "Critica 3", "detalhe": "explicacao 1-2 frases"},\n'
-        '    {"titulo": "Critica 4", "detalhe": "explicacao 1-2 frases"},\n'
-        '    {"titulo": "Critica 5", "detalhe": "explicacao 1-2 frases"}\n'
-        '  ],\n'
-        '  "justificativa_oficial": "(3-4 frases sobre a justificativa formal, max 120 palavras)",\n'
-        '  "argumento_chave": "(discurso pronto para o deputado ler em tribuna, em PRIMEIRA PESSOA, tom firme e direto, alinhado a posicao conservadora/liberal na economia e favoravel a seguranca publica quando pertinente ao tema. OBRIGATORIO: o discurso deve ser logicamente coerente com o campo ORIENTACAO informado acima — se SIM ou LIBERADO, defenda o voto favoravel ao projeto; se NAO ou OBSTRUCAO, ataque e justifique o voto contrario ao projeto; se NEGOCIACAO ou ABSTENCAO, adote tom ponderado pedindo ajustes antes de apoiar. Nunca contradiga a orientacao informada. Comece com uma frase de impacto, max 60 palavras, sem aspas internas)",\n'
-        '  "na_pratica": ["efeito 1","efeito 2","efeito 3","efeito 4","efeito 5"]\n'
-        '}\nResponda APENAS com o JSON.'
-    )
-
-    # Gemini primeiro, depois Groq, depois Cloudflare
-    fonte = 'ia'
-    texto_ia = None
-
-    gemini_key = os.environ.get('GEMINI_API_KEY', '')
-    if gemini_key:
-        for modelo_gem in GEMINI_PREFERENCIA:
-            try:
-                url_gem = ('https://generativelanguage.googleapis.com/v1beta/models/'
-                           + modelo_gem + ':generateContent?key=' + gemini_key)
-                r_gem = requests.post(url_gem,
-                    headers={'Content-Type': 'application/json'},
-                    json={'contents':[{'parts':[{'text':prompt}]}],
-                          'generationConfig':{'maxOutputTokens':1500,'temperature':0.3}},
-                    timeout=20)
-                if r_gem.status_code == 503:
-                    import time as _t; _t.sleep(3); continue
-                if r_gem.status_code in (404, 429):
-                    continue
-                r_gem.raise_for_status()
-                texto_ia = r_gem.json()['candidates'][0]['content']['parts'][0]['text']
-                fonte = 'gemini/' + modelo_gem
-                logger.info('gerar_banner: Gemini OK — ' + modelo_gem)
-                break
-            except Exception as e:
-                logger.warning('gerar_banner: Gemini ' + modelo_gem + ' falhou — ' + str(e))
-                continue
-
-    if not texto_ia:
-        groq_key = os.environ.get('GROQ_API_KEY', '')
-        if groq_key:
-            import time as _t2
-            for _tentativa in range(2):
-                try:
-                    texto_ia = groq_post(prompt, max_tokens=1500, temperatura=0.3)
-                    fonte = 'groq'
-                    break
-                except Exception as e:
-                    logger.warning('gerar_banner: Groq falhou (tentativa ' + str(_tentativa+1) + ') — ' + str(e))
-                    if '429' in str(e) and _tentativa == 0:
-                        _t2.sleep(8)
-                        continue
-                    break
-
-    if not texto_ia:
-        try:
-            texto_ia = cloudflare_post(prompt, max_tokens=1500, temperatura=0.3)
-            fonte = 'cloudflare'
-        except Exception as e:
-            logger.warning('gerar_banner: Cloudflare falhou — ' + str(e))
-
-    if not texto_ia:
-        return jsonify({'success': False, 'error': 'Servico de IA indisponivel. Tente novamente.'}), 503
-
-    try:
-        texto_ia = re.sub(r'```(?:json)?|```', '', texto_ia).strip()
-        d = json.loads(texto_ia)
-    except json.JSONDecodeError as e:
-        logger.warning('gerar_banner: JSON invalido: ' + str(e))
-        d = {
-            'titulo_curto': proposicao[:18], 'subtitulo': ementa[:60].upper(),
-            'descricao_curta': ementa[:120], 'resumo_executivo': ementa,
-            'dado_chave_label': '', 'dado_chave_valor': '', 'dado_chave_detalhe': '',
-            'o_que_preve': [{'texto':'Consulte a ementa completa'}],
-            'criticas': [{'titulo':'Analise pendente','detalhe':'Gere novamente'}],
-            'justificativa_oficial': 'Nao disponivel.',
-            'argumento_chave': '', 'na_pratica': ['Consulte a nota tecnica'],
-        }
-
-    def _e(s):
-        return str(s or '').replace('&','&amp;').replace('<','&lt;').replace('>','&gt;').replace('"','&quot;')
-
-    # SVG ícones inline
-    def ico_check():
-        return ('<svg width="18" height="18" viewBox="0 0 18 18" fill="none">'
-                '<circle cx="9" cy="9" r="9" fill="' + ORI_COR + '"/>'
-                '<path d="M5 9.5l2.5 2.5 5.5-5.5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'
-                '</svg>')
-
-    CRITICA_ICOS = [
-        # dolar
-        '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="16" fill="#C9111E"/><text x="16" y="21" text-anchor="middle" font-size="16" fill="#fff" font-family="Arial">$</text></svg>',
-        # grafico
-        '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="16" fill="#C9111E"/><path d="M8 22l5-6 4 3 5-8" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-        # tendencia
-        '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="16" fill="#C9111E"/><path d="M8 20l4-4 3 3 7-7" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-        # grupo
-        '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="16" fill="#C9111E"/><circle cx="12" cy="13" r="3" fill="#fff"/><circle cx="20" cy="13" r="3" fill="#fff"/><path d="M6 23c0-3 3-5 6-5h8c3 0 6 2 6 5" stroke="#fff" stroke-width="2" fill="none"/></svg>',
-        # balanca
-        '<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="16" fill="#C9111E"/><rect x="15" y="8" width="2" height="14" fill="#fff"/><path d="M8 12l4 4-4 4M24 12l-4 4 4 4" stroke="#fff" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>',
-    ]
-
-    # Monta HTML dos itens "o que preve"
-    def _preve_items(itens):
-        rows = []
-        for it in (itens or []):
-            texto = it.get('texto','') if isinstance(it,dict) else str(it)
-            rows.append(
-                '<div class="preve-item">'
-                + ico_check() +
-                '<span>' + _e(texto) + '</span>'
-                '</div>'
-            )
-        return ''.join(rows)
-
-    # Monta HTML das criticas
-    def _critica_items(itens):
-        rows = []
-        for i, it in enumerate(itens or []):
-            tit = _e(it.get('titulo','') if isinstance(it,dict) else str(it))
-            det = _e(it.get('detalhe','') if isinstance(it,dict) else '')
-            ico = CRITICA_ICOS[i % len(CRITICA_ICOS)]
-            rows.append(
-                '<div class="critica-item">'
-                '<div class="critica-ico">' + ico + '</div>'
-                '<div>'
-                '<p class="critica-titulo">' + tit + '</p>'
-                '<p class="critica-detalhe">' + det + '</p>'
-                '</div>'
-                '</div>'
-            )
-        return ''.join(rows)
-
-    # Monta HTML da lista "na pratica"
-    def _pratica_items(itens):
-        rows = []
-        for it in (itens or []):
-            rows.append('<div class="pratica-item">' + ico_check() + '<span>' + _e(str(it)) + '</span></div>')
-        return ''.join(rows)
-
-    # Logos para o cabecalho
-    logos_cab = ''
-    if logo_min:
-        logos_cab += '<img src="' + logo_min + '" style="height:44px;object-fit:contain;">'
-    if logo_opo:
-        logos_cab += '<img src="' + logo_opo + '" style="height:44px;object-fit:contain;">'
-
-    # Dado-chave badge (canto direito do cabecalho)
-    dado_label  = _e(d.get('dado_chave_label',''))
-    dado_valor  = _e(d.get('dado_chave_valor',''))
-    dado_detalhe= _e(d.get('dado_chave_detalhe',''))
-    dado_block  = ''
-    if dado_label or dado_valor:
-        dado_block = (
-            '<div class="dado-chave">'
-            '<div class="dado-label">' + dado_label + '</div>'
-            '<div class="dado-valor">' + dado_valor + '</div>'
-            + ('<div class="dado-detalhe">' + dado_detalhe + '</div>' if dado_detalhe else '') +
-            '</div>'
-        )
-
-    # Cabecalho — fundo: <img> real se houver foto (mais confiavel que CSS background
-    # com data URL longa, que falha silenciosamente no html2canvas), senao gradiente escuro
-    cab_bg_color = 'background:linear-gradient(135deg,#0A1628 0%,#1B3A5C 100%);'
-    if imagem_b64:
-        cab_foto_html = ('<img src="data:' + imagem_mime + ';base64,' + imagem_b64 + '" '
-                          'style="position:absolute;top:0;left:0;width:100%;height:100%;'
-                          'object-fit:cover;object-position:center;display:block;z-index:0;">')
-    else:
-        cab_foto_html = ''
-
-    data_hoje = _dt.now().strftime('%d/%m/%Y')
-
-    # CSS
-    css = (
-        '@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Source+Sans+3:wght@400;600;700&display=swap");'
-        '*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}'
-        'body{background:#D8DCE0;display:flex;flex-direction:column;align-items:center;padding:20px;font-family:"Source Sans 3",Arial,sans-serif;}'
-        '.banner{width:794px;background:#F5F5F5;box-shadow:0 6px 32px rgba(0,0,0,.22);overflow:hidden;border-radius:8px;}'
-
-        # Cabecalho
-        '.cab{position:relative;overflow:hidden;min-height:200px;}'
-        '.cab-overlay{position:absolute;inset:0;background:rgba(10,22,40,0.62);z-index:1;}'
-        '.cab-inner{position:relative;z-index:2;padding:22px 24px 0;display:flex;flex-direction:column;gap:0;}'
-        '.cab-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}'
-        '.cab-logos{display:flex;gap:6px;align-items:center;flex-shrink:0;background:rgba(255,255,255,0.12);border-radius:6px;padding:5px 8px;}'
-        '.cab-titulo{font-family:"Barlow Condensed",sans-serif;font-size:58px;font-weight:900;color:#fff;line-height:.92;letter-spacing:0;margin-top:8px;}'
-        '.cab-subtitulo{font-family:"Barlow Condensed",sans-serif;font-size:20px;font-weight:800;color:' + ORI_COR + ';text-transform:uppercase;letter-spacing:.5px;margin:6px 0 4px;line-height:1.1;}'
-        '.cab-desc{font-size:13px;color:rgba(255,255,255,.85);line-height:1.5;margin-bottom:16px;max-width:480px;}'
-
-        # Dado-chave badge
-        '.dado-chave{flex-shrink:0;background:rgba(15,30,55,0.85);border:2px solid ' + ORI_COR + ';border-radius:8px;padding:10px 14px;text-align:center;min-width:130px;}'
-        '.dado-label{font-size:8.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.6);margin-bottom:4px;}'
-        '.dado-valor{font-family:"Barlow Condensed",sans-serif;font-size:22px;font-weight:900;color:#fff;line-height:1;}'
-        '.dado-detalhe{font-size:8px;font-weight:700;color:rgba(255,255,255,.7);text-transform:uppercase;letter-spacing:1px;margin-top:4px;line-height:1.2;}'
-
-        # Meta bar (autor/regime/comissoes/relator)
-        '.meta-bar{display:grid;grid-template-columns:repeat(4,1fr);background:#fff;border-bottom:2px solid #E0E0E0;}'
-        '.mc{display:flex;align-items:center;gap:10px;padding:12px 14px;border-right:1px solid #E8E8E8;}'
-        '.mc:last-child{border-right:none;}'
-        '.mc-ico{width:32px;height:32px;background:' + ORI_COR + ';border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;}'
-        '.mc-ico svg{width:16px;height:16px;fill:#fff;}'
-        '.mc-label{font-size:8.5px;font-weight:700;letter-spacing:1.8px;color:#888;text-transform:uppercase;margin-bottom:2px;}'
-        '.mc-val{font-size:11.5px;font-weight:700;color:#1A1A1A;line-height:1.3;}'
-
-        # Resumo
-        '.resumo{padding:16px 20px;background:#fff;font-size:13px;color:#222;line-height:1.7;border-bottom:1px solid #E0E0E0;}'
-
-        # Grade 2 colunas
-        '.grade{display:flex;gap:0;border-top:1px solid #E0E0E0;align-items:flex-start;}'
-
-        # Card generico
-        '.card{margin:14px;background:#fff;border-radius:10px;overflow:visible;box-shadow:0 2px 8px rgba(0,0,0,.08);}'
-        '.card-header{display:flex;align-items:center;gap:10px;padding:10px 14px;}'
-        '.card-header-ico{width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px;}'
-        '.card-header-txt{font-family:"Barlow Condensed",sans-serif;font-size:14px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#fff;}'
-        '.card-body{padding:12px 14px;overflow:visible;}'
-
-        # O que preve
-        '.card-verde .card-header{background:' + ORI_COR + ';}'
-        '.preve-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;font-size:12px;color:#222;line-height:1.45;}'
-        '.preve-item:last-child{margin-bottom:0;}'
-        '.preve-item svg{flex-shrink:0;margin-top:2px;}'
-
-        # Criticas
-        '.card-verm .card-header{background:#C9111E;}'
-        '.critica-item{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;}'
-        '.critica-item:last-child{margin-bottom:0;}'
-        '.critica-ico{width:32px;height:32px;flex-shrink:0;}'
-        '.critica-ico svg{width:32px;height:32px;}'
-        '.critica-titulo{font-size:12px;font-weight:700;color:#1A1A1A;margin-bottom:2px;line-height:1.3;}'
-        '.critica-detalhe{font-size:11px;color:#555;line-height:1.4;}'
-
-        # Justificativa
-        '.card-escuro .card-header{background:#1A2A3A;}'
-        '.just-inner{display:flex;align-items:flex-start;gap:12px;}'
-        '.just-ico{flex-shrink:0;opacity:.15;}'
-        '.just-txt{font-size:12px;color:#333;line-height:1.6;}'
-
-        # Orientacao
-        '.card-ori .card-header{background:#1A2A3A;}'
-        '.ori-badge{margin:12px 14px 8px;background:' + ORI_COR + ';border-radius:8px;padding:14px;text-align:center;}'
-        '.ori-badge-txt{font-family:"Barlow Condensed",sans-serif;font-size:40px;font-weight:900;color:' + ORI_TXT + ';letter-spacing:3px;text-transform:uppercase;}'
-        '.arg-header{background:#1A2A3A;margin:0 14px 0;border-radius:6px 6px 0 0;padding:7px 12px;}'
-        '.arg-header-txt{font-size:8.5px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.65);}'
-        '.arg-body{background:#243040;margin:0 14px 14px;border-radius:0 0 6px 6px;padding:10px 12px;}'
-        '.arg-body-txt{font-size:12px;color:rgba(255,255,255,.9);line-height:1.6;}'
-
-        # Na pratica
-        '.np-card{margin:14px;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);}'
-        '.np-header{background:' + ORI_COR + ';display:flex;align-items:center;gap:10px;padding:10px 14px;}'
-        '.np-header-txt{font-family:"Barlow Condensed",sans-serif;font-size:14px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#fff;}'
-        '.np-ico{width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.25);display:flex;align-items:center;justify-content:center;}'
-        '.np-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 16px;padding:12px 14px;}'
-        '.pratica-item{display:flex;align-items:flex-start;gap:7px;font-size:12px;color:#222;line-height:1.4;padding:4px 0;}'
-        '.pratica-item svg{flex-shrink:0;margin-top:2px;}'
-
-        # Rodape
-        '.rodape{background:#1A2A3A;padding:8px 20px;display:flex;justify-content:flex-end;}'
-        '.rodape-txt{font-size:10px;color:rgba(255,255,255,.5);}'
-
-        '@media print{body{background:#fff;padding:0;}.banner{box-shadow:none;border-radius:0;width:100%;}.np-btn{display:none!important;}@page{size:A4 portrait;margin:0;}}'
-    )
-
-    # SVG ícones para meta bar
-    ico_autor    = '<svg viewBox="0 0 24 24"><path d="M12 12c2.7 0 5-2.3 5-5s-2.3-5-5-5-5 2.3-5 5 2.3 5 5 5zm0 2c-3.3 0-10 1.7-10 5v2h20v-2c0-3.3-6.7-5-10-5z"/></svg>'
-    ico_regime   = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="2" fill="none"/><path d="M12 7v5l3 3" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/></svg>'
-    ico_comissao = '<svg viewBox="0 0 24 24"><path d="M17 20H7a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v12a2 2 0 01-2 2zM9 10h6M9 14h4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/></svg>'
-    ico_relator  = '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM9 13h6M9 17h4" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>'
-
-    # SVG balanca para justificativa
-    ico_balanca = (
-        '<svg width="64" height="64" viewBox="0 0 24 24" fill="none">'
-        '<path d="M12 3v18M3 9l4 4-4 4M21 9l-4 4 4 4M5 7h14" stroke="#1A2A3A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
-        '</svg>'
-    )
-
-    # SVG grupo para na pratica
-    ico_grupo = (
-        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none">'
-        '<circle cx="9" cy="7" r="3" fill="#fff"/>'
-        '<circle cx="15" cy="7" r="3" fill="#fff"/>'
-        '<path d="M3 19c0-3 2.7-5 6-5h6c3.3 0 6 2 6 5" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/>'
-        '</svg>'
-    )
-
-    # Fragmento style+div, sem doctype/head/scripts — mesmo padrao do Pauta Banner.
-    # E isso que o frontend injeta na preview e captura com html2canvas para o PNG.
-    banner_html_fragmento = (
-        '<style>' + css + '</style>'
-        '<div class="banner">'
-
-        # CABECALHO
-        '<div class="cab" style="' + cab_bg_color + '">'
-        + cab_foto_html +
-        '<div class="cab-overlay"></div>'
-        '<div class="cab-inner">'
-        '<div class="cab-top">'
-        '<div class="cab-logos">' + logos_cab + '</div>'
-        '</div>'
-        '<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;">'
-        '<div style="flex:1;">'
-        '<div class="cab-titulo">' + _e(d.get('titulo_curto', proposicao)) + '</div>'
-        '<div class="cab-subtitulo">' + _e(d.get('subtitulo','')) + '</div>'
-        '<div class="cab-desc">' + _e(d.get('descricao_curta', ementa[:120])) + '</div>'
-        '</div>'
-        + dado_block +
-        '</div>'
-        '</div>'
-        '</div>'
-
-        # META BAR
-        '<div class="meta-bar">'
-        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24">' + ico_autor[23:] + '</div>'
-        '<div><div class="mc-label">Autor</div><div class="mc-val">' + _e(autor[:55] or '—') + '</div></div></div>'
-
-        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24" fill="none">' + ico_regime[28:] + '</div>'
-        '<div><div class="mc-label">Regime</div><div class="mc-val">' + _e(regime or 'Ordinario') + '</div></div></div>'
-
-        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24" fill="none">' + ico_comissao[28:] + '</div>'
-        '<div><div class="mc-label">Comissões</div><div class="mc-val">' + _e(comissoes or 'Plenario') + '</div></div></div>'
-
-        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24" fill="none">' + ico_relator[28:] + '</div>'
-        '<div><div class="mc-label">Relator</div><div class="mc-val">' + _e(relator[:55] or '—') + '</div></div></div>'
-        '</div>'
-
-        # RESUMO
-        '<div class="resumo">' + _e(d.get('resumo_executivo', ementa)) + '</div>'
-
-        # GRADE: O QUE PREVE | CRITICAS
-        '<div class="grade">'
-
-        # O que preve
-        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
-        '<div class="card card-verde">'
-        '<div class="card-header">'
-        '<div class="card-header-ico">&#10003;</div>'
-        '<div class="card-header-txt">O que o projeto prev&ecirc;</div>'
-        '</div>'
-        '<div class="card-body">'
-        + _preve_items(d.get('o_que_preve',[])) +
-        '</div></div></div>'
-
-        # Criticas
-        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
-        '<div class="card card-verm">'
-        '<div class="card-header">'
-        '<div class="card-header-ico">&#10007;</div>'
-        '<div class="card-header-txt">Cr&iacute;ticas e pontos de aten&ccedil;&atilde;o</div>'
-        '</div>'
-        '<div class="card-body">'
-        + _critica_items(d.get('criticas',[])) +
-        '</div></div></div>'
-        '</div>'
-
-        # GRADE: JUSTIFICATIVA | ORIENTACAO
-        '<div class="grade" style="border-top:1px solid #E0E0E0;">'
-
-        # Justificativa
-        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
-        '<div class="card card-escuro">'
-        '<div class="card-header">'
-        '<div class="card-header-ico">&#9878;</div>'
-        '<div class="card-header-txt">Justificativa oficial</div>'
-        '</div>'
-        '<div class="card-body">'
-        '<div class="just-inner">'
-        '<div class="just-ico">' + ico_balanca + '</div>'
-        '<div class="just-txt">' + _e(d.get('justificativa_oficial','')) + '</div>'
-        '</div>'
-        '</div></div></div>'
-
-        # Orientacao
-        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
-        '<div class="card card-ori">'
-        '<div class="card-header">'
-        '<div class="card-header-ico">&#127885;</div>'
-        '<div class="card-header-txt">Orienta&ccedil;&atilde;o</div>'
-        '</div>'
-        '<div class="ori-badge"><div class="ori-badge-txt">' + ORI_EMOJI + ' ' + ORI_LABEL + '</div></div>'
-        + (
-            '<div class="arg-header"><div class="arg-header-txt">Discurso Sugerido — Tribuna (30 segundos)</div></div>'
-            '<div class="arg-body"><div class="arg-body-txt">' + _e(d.get('argumento_chave','')) + '</div></div>'
-            if d.get('argumento_chave') else ''
-        ) +
-        '</div></div>'
-        '</div>'
-
-        # NA PRATICA
-        '<div style="background:#F0F0F0;padding:0 0 14px;">'
-        '<div class="np-card">'
-        '<div class="np-header">'
-        '<div class="np-ico">' + ico_grupo + '</div>'
-        '<div class="np-header-txt">Na pr&aacute;tica</div>'
-        '</div>'
-        '<div class="np-grid">'
-        + _pratica_items(d.get('na_pratica',[])) +
-        '</div></div></div>'
-
-        # RODAPE
-        '<div class="rodape"><span class="rodape-txt">Publicado em: ' + data_hoje + '</span></div>'
-
-        '</div>'
-    )
-
-    html = (
-        '<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Banner ' + _e(proposicao) + '</title>'
-        '<style>' + css + '</style></head><body>'
-        '<div class="banner">'
-
-        # CABECALHO
-        '<div class="cab" style="' + cab_bg_color + '">'
-        + cab_foto_html +
-        '<div class="cab-overlay"></div>'
-        '<div class="cab-inner">'
-        '<div class="cab-top">'
-        '<div class="cab-logos">' + logos_cab + '</div>'
-        '</div>'
-        '<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;">'
-        '<div style="flex:1;">'
-        '<div class="cab-titulo">' + _e(d.get('titulo_curto', proposicao)) + '</div>'
-        '<div class="cab-subtitulo">' + _e(d.get('subtitulo','')) + '</div>'
-        '<div class="cab-desc">' + _e(d.get('descricao_curta', ementa[:120])) + '</div>'
-        '</div>'
-        + dado_block +
-        '</div>'
-        '</div>'
-        '</div>'
-
-        # META BAR
-        '<div class="meta-bar">'
-        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24">' + ico_autor[23:] + '</div>'
-        '<div><div class="mc-label">Autor</div><div class="mc-val">' + _e(autor[:55] or '—') + '</div></div></div>'
-
-        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24" fill="none">' + ico_regime[28:] + '</div>'
-        '<div><div class="mc-label">Regime</div><div class="mc-val">' + _e(regime or 'Ordinario') + '</div></div></div>'
-
-        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24" fill="none">' + ico_comissao[28:] + '</div>'
-        '<div><div class="mc-label">Comissões</div><div class="mc-val">' + _e(comissoes or 'Plenario') + '</div></div></div>'
-
-        '<div class="mc"><div class="mc-ico"><svg viewBox="0 0 24 24" fill="none">' + ico_relator[28:] + '</div>'
-        '<div><div class="mc-label">Relator</div><div class="mc-val">' + _e(relator[:55] or '—') + '</div></div></div>'
-        '</div>'
-
-        # RESUMO
-        '<div class="resumo">' + _e(d.get('resumo_executivo', ementa)) + '</div>'
-
-        # GRADE: O QUE PREVE | CRITICAS
-        '<div class="grade">'
-
-        # O que preve
-        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
-        '<div class="card card-verde">'
-        '<div class="card-header">'
-        '<div class="card-header-ico">&#10003;</div>'
-        '<div class="card-header-txt">O que o projeto prev&ecirc;</div>'
-        '</div>'
-        '<div class="card-body">'
-        + _preve_items(d.get('o_que_preve',[])) +
-        '</div></div></div>'
-
-        # Criticas
-        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
-        '<div class="card card-verm">'
-        '<div class="card-header">'
-        '<div class="card-header-ico">&#10007;</div>'
-        '<div class="card-header-txt">Cr&iacute;ticas e pontos de aten&ccedil;&atilde;o</div>'
-        '</div>'
-        '<div class="card-body">'
-        + _critica_items(d.get('criticas',[])) +
-        '</div></div></div>'
-        '</div>'
-
-        # GRADE: JUSTIFICATIVA | ORIENTACAO
-        '<div class="grade" style="border-top:1px solid #E0E0E0;">'
-
-        # Justificativa
-        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
-        '<div class="card card-escuro">'
-        '<div class="card-header">'
-        '<div class="card-header-ico">&#9878;</div>'
-        '<div class="card-header-txt">Justificativa oficial</div>'
-        '</div>'
-        '<div class="card-body">'
-        '<div class="just-inner">'
-        '<div class="just-ico">' + ico_balanca + '</div>'
-        '<div class="just-txt">' + _e(d.get('justificativa_oficial','')) + '</div>'
-        '</div>'
-        '</div></div></div>'
-
-        # Orientacao
-        '<div style="background:#F0F0F0;flex:1;min-width:0;">'
-        '<div class="card card-ori">'
-        '<div class="card-header">'
-        '<div class="card-header-ico">&#127885;</div>'
-        '<div class="card-header-txt">Orienta&ccedil;&atilde;o</div>'
-        '</div>'
-        '<div class="ori-badge"><div class="ori-badge-txt">' + ORI_EMOJI + ' ' + ORI_LABEL + '</div></div>'
-        + (
-            '<div class="arg-header"><div class="arg-header-txt">Discurso Sugerido — Tribuna (30 segundos)</div></div>'
-            '<div class="arg-body"><div class="arg-body-txt">' + _e(d.get('argumento_chave','')) + '</div></div>'
-            if d.get('argumento_chave') else ''
-        ) +
-        '</div></div>'
-        '</div>'
-
-        # NA PRATICA
-        '<div style="background:#F0F0F0;padding:0 0 14px;">'
-        '<div class="np-card">'
-        '<div class="np-header">'
-        '<div class="np-ico">' + ico_grupo + '</div>'
-        '<div class="np-header-txt">Na pr&aacute;tica</div>'
-        '</div>'
-        '<div class="np-grid">'
-        + _pratica_items(d.get('na_pratica',[])) +
-        '</div></div></div>'
-
-        # RODAPE
-        '<div class="rodape"><span class="rodape-txt">Publicado em: ' + data_hoje + '</span></div>'
-
-        '</div>'  # /banner
-
-        # Script de edição inline no banner
-        '<script>'
-        'document.addEventListener("DOMContentLoaded",function(){'
-        '  var editables=['
-        '    ".cab-titulo",".cab-subtitulo",".cab-desc",'
-        '    ".dado-valor",".dado-label",".dado-detalhe",'
-        '    ".mc-val",'
-        '    ".resumo",'
-        '    ".preve-item span",'
-        '    ".critica-titulo",".critica-detalhe",'
-        '    ".just-txt",'
-        '    ".ori-badge-txt",'
-        '    ".arg-body-txt",'
-        '    ".pratica-item span",'
-        '    ".rodape-txt"'
-        '  ];'
-        '  editables.forEach(function(sel){'
-        '    document.querySelectorAll(sel).forEach(function(el){'
-        '      el.contentEditable="true";'
-        '      el.style.outline="none";'
-        '      el.style.cursor="text";'
-        '      el.addEventListener("focus",function(){this.style.background="rgba(255,255,0,0.18)";});'
-        '      el.addEventListener("blur",function(){this.style.background="";});'
-        '    });'
-        '  });'
-        '  // Barra de edição flutuante'
-        '  var bar=document.createElement("div");'
-        '  bar.id="edit-bar";'
-        '  bar.style.cssText="position:fixed;top:0;left:0;right:0;background:#1A2A3A;color:#fff;'
-        '    padding:8px 16px;display:flex;align-items:center;gap:12px;z-index:9999;'
-        '    font-family:Arial,sans-serif;font-size:12px;";'
-        '  bar.innerHTML="<span style=color:#E9B847;font-weight:700>&#9998; Modo Edição</span>'
-        '    <span style=opacity:.6>Clique em qualquer campo para editar</span>";'
-        '  document.body.insertBefore(bar,document.body.firstChild);'
-        '  document.body.style.paddingTop="40px";'
-        '});'
-        '</script>'
-
-        '<div class="np-btn" style="margin-top:16px;display:flex;gap:10px;justify-content:center;">'
-        '<button onclick="window.close()" style="background:#555;color:#fff;border:none;padding:9px 16px;border-radius:4px;cursor:pointer;font-size:13px;">&#10005; Fechar</button>'
-        '</div>'
-        '</body></html>'
-    )
-
-    return jsonify({'success': True, 'html': html, 'banner_html_fragmento': banner_html_fragmento, 'fonte': fonte})
-
-
-
-
-
-
-
-# PATH explícito para garantir que os binários do sistema sejam encontrados
-# mesmo quando o processo Flask roda sem /usr/bin no PATH (ex: Railway)
-_BIN_PATH_ENV = dict(__import__('os').environ)
-_BIN_PATH_ENV['PATH'] = '/usr/bin:/bin:/usr/local/bin:' + _BIN_PATH_ENV.get('PATH', '')
-
-
-
-@app.route('/exportar_banner_png', methods=['POST'])
-@login_required
-def exportar_banner_png():
-    """Devolve o HTML para o frontend renderizar e capturar como PNG."""
-    data = request.get_json()
-    html = data.get('html', '')
-    if not html:
-        return jsonify({'error': 'HTML nao fornecido.'}), 400
-    # O frontend usa html2canvas para capturar o banner como PNG
-    return jsonify({'success': True, 'html': html})
-
-
-@app.route('/exportar_banner_pdf', methods=['POST'])
-@login_required
-def exportar_banner_pdf():
-    """Devolve o HTML para o frontend abrir e imprimir como PDF."""
-    data = request.get_json()
-    html = data.get('html', '')
-    if not html:
-        return jsonify({'error': 'HTML nao fornecido.'}), 400
-    return jsonify({'success': True, 'html': html})
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
