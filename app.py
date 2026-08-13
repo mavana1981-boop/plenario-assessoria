@@ -4703,6 +4703,99 @@ def delete_usuario(user_id):
 
 
 
+@app.route('/salvar_nota_proposicao', methods=['POST'])
+@login_required
+def salvar_nota_proposicao():
+    """Salva/atualiza permanentemente a nota técnica de uma proposição.
+    Usado pelo modal Buscar Proposição — permite ao usuário editar a nota
+    (gerada por IA, herdada do banco ou digitada do zero) e persistir a edição.
+    Grava na tabela 'notas' com item_key = PROP_{id}. Preserva orientacao e
+    resumo_parecer existentes se houver. Sincroniza o cache das pautas que
+    contêm essa proposição."""
+    if current_user.categoria == 'restrito':
+        return jsonify({'error': 'Sem permissão para editar notas'}), 403
+
+    data = request.get_json() or {}
+    id_prop = str(data.get('id_proposicao', '')).strip()
+    nota    = (data.get('nota', '') or '').strip()
+
+    if not id_prop:
+        return jsonify({'error': 'id_proposicao obrigatório'}), 400
+    if not nota:
+        return jsonify({'error': 'Nota vazia. Digite o conteúdo antes de salvar.'}), 400
+
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        prop_key = f"PROP_{id_prop}"
+        now_str  = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
+        saved_by = current_user.display_name() if hasattr(current_user, 'display_name') else current_user.username
+
+        # Preserva orientacao / resumo_parecer / evento_id existentes se houver
+        c.execute("SELECT evento_id, ordem, orientacao, resumo_parecer FROM notas WHERE item_key = ? ORDER BY saved_at DESC LIMIT 1",
+                  (prop_key,))
+        prev = c.fetchone()
+        prev_evento = prev[0] if prev else 0
+        prev_ordem  = prev[1] if prev else ''
+        prev_orient = prev[2] if prev else ''
+        prev_parec  = prev[3] if prev else ''
+
+        # Usa upsert_notas para respeitar sqlite/postgres
+        upsert_notas(c, prop_key, prev_evento or 0, prev_ordem or '',
+                     nota, prev_orient or '', prev_parec or '',
+                     saved_by, now_str)
+        conn.commit()
+
+        # Sincroniza cache de pautas que contêm esta proposição
+        pautas_atualizadas = 0
+        try:
+            c.execute("SELECT evento_id, json_pauta FROM pauta_cache_db")
+            for evt_id, jp in c.fetchall():
+                if not jp:
+                    continue
+                try:
+                    itens = json.loads(jp) if isinstance(jp, str) else jp
+                except Exception:
+                    continue
+                if not isinstance(itens, list):
+                    continue
+                mudou = False
+                for it in itens:
+                    if str(it.get('id_principal', '')) == id_prop:
+                        it['resumo_materia'] = nota
+                        it['saved_by']       = saved_by
+                        it['saved_at']       = now_str
+                        mudou = True
+                if mudou:
+                    if USE_POSTGRES:
+                        c.execute("UPDATE pauta_cache_db SET json_pauta=%s WHERE evento_id=%s",
+                                  (json.dumps(itens), evt_id))
+                    else:
+                        c.execute("UPDATE pauta_cache_db SET json_pauta=? WHERE evento_id=?",
+                                  (json.dumps(itens), evt_id))
+                    pautas_atualizadas += 1
+            if pautas_atualizadas:
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"salvar_nota_proposicao: sync cache falhou (não crítico): {e}")
+
+        # Invalida cache em memória
+        pauta_cache.clear()
+
+        return jsonify({
+            'ok': True,
+            'saved_at': now_str,
+            'saved_by': saved_by,
+            'pautas_atualizadas': pautas_atualizadas,
+        })
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"salvar_nota_proposicao erro: {e}")
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
+
 @app.route('/reordenar_pauta/<int:evento_id>', methods=['POST'])
 @login_required
 def reordenar_pauta(evento_id):
