@@ -1488,12 +1488,16 @@ def view_pauta(evento_id):
     c = conn.cursor()
     last_updated = None
     last_saved_user = None
+    pauta_cache_at = None
     try:
         c.execute("SELECT last_updated, last_saved_by FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
         row = c.fetchone()
         if row:
-            last_updated = row[0]
+            last_updated    = row[0]
             last_saved_user = row[1]
+            pauta_cache_at  = row[0]  # data/hora do último scraping da estrutura
+        else:
+            pauta_cache_at = None
     except Exception:
         pass
     finally:
@@ -1628,6 +1632,7 @@ def view_pauta(evento_id):
                            from_cache=from_cache, user_role=current_user.role,
                            user_categoria=current_user.categoria,
                            last_updated=last_updated, last_saved_user=last_saved_user,
+                           pauta_cache_at=pauta_cache_at,
                            assessores=assessores,
                            data_evento=data_evento,
                            eh_responsavel_pauta=eh_responsavel_pauta,
