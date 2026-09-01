@@ -78,6 +78,25 @@
     .ql-editor { min-height: 550px; }
     .ql-toolbar.ql-snow, .ql-container.ql-snow { width: 100%; box-sizing: border-box; }
     .logo-header { width: 80px; height: 50px; object-fit: contain; background: transparent; }
+
+    /* Filtro por responsável */
+    .filtro-responsavel-wrap select { max-width: 200px; }
+    .item-card.filtrado-oculto { display: none !important; }
+
+    /* Edição do resumo IA da ementa */
+    .resumo-ia-wrap { display: flex; align-items: flex-start; gap: 6px; }
+    .btn-editar-resumo-ia {
+      border: none; background: transparent; color: #1A6B3A; opacity: 0.55;
+      font-size: 0.72rem; padding: 0 2px; line-height: 1.4; cursor: pointer; flex-shrink: 0;
+    }
+    .btn-editar-resumo-ia:hover { opacity: 1; }
+    .resumo-ia-editor {
+      width: 100%; font-size: 0.82rem; font-family: inherit; color: #1A6B3A;
+      border: 1px solid #1A6B3A; border-radius: 4px; padding: 4px 6px; resize: vertical;
+    }
+    .resumo-ia-acoes { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+    .resumo-ia-acoes button { font-size: 0.72rem; padding: 1px 8px; }
+    .resumo-ia-status { font-size: 0.7rem; }
   </style>
 </head>
 
@@ -269,6 +288,24 @@
         <i class="fas fa-vote-yea me-2"></i>Orientações
       </button>
 
+      {% if eh_responsavel_pauta and user_categoria != 'restrito' %}
+      <div class="filtro-responsavel-wrap d-flex align-items-center gap-2 mb-3 ms-2">
+        <label for="filtro-responsavel-select" class="small text-muted mb-0" style="white-space:nowrap;">
+          <i class="fas fa-filter me-1"></i>Responsável:
+        </label>
+        <select class="form-select form-select-sm" id="filtro-responsavel-select" onchange="filtrarPorResponsavel(this.value)" style="max-width:200px;">
+          <option value="">— Todos —</option>
+          <option value="__sem__">Sem responsável</option>
+          {% for a in assessores %}
+            {% if a.username not in ['admin','PL','NOVO'] %}
+              <option value="{{ a.username }}">{{ a.nome }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+        <small id="filtro-responsavel-contagem" class="text-muted" style="white-space:nowrap;"></small>
+      </div>
+      {% endif %}
+
       {% if last_updated and user_categoria != 'restrito' %}
       <small class="last-updated mb-3">Atualizado em {{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</small>
       {% endif %}
@@ -315,7 +352,7 @@
     {% else %}
     {% if itens %}
       {% for item in itens %}
-      <div class="item-card mb-3">
+      <div class="item-card mb-3" data-id-principal="{{ item.id_principal }}" data-responsavel="{{ item.responsavel_username or '' }}">
         <div class="card-body">
           <div class="item-header" data-bs-toggle="collapse" data-bs-target="#col-{{ item.ordem }}-{{ item.id_principal }}" aria-expanded="false">
             <div>
@@ -343,13 +380,22 @@
                    data-autor="{{ item.autor | replace('"','&quot;')  }}">
                 {{ item.ementa }}
               </div>
-              <div class="resumo-ia-ementa mt-1"
-                   id="resumo-ia-{{ item.id_principal }}"
-                   data-id="{{ item.id_principal }}"
-                   data-projeto="{{ item.projeto | replace('"','&quot;') }}"
-                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
-                   data-autor="{{ item.autor | replace('"','&quot;') }}"
-                   style="font-size:0.82rem; color:#1A6B3A; font-weight:500; white-space:normal; word-break:break-word; display:none;">
+              <div class="resumo-ia-wrap mt-1">
+                <div class="resumo-ia-ementa"
+                     id="resumo-ia-{{ item.id_principal }}"
+                     data-id="{{ item.id_principal }}"
+                     data-projeto="{{ item.projeto | replace('"','&quot;') }}"
+                     data-ementa="{{ item.ementa | replace('"','&quot;') }}"
+                     data-autor="{{ item.autor | replace('"','&quot;') }}"
+                     style="font-size:0.82rem; color:#1A6B3A; font-weight:500; white-space:normal; word-break:break-word; display:none; flex:1;">
+                </div>
+                {% if user_categoria != 'restrito' %}
+                <button type="button" class="btn-editar-resumo-ia" id="btn-editar-resumo-{{ item.id_principal }}"
+                        title="Editar resumo da ementa" style="display:none;"
+                        onclick="event.stopPropagation();editarResumoIA('{{ item.id_principal }}')">
+                  <i class="fas fa-pencil-alt"></i>
+                </button>
+                {% endif %}
               </div>
             </div>
             <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
@@ -819,6 +865,7 @@
       if (resumoCache[id]) {
         el.textContent = resumoCache[id];
         el.style.display = 'block';
+        _mostrarBotaoEditarResumo(id);
         return;
       }
       try {
@@ -840,6 +887,7 @@
           resumoCache[id] = resumoLimpo;
           el.textContent = j.resumo;
           el.style.display = 'block';
+          _mostrarBotaoEditarResumo(id);
           // Salva no backend para exportar/infográfico
           fetch('/salvar_resumo_ia', {
             method: 'POST',
@@ -849,6 +897,117 @@
         }
       } catch(e) { /* silencioso */ }
     }
+
+    // ── Edição manual do resumo IA da ementa ────────────────────────────────
+    function _mostrarBotaoEditarResumo(id) {
+      const btn = document.getElementById('btn-editar-resumo-' + id);
+      if (btn) btn.style.display = 'inline-block';
+    }
+
+    window.editarResumoIA = function(id) {
+      const view = document.getElementById('resumo-ia-' + id);
+      const btn  = document.getElementById('btn-editar-resumo-' + id);
+      if (!view || view.querySelector('.resumo-ia-editor')) return; // já em edição
+
+      const textoAtual = (window.resumoCache && window.resumoCache[id]) || view.textContent.trim();
+      view.dataset.textoOriginal = textoAtual;
+      view.style.display = 'block';
+      if (btn) btn.style.display = 'none';
+
+      const textarea = document.createElement('textarea');
+      textarea.className = 'resumo-ia-editor';
+      textarea.rows = 3;
+      textarea.value = textoAtual;
+      textarea.addEventListener('click', ev => ev.stopPropagation());
+      textarea.addEventListener('keydown', ev => ev.stopPropagation());
+
+      const acoes = document.createElement('div');
+      acoes.className = 'resumo-ia-acoes';
+
+      const btnSalvar = document.createElement('button');
+      btnSalvar.type = 'button';
+      btnSalvar.className = 'btn btn-success btn-sm';
+      btnSalvar.innerHTML = '<i class="fas fa-check me-1"></i>Salvar';
+      btnSalvar.onclick = (ev) => { ev.stopPropagation(); salvarResumoIA(id, textarea.value); };
+
+      const btnCancelar = document.createElement('button');
+      btnCancelar.type = 'button';
+      btnCancelar.className = 'btn btn-outline-secondary btn-sm';
+      btnCancelar.innerHTML = '<i class="fas fa-times me-1"></i>Cancelar';
+      btnCancelar.onclick = (ev) => { ev.stopPropagation(); cancelarEdicaoResumoIA(id); };
+
+      const status = document.createElement('span');
+      status.className = 'resumo-ia-status text-muted';
+      status.id = 'resumo-ia-status-' + id;
+
+      acoes.appendChild(btnSalvar);
+      acoes.appendChild(btnCancelar);
+      acoes.appendChild(status);
+
+      view.innerHTML = '';
+      view.appendChild(textarea);
+      view.appendChild(acoes);
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    };
+
+    window.cancelarEdicaoResumoIA = function(id) {
+      const view = document.getElementById('resumo-ia-' + id);
+      const btn  = document.getElementById('btn-editar-resumo-' + id);
+      if (!view) return;
+      const textoOriginal = view.dataset.textoOriginal || (window.resumoCache && window.resumoCache[id]) || '';
+      view.innerHTML = '';
+      view.textContent = textoOriginal;
+      view.style.display = textoOriginal ? 'block' : 'none';
+      if (btn) btn.style.display = textoOriginal ? 'inline-block' : 'none';
+    };
+
+    window.salvarResumoIA = async function(id, novoTexto) {
+      const view   = document.getElementById('resumo-ia-' + id);
+      const status = document.getElementById('resumo-ia-status-' + id);
+      const texto  = (novoTexto || '').trim();
+      if (status) status.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Salvando...';
+      try {
+        const r = await fetch('/salvar_resumo_ia', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({evento_id: window.EVENTO_ID, id_principal: id, resumo: texto})
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        window.resumoCache = window.resumoCache || {};
+        window.resumoCache[id] = texto;
+        if (window.ITENS_DATA) {
+          const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
+          if (item) item.resumo_ia = texto;
+        }
+        const btn = document.getElementById('btn-editar-resumo-' + id);
+        if (view) {
+          view.innerHTML = '';
+          view.textContent = texto;
+          view.style.display = texto ? 'block' : 'none';
+        }
+        if (btn) btn.style.display = texto ? 'inline-block' : 'none';
+      } catch(e) {
+        if (status) status.innerHTML = '<span class="text-danger">Erro ao salvar</span>';
+        else alert('Erro ao salvar resumo: ' + e.message);
+      }
+    };
+
+    // ── Filtro por responsável ───────────────────────────────────────────────
+    window.filtrarPorResponsavel = function(valor) {
+      const cards = document.querySelectorAll('.item-card[data-id-principal]');
+      let visiveis = 0;
+      cards.forEach(card => {
+        const resp = card.dataset.responsavel || '';
+        let mostra = true;
+        if (valor === '__sem__') mostra = !resp;
+        else if (valor) mostra = (resp === valor);
+        card.classList.toggle('filtrado-oculto', !mostra);
+        if (mostra) visiveis++;
+      });
+      const contagem = document.getElementById('filtro-responsavel-contagem');
+      if (contagem) contagem.textContent = valor ? `${visiveis} de ${cards.length} itens` : '';
+    };
 
     // Carrega resumos e popula ITENS_DATA com resumo_ia
     async function carregarTodosResumos() {
@@ -861,7 +1020,7 @@
             if (resumo) {
               resumoCache[id] = resumo;
               const el = document.getElementById('resumo-ia-' + id);
-              if (el) { el.textContent = resumo; el.style.display = 'block'; }
+              if (el) { el.textContent = resumo; el.style.display = 'block'; _mostrarBotaoEditarResumo(id); }
               if (window.ITENS_DATA) {
                 const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
                 if (item) item.resumo_ia = resumo;
@@ -1028,6 +1187,13 @@
           }
           const j = await r.json();
           if (j.error) { alert(j.error); return; }
+          // Atualiza data-responsavel do card para o filtro refletir sem reload
+          const cardEl = sel.closest('.item-card');
+          if (cardEl) {
+            cardEl.dataset.responsavel = username || '';
+            const filtroSel = document.getElementById('filtro-responsavel-select');
+            if (filtroSel && filtroSel.value) filtrarPorResponsavel(filtroSel.value);
+          }
           // Atualiza container com logo + foto + nome
           const container = sel.closest('[id^="resp-container-"]');
           if (container) {
