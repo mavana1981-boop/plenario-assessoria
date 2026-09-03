@@ -4159,23 +4159,48 @@ def resumos_evento(evento_id):
 @app.route('/salvar_resumo_ia', methods=['POST'])
 @login_required
 def salvar_resumo_ia():
-    data      = request.get_json()
+    """Persiste o resumo da ementa (gerado por IA ou editado manualmente pelo
+    usuário) na tabela resumos_ia. Esta é a fonte única de verdade para o
+    resumo exibido na pauta, no infográfico e na exportação em PDF — uma vez
+    salvo aqui, é sempre este texto que deve ser usado, sem regeneração
+    automática por IA sobrescrevendo o valor."""
+    data      = request.get_json() or {}
     evento_id = data.get('evento_id')
     id_prop   = data.get('id_principal')
-    resumo    = data.get('resumo', '')
-    if not evento_id or not id_prop or not resumo:
-        return jsonify({'ok': False})
+    resumo    = (data.get('resumo') or '').strip()
+    editado_por = getattr(current_user, 'username', None)
+    if not evento_id or not id_prop:
+        return jsonify({'ok': False, 'error': 'evento_id e id_principal são obrigatórios'})
     conn = get_conn()
     c = conn.cursor()
     try:
         c.execute('''CREATE TABLE IF NOT EXISTS resumos_ia (
             evento_id INTEGER, id_proposicao TEXT, resumo TEXT,
             PRIMARY KEY (evento_id, id_proposicao))''')
-        c.execute('INSERT OR REPLACE INTO resumos_ia (evento_id, id_proposicao, resumo) VALUES (?,?,?)',
-                  (evento_id, str(id_prop), resumo))
+        # Colunas extras de auditoria (editado_manualmente/por/quando) — adiciona se não existirem
+        for col, tipo in [('editado_manualmente', 'INTEGER'), ('editado_por', 'TEXT'), ('editado_em', 'TEXT')]:
+            try:
+                c.execute(f'ALTER TABLE resumos_ia ADD COLUMN {col} {tipo}')
+            except Exception:
+                pass  # coluna já existe
+        editado_manualmente = 1 if data.get('editado_manualmente', True) else 0
+        agora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        c.execute('''INSERT INTO resumos_ia (evento_id, id_proposicao, resumo, editado_manualmente, editado_por, editado_em)
+                     VALUES (?,?,?,?,?,?)
+                     ON CONFLICT (evento_id, id_proposicao) DO UPDATE SET
+                       resumo=excluded.resumo,
+                       editado_manualmente=excluded.editado_manualmente,
+                       editado_por=excluded.editado_por,
+                       editado_em=excluded.editado_em'''
+                  if USE_POSTGRES else
+                  '''INSERT OR REPLACE INTO resumos_ia
+                     (evento_id, id_proposicao, resumo, editado_manualmente, editado_por, editado_em)
+                     VALUES (?,?,?,?,?,?)''',
+                  (evento_id, str(id_prop), resumo, editado_manualmente, editado_por, agora))
         conn.commit()
-        return jsonify({'ok': True})
+        return jsonify({'ok': True, 'resumo': resumo})
     except Exception as e:
+        logger.error(f"Erro ao salvar resumo_ia: {e}")
         return jsonify({'ok': False, 'error': str(e)})
     finally:
         conn.close()
@@ -4266,6 +4291,25 @@ def buscar_imagem_item():
         pass
 
     return jsonify({'imagem_url': None, 'keywords': keywords})
+
+def _aparar_resumo_ementa(texto, limite=170):
+    """Corta o resumo no limite de caracteres sem quebrar palavra/frase no meio.
+    Prioriza terminar em ponto final; se não houver, termina na última palavra
+    inteira antes do limite. Nunca deixa uma palavra cortada pela metade."""
+    texto = (texto or '').strip()
+    if len(texto) <= limite:
+        return texto
+    trecho = texto[:limite]
+    # 1ª tentativa: corta no último ponto final dentro do trecho (frase completa)
+    pos_ponto = trecho.rfind('.')
+    if pos_ponto >= int(limite * 0.5):  # só usa se não descartar demais do texto
+        return trecho[:pos_ponto + 1].strip()
+    # 2ª tentativa: corta na última palavra inteira antes do limite
+    pos_espaco = trecho.rfind(' ')
+    if pos_espaco > 0:
+        return trecho[:pos_espaco].rstrip(',;: ') + '…'
+    return trecho.rstrip() + '…'
+
 
 def resumo_ementa_impl(data):
     """Gera resumo de até 3 linhas da ementa. Para REQ busca dados do PL na web."""
@@ -4411,9 +4455,14 @@ Ementa: {ementa}
 Responda APENAS com o resumo, sem introdução, sem aspas."""
 
     # Usa ia_chain: Groq → Cloudflare → Gemini
+    # max_tokens com folga em relação ao limite de 120 caracteres pedido no prompt:
+    # o modelo às vezes ignora a instrução e escreve mais — se o teto de tokens for
+    # exatamente 80, a geração é cortada no meio da frase. Damos folga e, além disso,
+    # aparamos no último limite de frase/palavra em vez de deixar o corte cru do modelo.
     try:
-        texto, fonte = ia_chain(prompt, max_tokens=80, temperatura=0.4, contexto="resumo_ementa")
+        texto, fonte = ia_chain(prompt, max_tokens=150, temperatura=0.4, contexto="resumo_ementa")
         texto = texto.strip()
+        texto = _aparar_resumo_ementa(texto, limite=170)
         # Rejeita se for igual ou muito similar à ementa
         ementa_norm = re.sub(r'\s+', ' ', ementa.strip().lower())
         texto_norm  = re.sub(r'\s+', ' ', texto.lower())
