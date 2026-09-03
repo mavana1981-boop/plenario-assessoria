@@ -446,6 +446,10 @@ with app.app_context():
             'ALTER TABLE pauta_cache_db ADD COLUMN IF NOT EXISTS fetched_at TEXT' if USE_POSTGRES else 'ALTER TABLE pauta_cache_db ADD COLUMN fetched_at TEXT',
             'ALTER TABLE pauta_cache_db ADD COLUMN IF NOT EXISTS reordered_at TEXT' if USE_POSTGRES else 'ALTER TABLE pauta_cache_db ADD COLUMN reordered_at TEXT',
             'ALTER TABLE pauta_cache_db ADD COLUMN IF NOT EXISTS reordered_by TEXT' if USE_POSTGRES else 'ALTER TABLE pauta_cache_db ADD COLUMN reordered_by TEXT',
+            # Metadados de edição manual do resumo da ementa (resumos_ia)
+            'ALTER TABLE resumos_ia ADD COLUMN IF NOT EXISTS editado_manualmente INTEGER' if USE_POSTGRES else 'ALTER TABLE resumos_ia ADD COLUMN editado_manualmente INTEGER',
+            'ALTER TABLE resumos_ia ADD COLUMN IF NOT EXISTS editado_por TEXT' if USE_POSTGRES else 'ALTER TABLE resumos_ia ADD COLUMN editado_por TEXT',
+            'ALTER TABLE resumos_ia ADD COLUMN IF NOT EXISTS editado_em TEXT' if USE_POSTGRES else 'ALTER TABLE resumos_ia ADD COLUMN editado_em TEXT',
         ]
         for sql in migrações:
             try: c.execute(sql)
@@ -4174,15 +4178,10 @@ def salvar_resumo_ia():
     conn = get_conn()
     c = conn.cursor()
     try:
-        c.execute('''CREATE TABLE IF NOT EXISTS resumos_ia (
-            evento_id INTEGER, id_proposicao TEXT, resumo TEXT,
-            PRIMARY KEY (evento_id, id_proposicao))''')
-        # Colunas extras de auditoria (editado_manualmente/por/quando) — adiciona se não existirem
-        for col, tipo in [('editado_manualmente', 'INTEGER'), ('editado_por', 'TEXT'), ('editado_em', 'TEXT')]:
-            try:
-                c.execute(f'ALTER TABLE resumos_ia ADD COLUMN {col} {tipo}')
-            except Exception:
-                pass  # coluna já existe
+        # A tabela e as colunas de auditoria já são garantidas pela migração
+        # de inicialização do app — nada de ALTER TABLE aqui dentro (em
+        # Postgres, uma ALTER que falha por coluna já existente deixa a
+        # transação "abortada" e derruba o INSERT seguinte na mesma conexão).
         editado_manualmente = 1 if data.get('editado_manualmente', True) else 0
         agora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         c.execute('''INSERT INTO resumos_ia (evento_id, id_proposicao, resumo, editado_manualmente, editado_por, editado_em)
