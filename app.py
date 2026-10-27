@@ -442,14 +442,6 @@ with app.app_context():
             'ALTER TABLE notas ADD COLUMN IF NOT EXISTS responsavel_username TEXT' if USE_POSTGRES else 'ALTER TABLE notas ADD COLUMN responsavel_username TEXT',
             # Migração: adiciona id_principal na tabela orientacoes_grupo (substitui item_key)
             'ALTER TABLE orientacoes_grupo ADD COLUMN IF NOT EXISTS id_principal TEXT' if USE_POSTGRES else 'ALTER TABLE orientacoes_grupo ADD COLUMN id_principal TEXT',
-            # Metadados de proveniência do cache da pauta
-            'ALTER TABLE pauta_cache_db ADD COLUMN IF NOT EXISTS fetched_at TEXT' if USE_POSTGRES else 'ALTER TABLE pauta_cache_db ADD COLUMN fetched_at TEXT',
-            'ALTER TABLE pauta_cache_db ADD COLUMN IF NOT EXISTS reordered_at TEXT' if USE_POSTGRES else 'ALTER TABLE pauta_cache_db ADD COLUMN reordered_at TEXT',
-            'ALTER TABLE pauta_cache_db ADD COLUMN IF NOT EXISTS reordered_by TEXT' if USE_POSTGRES else 'ALTER TABLE pauta_cache_db ADD COLUMN reordered_by TEXT',
-            # Metadados de edição manual do resumo da ementa (resumos_ia)
-            'ALTER TABLE resumos_ia ADD COLUMN IF NOT EXISTS editado_manualmente INTEGER' if USE_POSTGRES else 'ALTER TABLE resumos_ia ADD COLUMN editado_manualmente INTEGER',
-            'ALTER TABLE resumos_ia ADD COLUMN IF NOT EXISTS editado_por TEXT' if USE_POSTGRES else 'ALTER TABLE resumos_ia ADD COLUMN editado_por TEXT',
-            'ALTER TABLE resumos_ia ADD COLUMN IF NOT EXISTS editado_em TEXT' if USE_POSTGRES else 'ALTER TABLE resumos_ia ADD COLUMN editado_em TEXT',
         ]
         for sql in migrações:
             try: c.execute(sql)
@@ -1156,6 +1148,87 @@ def reordenar_por_ordem_oficial(itens, ordem_oficial):
     logger.info(f"Ordem final: {[(it.get('projeto_original','')[:12], it['ordem']) for it in itens_ord]}")
     return itens_ord
 
+def _ementa_parece_truncada(ementa):
+    """A API de LISTAGEM de proposições da Câmara retorna ementas cortadas
+    (geralmente ~140 chars terminando com '...' ou '…', às vezes cortadas no meio
+    de uma palavra sem reticências). Esta heurística identifica os casos típicos."""
+    if not ementa:
+        return False
+    e = ementa.strip()
+    if len(e) < 30:
+        return False
+    # Caso 1: termina com reticências explícitas
+    if e.endswith('...') or e.endswith('…') or e.endswith('..'):
+        return True
+    # Caso 2: comprimento suspeito e NÃO termina com pontuação final — provável corte
+    #         (ementas completas da API quase sempre terminam com '.')
+    if len(e) >= 130 and e[-1] not in '.!?)"\'':
+        return True
+    # Caso 3: termina abruptamente no meio de uma palavra (sem espaço antes dos
+    #         últimos caracteres e sem pontuação)
+    if len(e) >= 130 and ' ' not in e[-25:] and e[-1].isalpha():
+        return True
+    return False
+
+
+def enriquecer_ementas_truncadas(itens, max_workers=8, timeout=6):
+    """Para cada item com ementa truncada, busca a ementa completa pela API
+    individual /proposicoes/{id} em paralelo. Falha silenciosa por item: se a
+    chamada der erro ou vier ementa menor, mantém a atual."""
+    try:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+    except Exception:
+        return 0
+
+    candidatos = []
+    for i, it in enumerate(itens or []):
+        id_p = str(it.get('id_principal') or '')
+        if id_p and _ementa_parece_truncada(it.get('ementa', '')):
+            candidatos.append((i, id_p))
+
+    if not candidatos:
+        return 0
+
+    headers = {'Accept': 'application/json'}
+    def fetch_um(idx_id):
+        idx, id_p = idx_id
+        try:
+            r = requests.get(
+                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_p}",
+                headers=headers, timeout=timeout
+            )
+            if r.ok:
+                ementa_full = (r.json().get('dados') or {}).get('ementa', '')
+                return idx, ementa_full or ''
+        except Exception as e:
+            logger.warning(f"enriquecer_ementas: falha id={id_p}: {e}")
+        return idx, ''
+
+    atualizados = 0
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [ex.submit(fetch_um, c) for c in candidatos]
+        for fut in as_completed(futures):
+            try:
+                idx, ementa_full = fut.result()
+            except Exception:
+                continue
+            if not ementa_full:
+                continue
+            atual = (itens[idx].get('ementa') or '').strip()
+            # Só substitui se a nova for maior E não parecer também truncada
+            if len(ementa_full) > len(atual) and not _ementa_parece_truncada(ementa_full):
+                itens[idx]['ementa'] = ementa_full
+                atualizados += 1
+            elif len(ementa_full) > len(atual):
+                # Veio maior mas ainda parece truncada — usa mesmo assim (é melhor que a atual)
+                itens[idx]['ementa'] = ementa_full
+                atualizados += 1
+
+    if atualizados:
+        logger.info(f"📝 Ementas enriquecidas: {atualizados}/{len(candidatos)} candidatos")
+    return atualizados
+
+
 def fetch_pauta(evento_id, force_reload=False):
     now = now_brasilia()
     cache_key = str(evento_id)
@@ -1416,21 +1489,15 @@ def fetch_pauta(evento_id, force_reload=False):
 
         logger.info(f"✅ Total final: {len(itens)} itens | PDF={len(ordem_oficial)} | API={len(api_por_codigo)}")
 
-        # Ao (re)carregar do PDF/API, gravamos fetched_at (proveniência) e limpamos
-        # os campos de reordenação manual — pois esta é a ordem oficial recém-buscada.
-        if USE_POSTGRES:
-            c.execute('''INSERT INTO pauta_cache_db (evento_id, json_pauta, last_updated, fetched_at, reordered_at, reordered_by)
-                         VALUES (%s, %s, %s, %s, NULL, NULL)
-                         ON CONFLICT (evento_id) DO UPDATE SET
-                           json_pauta=EXCLUDED.json_pauta,
-                           last_updated=EXCLUDED.last_updated,
-                           fetched_at=EXCLUDED.fetched_at,
-                           reordered_at=NULL,
-                           reordered_by=NULL''',
-                      (evento_id, json.dumps(itens), now_str, now_str))
-        else:
-            c.execute('INSERT OR REPLACE INTO pauta_cache_db (evento_id, json_pauta, last_updated, fetched_at, reordered_at, reordered_by) VALUES (?, ?, ?, ?, NULL, NULL)',
-                      (evento_id, json.dumps(itens), now_str, now_str))
+        # Enriquece ementas truncadas pela API de listagem (busca individual por id).
+        # Falha silenciosa — se não conseguir, mantém o que veio.
+        try:
+            enriquecer_ementas_truncadas(itens)
+        except Exception as e:
+            logger.warning(f"enriquecer_ementas_truncadas falhou (não crítico): {e}")
+
+        c.execute('INSERT OR REPLACE INTO pauta_cache_db (evento_id, json_pauta, last_updated) VALUES (?, ?, ?)',
+                  (evento_id, json.dumps(itens), now_str))
         conn.commit()
         pauta_cache[cache_key] = {'timestamp': now, 'itens': itens}
         conn.close()
@@ -1539,18 +1606,12 @@ def view_pauta(evento_id):
     c = conn.cursor()
     last_updated = None
     last_saved_user = None
-    fetched_at = None
-    reordered_at = None
-    reordered_by = None
     try:
-        c.execute("SELECT last_updated, last_saved_by, fetched_at, reordered_at, reordered_by FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
+        c.execute("SELECT last_updated, last_saved_by FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
         row = c.fetchone()
         if row:
-            last_updated    = row[0]
+            last_updated = row[0]
             last_saved_user = row[1]
-            fetched_at      = row[2]
-            reordered_at    = row[3]
-            reordered_by    = row[4]
     except Exception:
         pass
     finally:
@@ -1685,9 +1746,6 @@ def view_pauta(evento_id):
                            from_cache=from_cache, user_role=current_user.role,
                            user_categoria=current_user.categoria,
                            last_updated=last_updated, last_saved_user=last_saved_user,
-                           fetched_at=fetched_at,
-                           reordered_at=reordered_at,
-                           reordered_by=reordered_by,
                            assessores=assessores,
                            data_evento=data_evento,
                            eh_responsavel_pauta=eh_responsavel_pauta,
@@ -4163,43 +4221,23 @@ def resumos_evento(evento_id):
 @app.route('/salvar_resumo_ia', methods=['POST'])
 @login_required
 def salvar_resumo_ia():
-    """Persiste o resumo da ementa (gerado por IA ou editado manualmente pelo
-    usuário) na tabela resumos_ia. Esta é a fonte única de verdade para o
-    resumo exibido na pauta, no infográfico e na exportação em PDF — uma vez
-    salvo aqui, é sempre este texto que deve ser usado, sem regeneração
-    automática por IA sobrescrevendo o valor."""
-    data      = request.get_json() or {}
+    data      = request.get_json()
     evento_id = data.get('evento_id')
     id_prop   = data.get('id_principal')
-    resumo    = (data.get('resumo') or '').strip()
-    editado_por = getattr(current_user, 'username', None)
-    if not evento_id or not id_prop:
-        return jsonify({'ok': False, 'error': 'evento_id e id_principal são obrigatórios'})
+    resumo    = data.get('resumo', '')
+    if not evento_id or not id_prop or not resumo:
+        return jsonify({'ok': False})
     conn = get_conn()
     c = conn.cursor()
     try:
-        # A tabela e as colunas de auditoria já são garantidas pela migração
-        # de inicialização do app — nada de ALTER TABLE aqui dentro (em
-        # Postgres, uma ALTER que falha por coluna já existente deixa a
-        # transação "abortada" e derruba o INSERT seguinte na mesma conexão).
-        editado_manualmente = 1 if data.get('editado_manualmente', True) else 0
-        agora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        c.execute('''INSERT INTO resumos_ia (evento_id, id_proposicao, resumo, editado_manualmente, editado_por, editado_em)
-                     VALUES (?,?,?,?,?,?)
-                     ON CONFLICT (evento_id, id_proposicao) DO UPDATE SET
-                       resumo=excluded.resumo,
-                       editado_manualmente=excluded.editado_manualmente,
-                       editado_por=excluded.editado_por,
-                       editado_em=excluded.editado_em'''
-                  if USE_POSTGRES else
-                  '''INSERT OR REPLACE INTO resumos_ia
-                     (evento_id, id_proposicao, resumo, editado_manualmente, editado_por, editado_em)
-                     VALUES (?,?,?,?,?,?)''',
-                  (evento_id, str(id_prop), resumo, editado_manualmente, editado_por, agora))
+        c.execute('''CREATE TABLE IF NOT EXISTS resumos_ia (
+            evento_id INTEGER, id_proposicao TEXT, resumo TEXT,
+            PRIMARY KEY (evento_id, id_proposicao))''')
+        c.execute('INSERT OR REPLACE INTO resumos_ia (evento_id, id_proposicao, resumo) VALUES (?,?,?)',
+                  (evento_id, str(id_prop), resumo))
         conn.commit()
-        return jsonify({'ok': True, 'resumo': resumo})
+        return jsonify({'ok': True})
     except Exception as e:
-        logger.error(f"Erro ao salvar resumo_ia: {e}")
         return jsonify({'ok': False, 'error': str(e)})
     finally:
         conn.close()
@@ -4290,25 +4328,6 @@ def buscar_imagem_item():
         pass
 
     return jsonify({'imagem_url': None, 'keywords': keywords})
-
-def _aparar_resumo_ementa(texto, limite=170):
-    """Corta o resumo no limite de caracteres sem quebrar palavra/frase no meio.
-    Prioriza terminar em ponto final; se não houver, termina na última palavra
-    inteira antes do limite. Nunca deixa uma palavra cortada pela metade."""
-    texto = (texto or '').strip()
-    if len(texto) <= limite:
-        return texto
-    trecho = texto[:limite]
-    # 1ª tentativa: corta no último ponto final dentro do trecho (frase completa)
-    pos_ponto = trecho.rfind('.')
-    if pos_ponto >= int(limite * 0.5):  # só usa se não descartar demais do texto
-        return trecho[:pos_ponto + 1].strip()
-    # 2ª tentativa: corta na última palavra inteira antes do limite
-    pos_espaco = trecho.rfind(' ')
-    if pos_espaco > 0:
-        return trecho[:pos_espaco].rstrip(',;: ') + '…'
-    return trecho.rstrip() + '…'
-
 
 def resumo_ementa_impl(data):
     """Gera resumo de até 3 linhas da ementa. Para REQ busca dados do PL na web."""
@@ -4454,14 +4473,9 @@ Ementa: {ementa}
 Responda APENAS com o resumo, sem introdução, sem aspas."""
 
     # Usa ia_chain: Groq → Cloudflare → Gemini
-    # max_tokens com folga em relação ao limite de 120 caracteres pedido no prompt:
-    # o modelo às vezes ignora a instrução e escreve mais — se o teto de tokens for
-    # exatamente 80, a geração é cortada no meio da frase. Damos folga e, além disso,
-    # aparamos no último limite de frase/palavra em vez de deixar o corte cru do modelo.
     try:
-        texto, fonte = ia_chain(prompt, max_tokens=150, temperatura=0.4, contexto="resumo_ementa")
+        texto, fonte = ia_chain(prompt, max_tokens=80, temperatura=0.4, contexto="resumo_ementa")
         texto = texto.strip()
-        texto = _aparar_resumo_ementa(texto, limite=170)
         # Rejeita se for igual ou muito similar à ementa
         ementa_norm = re.sub(r'\s+', ' ', ementa.strip().lower())
         texto_norm  = re.sub(r'\s+', ' ', texto.lower())
@@ -4751,174 +4765,42 @@ def delete_usuario(user_id):
 
 
 
-@app.route('/salvar_nota_proposicao', methods=['POST'])
+@app.route('/reenriquecer_ementas/<int:evento_id>', methods=['POST'])
 @login_required
-def salvar_nota_proposicao():
-    """Salva/atualiza permanentemente a nota técnica de uma proposição.
-    Usado pelo modal Buscar Proposição — permite ao usuário editar a nota
-    (gerada por IA, herdada do banco ou digitada do zero) e persistir a edição.
-    Grava na tabela 'notas' com item_key = PROP_{id}. Preserva orientacao e
-    resumo_parecer existentes se houver. Sincroniza o cache das pautas que
-    contêm essa proposição."""
-    if current_user.categoria == 'restrito':
-        return jsonify({'error': 'Sem permissão para editar notas'}), 403
-
-    data = request.get_json() or {}
-    id_prop = str(data.get('id_proposicao', '')).strip()
-    nota    = (data.get('nota', '') or '').strip()
-
-    if not id_prop:
-        return jsonify({'error': 'id_proposicao obrigatório'}), 400
-    if not nota:
-        return jsonify({'error': 'Nota vazia. Digite o conteúdo antes de salvar.'}), 400
-
-    conn = get_conn()
-    c = conn.cursor()
-    try:
-        prop_key = f"PROP_{id_prop}"
-        now_str  = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
-        saved_by = current_user.display_name() if hasattr(current_user, 'display_name') else current_user.username
-
-        # Preserva orientacao / resumo_parecer / evento_id existentes se houver
-        c.execute("SELECT evento_id, ordem, orientacao, resumo_parecer FROM notas WHERE item_key = ? ORDER BY saved_at DESC LIMIT 1",
-                  (prop_key,))
-        prev = c.fetchone()
-        prev_evento = prev[0] if prev else 0
-        prev_ordem  = prev[1] if prev else ''
-        prev_orient = prev[2] if prev else ''
-        prev_parec  = prev[3] if prev else ''
-
-        # Usa upsert_notas para respeitar sqlite/postgres
-        upsert_notas(c, prop_key, prev_evento or 0, prev_ordem or '',
-                     nota, prev_orient or '', prev_parec or '',
-                     saved_by, now_str)
-        conn.commit()
-
-        # Sincroniza cache de pautas que contêm esta proposição
-        pautas_atualizadas = 0
-        try:
-            c.execute("SELECT evento_id, json_pauta FROM pauta_cache_db")
-            for evt_id, jp in c.fetchall():
-                if not jp:
-                    continue
-                try:
-                    itens = json.loads(jp) if isinstance(jp, str) else jp
-                except Exception:
-                    continue
-                if not isinstance(itens, list):
-                    continue
-                mudou = False
-                for it in itens:
-                    if str(it.get('id_principal', '')) == id_prop:
-                        it['resumo_materia'] = nota
-                        it['saved_by']       = saved_by
-                        it['saved_at']       = now_str
-                        mudou = True
-                if mudou:
-                    if USE_POSTGRES:
-                        c.execute("UPDATE pauta_cache_db SET json_pauta=%s WHERE evento_id=%s",
-                                  (json.dumps(itens), evt_id))
-                    else:
-                        c.execute("UPDATE pauta_cache_db SET json_pauta=? WHERE evento_id=?",
-                                  (json.dumps(itens), evt_id))
-                    pautas_atualizadas += 1
-            if pautas_atualizadas:
-                conn.commit()
-        except Exception as e:
-            logger.warning(f"salvar_nota_proposicao: sync cache falhou (não crítico): {e}")
-
-        # Invalida cache em memória
-        pauta_cache.clear()
-
-        return jsonify({
-            'ok': True,
-            'saved_at': now_str,
-            'saved_by': saved_by,
-            'pautas_atualizadas': pautas_atualizadas,
-        })
-    except Exception as e:
-        conn.rollback()
-        logger.error(f"salvar_nota_proposicao erro: {e}")
-        return jsonify({'error': str(e)}), 500
-    finally:
-        conn.close()
-
-
-@app.route('/reordenar_pauta/<int:evento_id>', methods=['POST'])
-@login_required
-def reordenar_pauta(evento_id):
-    """Reordena os itens da pauta conforme a lista de id_principal recebida.
-    Persiste a nova ordem no cache com reordered_at + reordered_by, e essa ordem
-    passa a ser a definitiva (não é sobrescrita por leituras subsequentes do cache,
-    só por 'Atualizar Pauta' que rebusca do PDF/API oficiais)."""
+def reenriquecer_ementas(evento_id):
+    """Varre o cache da pauta, identifica ementas truncadas (típico da API de
+    listagem da Câmara) e busca a versão completa via API individual.
+    Não refaz a extração do PDF nem mexe em notas/orientações/ordem — só substitui
+    o campo 'ementa' dos itens afetados. Útil quando a pauta já está no cache mas
+    algumas ementas vieram cortadas."""
     if current_user.categoria == 'restrito':
         return jsonify({'error': 'Sem permissão'}), 403
-    data = request.get_json() or {}
-    nova_ordem = data.get('ordem') or []
-    if not isinstance(nova_ordem, list) or not nova_ordem:
-        return jsonify({'error': 'Lista "ordem" obrigatória'}), 400
-
-    # Carrega itens atuais do cache
     conn = get_conn()
     c = conn.cursor()
     try:
         c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
         row = c.fetchone()
         if not row:
-            conn.close()
-            return jsonify({'error': 'Cache da pauta não encontrado — carregue a pauta antes de reordenar'}), 404
+            return jsonify({'error': 'Cache da pauta não encontrado'}), 404
         itens = json.loads(row[0])
-    except Exception as e:
-        conn.close()
-        return jsonify({'error': f'Erro ao carregar cache: {e}'}), 500
-
-    # Reordena conforme a lista recebida — itens não citados vão para o final na ordem original
-    ordem_ids = [str(x) for x in nova_ordem]
-    por_id = {str(it.get('id_principal', '')): it for it in itens}
-
-    itens_reord = []
-    usados = set()
-    for id_p in ordem_ids:
-        it = por_id.get(id_p)
-        if it and id_p not in usados:
-            itens_reord.append(it)
-            usados.add(id_p)
-    # Itens que estavam no cache mas não vieram na nova ordem preservam-se ao fim
-    for it in itens:
-        id_p = str(it.get('id_principal', ''))
-        if id_p not in usados:
-            itens_reord.append(it)
-            usados.add(id_p)
-
-    # Renumera o campo "ordem"
-    for i, it in enumerate(itens_reord, start=1):
-        it['ordem'] = str(i)
-
-    now_str = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
-    quem = current_user.display_name() if hasattr(current_user, 'display_name') else current_user.username
-
-    try:
-        if USE_POSTGRES:
-            c.execute('''UPDATE pauta_cache_db SET json_pauta=%s, reordered_at=%s, reordered_by=%s, last_updated=%s
-                         WHERE evento_id=%s''',
-                      (json.dumps(itens_reord), now_str, quem, now_str, evento_id))
-        else:
-            c.execute('UPDATE pauta_cache_db SET json_pauta=?, reordered_at=?, reordered_by=?, last_updated=? WHERE evento_id=?',
-                      (json.dumps(itens_reord), now_str, quem, now_str, evento_id))
-        conn.commit()
-        # Invalida cache em memória para forçar releitura do disco
-        pauta_cache.pop(str(evento_id), None)
-        conn.close()
+        total_candidatos = sum(1 for it in itens if _ementa_parece_truncada(it.get('ementa', '')))
+        atualizados = enriquecer_ementas_truncadas(itens)
+        if atualizados:
+            now_str = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
+            c.execute("UPDATE pauta_cache_db SET json_pauta = ?, last_updated = ? WHERE evento_id = ?",
+                      (json.dumps(itens), now_str, evento_id))
+            conn.commit()
+            pauta_cache.pop(str(evento_id), None)
         return jsonify({
             'ok': True,
-            'reordered_at': now_str,
-            'reordered_by': quem,
-            'total': len(itens_reord),
+            'candidatos': total_candidatos,
+            'atualizados': atualizados,
         })
     except Exception as e:
-        conn.close()
-        logger.error(f'reordenar_pauta erro: {e}')
+        logger.error(f"reenriquecer_ementas erro: {e}")
         return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
 
 
 @app.route('/extra_pauta/<int:evento_id>', methods=['GET'])
