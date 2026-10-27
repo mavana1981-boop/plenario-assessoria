@@ -166,24 +166,59 @@
       const status = document.getElementById('reenrich-status');
       const orig = btn.innerHTML;
       btn.disabled = true;
-      btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando ementas…';
-      status.textContent = '';
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando ementas (3 fontes)…';
+      status.innerHTML = '';
       try{
         const r = await fetch('/reenriquecer_ementas/' + window.EVENTO_ID, {method:'POST'});
         const j = await r.json();
-        if (!r.ok || !j.ok) throw new Error(j.error || 'Falha');
+        if (!r.ok || !j.ok) {
+          throw new Error(j.error || ('HTTP ' + r.status));
+        }
         if (j.atualizados > 0) {
           status.innerHTML = `<span class="text-success">✓ ${j.atualizados} ementa(s) corrigida(s) — recarregando…</span>`;
-          setTimeout(() => location.reload(), 900);
-        } else if (j.candidatos === 0) {
-          status.innerHTML = '<span class="text-muted">Nenhuma ementa truncada detectada.</span>';
-          btn.disabled = false; btn.innerHTML = orig;
-        } else {
-          status.innerHTML = `<span class="text-warning">${j.candidatos} candidato(s) mas API não retornou versão maior.</span>`;
-          btn.disabled = false; btn.innerHTML = orig;
+          console.log('[reenriquecer] detalhes:', j.detalhes);
+          setTimeout(() => location.reload(), 1200);
+          return;
         }
+        // Nenhuma atualizada — mostra diagnóstico detalhado para o usuário entender
+        const amostra = j.amostra_pos_execucao || [];
+        const truncadas = amostra.filter(a => a.parece_truncada);
+        let html = `<div class="mt-2 p-2 small" style="background:#fff3cd;border:1px solid #ffc107;border-radius:4px;max-width:720px;">`;
+        html += `<strong>Diagnóstico:</strong> ${j.total_itens} itens na pauta, `;
+        html += `<strong>${j.candidatos}</strong> detectado(s) como truncado(s), `;
+        html += `<strong>${j.atualizados}</strong> corrigido(s).<br>`;
+
+        if (j.candidatos === 0) {
+          html += '<em>Nenhum item foi considerado truncado pela heurística. Veja abaixo a amostra — se algum deveria ter sido corrigido, me diga o nº de ordem para eu ajustar a detecção.</em>';
+        } else if (j.detalhes && j.detalhes.length) {
+          html += '<em>Detalhes dos candidatos (fontes tentadas: API individual, ficha de tramitação, página nova):</em>';
+          html += '<ul class="mb-0 mt-1" style="padding-left:18px;">';
+          for (const d of j.detalhes) {
+            const marca = d.ok ? '✓' : '✗';
+            const info  = d.ok
+              ? `<strong>${d.codigo}</strong> (item ${d.ordem}): ${d.tamanho_antes}→${d.tamanho_depois} chars, fonte: ${d.fonte}`
+              : `<strong>${d.codigo}</strong> (item ${d.ordem}): ${d.tamanho_antes} chars, ${d.motivo || d.erro || 'falhou'}`;
+            html += `<li>${marca} ${info}</li>`;
+          }
+          html += '</ul>';
+        }
+
+        // Mostra amostra de todos os itens para debug
+        if (truncadas.length) {
+          html += `<details class="mt-2"><summary style="cursor:pointer;"><strong>Ver ${truncadas.length} item(s) ainda marcados como truncados</strong></summary>`;
+          html += '<ul class="mb-0 mt-1" style="padding-left:18px;font-family:monospace;font-size:11px;">';
+          for (const a of truncadas) {
+            html += `<li>Item ${a.ordem} — ${a.codigo} — ${a.tamanho} chars — fim: "…${a.final.replace(/</g,'&lt;')}"</li>`;
+          }
+          html += '</ul></details>';
+        }
+
+        html += `</div>`;
+        status.innerHTML = html;
+        btn.disabled = false; btn.innerHTML = orig;
       }catch(e){
         status.innerHTML = '<span class="text-danger">Erro: ' + e.message + '</span>';
+        console.error('[reenriquecer] erro:', e);
         btn.disabled = false; btn.innerHTML = orig;
       }
     }
