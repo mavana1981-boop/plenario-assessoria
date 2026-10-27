@@ -78,25 +78,6 @@
     .ql-editor { min-height: 550px; }
     .ql-toolbar.ql-snow, .ql-container.ql-snow { width: 100%; box-sizing: border-box; }
     .logo-header { width: 80px; height: 50px; object-fit: contain; background: transparent; }
-
-    /* Filtro por responsável */
-    .filtro-responsavel-wrap select { max-width: 200px; }
-    .item-card.filtrado-oculto { display: none !important; }
-
-    /* Edição do resumo IA da ementa */
-    .resumo-ia-wrap { display: flex; align-items: flex-start; gap: 6px; }
-    .btn-editar-resumo-ia {
-      border: none; background: transparent; color: #1A6B3A; opacity: 0.55;
-      font-size: 0.72rem; padding: 0 2px; line-height: 1.4; cursor: pointer; flex-shrink: 0;
-    }
-    .btn-editar-resumo-ia:hover { opacity: 1; }
-    .resumo-ia-editor {
-      width: 100%; font-size: 0.82rem; font-family: inherit; color: #1A6B3A;
-      border: 1px solid #1A6B3A; border-radius: 4px; padding: 4px 6px; resize: vertical;
-    }
-    .resumo-ia-acoes { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
-    .resumo-ia-acoes button { font-size: 0.72rem; padding: 1px 8px; }
-    .resumo-ia-status { font-size: 0.7rem; }
   </style>
 </head>
 
@@ -168,34 +149,45 @@
         </span>
         <span id="ultimo-usuario" class="text-muted">
           {% if last_saved_user %} — por <strong>{{ last_saved_user }}</strong>{% endif %}
-        </span><br>
-
-        <!-- Proveniência do cache: quando a estrutura da pauta foi buscada do PDF/API oficial -->
-        <strong><i class="fas fa-file-download me-1"></i>Estrutura da pauta obtida em:</strong>
-        <span id="estrutura-obtida-em">
-          {% if fetched_at %}
-            <span class="badge bg-info text-dark">{{ fetched_at | datetimeformat('%d/%m/%Y %H:%M') }}</span>
-            <span class="text-muted small ms-1">(fonte: PDF/API oficial da Câmara)</span>
-          {% elif last_updated %}
-            <span class="badge bg-info text-dark">{{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</span>
-            <span class="text-muted small ms-1">(cache existente)</span>
-          {% else %}
-            <span class="text-muted">Sem registro</span>
-          {% endif %}
-        </span><br>
-
-        <!-- Reordenação manual (se houver) -->
-        <strong><i class="fas fa-arrows-alt-v me-1"></i>Reordenação manual:</strong>
-        <span id="reordenacao-info">
-          {% if reordered_at %}
-            <span class="badge bg-warning text-dark">{{ reordered_at | datetimeformat('%d/%m/%Y %H:%M') }}</span>
-            {% if reordered_by %}<span class="text-muted small ms-1">por <strong>{{ reordered_by }}</strong></span>{% endif %}
-          {% else %}
-            <span class="text-muted">Ordem preservada do PDF oficial (sem reordenação manual)</span>
-          {% endif %}
         </span>
+        {% if user_categoria != 'restrito' %}
+        <br>
+        <button type="button" class="btn btn-sm btn-outline-info mt-2"
+                style="font-size:0.72rem;padding:2px 8px;" onclick="reenriquecerEmentasPauta(this)"
+                title="Busca na API individual da Câmara a ementa completa dos itens cuja descrição foi cortada">
+          <i class="fas fa-magic me-1"></i>Corrigir ementas truncadas
+        </button>
+        <span id="reenrich-status" class="small ms-2"></span>
+        {% endif %}
       </div>
     </div>
+    <script>
+    async function reenriquecerEmentasPauta(btn){
+      const status = document.getElementById('reenrich-status');
+      const orig = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Buscando ementas…';
+      status.textContent = '';
+      try{
+        const r = await fetch('/reenriquecer_ementas/' + window.EVENTO_ID, {method:'POST'});
+        const j = await r.json();
+        if (!r.ok || !j.ok) throw new Error(j.error || 'Falha');
+        if (j.atualizados > 0) {
+          status.innerHTML = `<span class="text-success">✓ ${j.atualizados} ementa(s) corrigida(s) — recarregando…</span>`;
+          setTimeout(() => location.reload(), 900);
+        } else if (j.candidatos === 0) {
+          status.innerHTML = '<span class="text-muted">Nenhuma ementa truncada detectada.</span>';
+          btn.disabled = false; btn.innerHTML = orig;
+        } else {
+          status.innerHTML = `<span class="text-warning">${j.candidatos} candidato(s) mas API não retornou versão maior.</span>`;
+          btn.disabled = false; btn.innerHTML = orig;
+        }
+      }catch(e){
+        status.innerHTML = '<span class="text-danger">Erro: ' + e.message + '</span>';
+        btn.disabled = false; btn.innerHTML = orig;
+      }
+    }
+    </script>
 
     <div class="d-flex align-items-center flex-wrap mb-2">
       <!-- Quadro de boas-vindas -->
@@ -274,12 +266,6 @@
         onclick="abrirModalBuscarProposicao()">
         <i class="fas fa-search me-2"></i>Buscar Proposição
       </button>
-      <button class="btn btn-sm mb-3 ms-2 text-white"
-        style="background:linear-gradient(135deg,#6f42c1,#4a2a8a);"
-        onclick="abrirModalReordenar()"
-        title="Reordenar manualmente os itens da pauta quando a ordem divergir do site da Câmara">
-        <i class="fas fa-arrows-alt-v me-2"></i>Reordenar Itens
-      </button>
       {% endif %}
       <button class="btn btn-sm mb-3 ms-2 text-white"
         style="background:linear-gradient(135deg,#B8860B,#DAA520);"
@@ -287,24 +273,6 @@
         >
         <i class="fas fa-vote-yea me-2"></i>Orientações
       </button>
-
-      {% if eh_responsavel_pauta and user_categoria != 'restrito' %}
-      <div class="filtro-responsavel-wrap d-flex align-items-center gap-2 mb-3 ms-2">
-        <label for="filtro-responsavel-select" class="small text-muted mb-0" style="white-space:nowrap;">
-          <i class="fas fa-filter me-1"></i>Responsável:
-        </label>
-        <select class="form-select form-select-sm" id="filtro-responsavel-select" onchange="filtrarPorResponsavel(this.value)" style="max-width:200px;">
-          <option value="">— Todos —</option>
-          <option value="__sem__">Sem responsável</option>
-          {% for a in assessores %}
-            {% if a.username not in ['admin','PL','NOVO'] %}
-              <option value="{{ a.username }}">{{ a.nome }}</option>
-            {% endif %}
-          {% endfor %}
-        </select>
-        <small id="filtro-responsavel-contagem" class="text-muted" style="white-space:nowrap;"></small>
-      </div>
-      {% endif %}
 
       {% if last_updated and user_categoria != 'restrito' %}
       <small class="last-updated mb-3">Atualizado em {{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</small>
@@ -352,7 +320,7 @@
     {% else %}
     {% if itens %}
       {% for item in itens %}
-      <div class="item-card mb-3" data-id-principal="{{ item.id_principal }}" data-responsavel="{{ item.responsavel_username or '' }}">
+      <div class="item-card mb-3">
         <div class="card-body">
           <div class="item-header" data-bs-toggle="collapse" data-bs-target="#col-{{ item.ordem }}-{{ item.id_principal }}" aria-expanded="false">
             <div>
@@ -380,22 +348,13 @@
                    data-autor="{{ item.autor | replace('"','&quot;')  }}">
                 {{ item.ementa }}
               </div>
-              <div class="resumo-ia-wrap mt-1">
-                <div class="resumo-ia-ementa"
-                     id="resumo-ia-{{ item.id_principal }}"
-                     data-id="{{ item.id_principal }}"
-                     data-projeto="{{ item.projeto | replace('"','&quot;') }}"
-                     data-ementa="{{ item.ementa | replace('"','&quot;') }}"
-                     data-autor="{{ item.autor | replace('"','&quot;') }}"
-                     style="font-size:0.82rem; color:#1A6B3A; font-weight:500; white-space:normal; word-break:break-word; display:none; flex:1;">
-                </div>
-                {% if user_categoria != 'restrito' %}
-                <button type="button" class="btn-editar-resumo-ia" id="btn-editar-resumo-{{ item.id_principal }}"
-                        title="Editar resumo da ementa" style="display:none;"
-                        onclick="event.stopPropagation();editarResumoIA('{{ item.id_principal }}')">
-                  <i class="fas fa-pencil-alt"></i>
-                </button>
-                {% endif %}
+              <div class="resumo-ia-ementa mt-1"
+                   id="resumo-ia-{{ item.id_principal }}"
+                   data-id="{{ item.id_principal }}"
+                   data-projeto="{{ item.projeto | replace('"','&quot;') }}"
+                   data-ementa="{{ item.ementa | replace('"','&quot;') }}"
+                   data-autor="{{ item.autor | replace('"','&quot;') }}"
+                   style="font-size:0.82rem; color:#1A6B3A; font-weight:500; white-space:normal; word-break:break-word; display:none;">
               </div>
             </div>
             <i class="fas fa-chevron-down collapse-toggle-icon ms-2"></i>
@@ -865,7 +824,6 @@
       if (resumoCache[id]) {
         el.textContent = resumoCache[id];
         el.style.display = 'block';
-        _mostrarBotaoEditarResumo(id);
         return;
       }
       try {
@@ -887,7 +845,6 @@
           resumoCache[id] = resumoLimpo;
           el.textContent = j.resumo;
           el.style.display = 'block';
-          _mostrarBotaoEditarResumo(id);
           // Salva no backend para exportar/infográfico
           fetch('/salvar_resumo_ia', {
             method: 'POST',
@@ -897,117 +854,6 @@
         }
       } catch(e) { /* silencioso */ }
     }
-
-    // ── Edição manual do resumo IA da ementa ────────────────────────────────
-    function _mostrarBotaoEditarResumo(id) {
-      const btn = document.getElementById('btn-editar-resumo-' + id);
-      if (btn) btn.style.display = 'inline-block';
-    }
-
-    window.editarResumoIA = function(id) {
-      const view = document.getElementById('resumo-ia-' + id);
-      const btn  = document.getElementById('btn-editar-resumo-' + id);
-      if (!view || view.querySelector('.resumo-ia-editor')) return; // já em edição
-
-      const textoAtual = (window.resumoCache && window.resumoCache[id]) || view.textContent.trim();
-      view.dataset.textoOriginal = textoAtual;
-      view.style.display = 'block';
-      if (btn) btn.style.display = 'none';
-
-      const textarea = document.createElement('textarea');
-      textarea.className = 'resumo-ia-editor';
-      textarea.rows = 3;
-      textarea.value = textoAtual;
-      textarea.addEventListener('click', ev => ev.stopPropagation());
-      textarea.addEventListener('keydown', ev => ev.stopPropagation());
-
-      const acoes = document.createElement('div');
-      acoes.className = 'resumo-ia-acoes';
-
-      const btnSalvar = document.createElement('button');
-      btnSalvar.type = 'button';
-      btnSalvar.className = 'btn btn-success btn-sm';
-      btnSalvar.innerHTML = '<i class="fas fa-check me-1"></i>Salvar';
-      btnSalvar.onclick = (ev) => { ev.stopPropagation(); salvarResumoIA(id, textarea.value); };
-
-      const btnCancelar = document.createElement('button');
-      btnCancelar.type = 'button';
-      btnCancelar.className = 'btn btn-outline-secondary btn-sm';
-      btnCancelar.innerHTML = '<i class="fas fa-times me-1"></i>Cancelar';
-      btnCancelar.onclick = (ev) => { ev.stopPropagation(); cancelarEdicaoResumoIA(id); };
-
-      const status = document.createElement('span');
-      status.className = 'resumo-ia-status text-muted';
-      status.id = 'resumo-ia-status-' + id;
-
-      acoes.appendChild(btnSalvar);
-      acoes.appendChild(btnCancelar);
-      acoes.appendChild(status);
-
-      view.innerHTML = '';
-      view.appendChild(textarea);
-      view.appendChild(acoes);
-      textarea.focus();
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-    };
-
-    window.cancelarEdicaoResumoIA = function(id) {
-      const view = document.getElementById('resumo-ia-' + id);
-      const btn  = document.getElementById('btn-editar-resumo-' + id);
-      if (!view) return;
-      const textoOriginal = view.dataset.textoOriginal || (window.resumoCache && window.resumoCache[id]) || '';
-      view.innerHTML = '';
-      view.textContent = textoOriginal;
-      view.style.display = textoOriginal ? 'block' : 'none';
-      if (btn) btn.style.display = textoOriginal ? 'inline-block' : 'none';
-    };
-
-    window.salvarResumoIA = async function(id, novoTexto) {
-      const view   = document.getElementById('resumo-ia-' + id);
-      const status = document.getElementById('resumo-ia-status-' + id);
-      const texto  = (novoTexto || '').trim();
-      if (status) status.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Salvando...';
-      try {
-        const r = await fetch('/salvar_resumo_ia', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({evento_id: window.EVENTO_ID, id_principal: id, resumo: texto})
-        });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        window.resumoCache = window.resumoCache || {};
-        window.resumoCache[id] = texto;
-        if (window.ITENS_DATA) {
-          const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
-          if (item) item.resumo_ia = texto;
-        }
-        const btn = document.getElementById('btn-editar-resumo-' + id);
-        if (view) {
-          view.innerHTML = '';
-          view.textContent = texto;
-          view.style.display = texto ? 'block' : 'none';
-        }
-        if (btn) btn.style.display = texto ? 'inline-block' : 'none';
-      } catch(e) {
-        if (status) status.innerHTML = '<span class="text-danger">Erro ao salvar</span>';
-        else alert('Erro ao salvar resumo: ' + e.message);
-      }
-    };
-
-    // ── Filtro por responsável ───────────────────────────────────────────────
-    window.filtrarPorResponsavel = function(valor) {
-      const cards = document.querySelectorAll('.item-card[data-id-principal]');
-      let visiveis = 0;
-      cards.forEach(card => {
-        const resp = card.dataset.responsavel || '';
-        let mostra = true;
-        if (valor === '__sem__') mostra = !resp;
-        else if (valor) mostra = (resp === valor);
-        card.classList.toggle('filtrado-oculto', !mostra);
-        if (mostra) visiveis++;
-      });
-      const contagem = document.getElementById('filtro-responsavel-contagem');
-      if (contagem) contagem.textContent = valor ? `${visiveis} de ${cards.length} itens` : '';
-    };
 
     // Carrega resumos e popula ITENS_DATA com resumo_ia
     async function carregarTodosResumos() {
@@ -1020,7 +866,7 @@
             if (resumo) {
               resumoCache[id] = resumo;
               const el = document.getElementById('resumo-ia-' + id);
-              if (el) { el.textContent = resumo; el.style.display = 'block'; _mostrarBotaoEditarResumo(id); }
+              if (el) { el.textContent = resumo; el.style.display = 'block'; }
               if (window.ITENS_DATA) {
                 const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
                 if (item) item.resumo_ia = resumo;
@@ -1187,13 +1033,6 @@
           }
           const j = await r.json();
           if (j.error) { alert(j.error); return; }
-          // Atualiza data-responsavel do card para o filtro refletir sem reload
-          const cardEl = sel.closest('.item-card');
-          if (cardEl) {
-            cardEl.dataset.responsavel = username || '';
-            const filtroSel = document.getElementById('filtro-responsavel-select');
-            if (filtroSel && filtroSel.value) filtrarPorResponsavel(filtroSel.value);
-          }
           // Atualiza container com logo + foto + nome
           const container = sel.closest('[id^="resp-container-"]');
           if (container) {
@@ -1925,282 +1764,73 @@
       // criado separadamente do botão "Criar Quadro do DTQ" em todos os fluxos
       // de analisarDestaque/_executarAnaliseDestaque.
       const innerDiv = box.querySelector('.analise-texto') || box.querySelector('div');
-      const analiseHtml  = innerDiv ? innerDiv.innerHTML : box.innerHTML;
-      const analise      = (innerDiv ? innerDiv.innerText : box.innerText).trim();
+      const analise  = (innerDiv ? innerDiv.innerText : box.innerText).trim();
 
-      if (numero && analise) destaques.push({ numero, descricao, autoria, projeto, analise, analiseHtml });
+      if (numero && analise) destaques.push({ numero, descricao, autoria, projeto, analise });
     });
 
     // Fallback: se nenhuma análise foi localizada via box, tenta pelos botões "Criar Quadro do DTQ",
     // usando o dataset.analise (texto da IA já salvo no próprio botão) sem cortar em 200 chars.
     if (destaques.length === 0) {
       document.querySelectorAll('[data-numero][onclick*="gerarQuadroDTQ"], .btn-dark[data-numero]').forEach(bq => {
-        const htmlOriginal = bq.dataset.analise || '';
-        const analiseTxt   = htmlOriginal.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim();
+        const analiseTxt = bq.dataset.analise ? bq.dataset.analise.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim() : '';
         if (!analiseTxt) return;
         destaques.push({
-          numero:      bq.dataset.numero    || '',
-          descricao:   bq.dataset.descricao || '',
-          autoria:     bq.dataset.autoria   || '',
-          projeto:     bq.dataset.projeto   || '',
-          analise:     analiseTxt,
-          analiseHtml: htmlOriginal,
+          numero:    bq.dataset.numero    || '',
+          descricao: bq.dataset.descricao || '',
+          autoria:   bq.dataset.autoria   || '',
+          projeto:   bq.dataset.projeto   || '',
+          analise:   analiseTxt,
         });
       });
     }
 
-    // ── Extrai texto íntegro e análise sucinta a partir do HTML estruturado ──
-    // O prompt do backend gera HTML com estas seções:
-    //   <p><strong>Objeto do Destaque:</strong> X</p>       → objeto = X
-    //   <blockquote>...</blockquote>                        → texto_integro
-    //   <p><strong>Análise:</strong><br>...</p>             → analise_longa
-    // Também há variações para destaque de emenda:
-    //   <p><strong>Objeto:</strong>...
-    //   <p><strong>Texto da Emenda:</strong></p><blockquote>
-    //   <p><strong>Voto SIM (...):</strong>...</p>
-    //   <p><strong>Voto NÃO (...):</strong>...</p>
-    function extrairSecoes(htmlOrText) {
-      const tmp = document.createElement('div');
-      tmp.innerHTML = htmlOrText || '';
-
-      // Texto íntegro = conteúdo do primeiro <blockquote> encontrado
-      const bq = tmp.querySelector('blockquote');
-      let texto_integro = bq ? bq.innerText.trim() : '';
-
-      // Objeto = primeira <p> que começa com "Objeto" ou "Emenda"
-      let objeto = '';
-      tmp.querySelectorAll('p').forEach(p => {
-        const t = p.innerText.trim();
-        if (!objeto && /^(Objeto|Emenda\s*n[º°])/i.test(t)) {
-          objeto = t.replace(/^Objeto( do Destaque)?:\s*/i, '').trim();
-        }
-      });
-
-      // Análise longa = todas as <p> que começam com "Análise", "Voto SIM", "Voto NÃO"
-      const partes_analise = [];
-      tmp.querySelectorAll('p').forEach(p => {
-        const t = p.innerText.trim();
-        if (/^(Análise|Voto\s+(SIM|NÃO|NAO))/i.test(t)) {
-          partes_analise.push(t);
-        }
-      });
-      const analise_longa = partes_analise.join(' ').trim();
-
-      // Análise sucinta: preferimos o objeto (1 frase). Se ausente, corta a análise longa em ~2 frases (máx ~280 chars).
-      let analise_sucinta = objeto;
-      if (!analise_sucinta && analise_longa) {
-        const frases = analise_longa.split(/(?<=[.!?])\s+/).filter(Boolean);
-        analise_sucinta = frases.slice(0, 2).join(' ').substring(0, 320);
-      }
-      // Fallback final: texto puro cortado
-      if (!analise_sucinta) {
-        analise_sucinta = (tmp.innerText || '').trim().split(/(?<=[.!?])\s+/).slice(0, 2).join(' ').substring(0, 320);
-      }
-
-      return { objeto, texto_integro, analise_sucinta, analise_longa };
-    }
-
-    destaques.forEach(d => {
-      const secoes = extrairSecoes(d.analiseHtml || d.analise);
-      d.texto_integro    = secoes.texto_integro;
-      d.analise_sucinta  = secoes.analise_sucinta;
-      d.analise_completa = secoes.analise_longa || d.analise;
-    });
-
-    // ── Aplica edições salvas em localStorage (se houver) ────────────────────
-    const LS_KEY = 'destaques_edicoes_v1';
-    const eventoId = window.EVENTO_ID || 'sem-evento';
-    let edicoes = {};
-    try { edicoes = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch(e) {}
-    destaques.forEach(d => {
-      const chave = `${eventoId}::${d.numero}`;
-      if (edicoes[chave]) {
-        if (edicoes[chave].texto_integro    != null) d.texto_integro    = edicoes[chave].texto_integro;
-        if (edicoes[chave].analise_sucinta  != null) d.analise_sucinta  = edicoes[chave].analise_sucinta;
-        if (edicoes[chave].analise_completa != null) d.analise_completa = edicoes[chave].analise_completa;
-        d.editado = true;
-      }
-    });
-
-    const popup = window.open('', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+    const popup = window.open('', '_blank', 'width=1000,height=700,scrollbars=yes,resizable=yes');
     const pd = popup.document;
     pd.open(); pd.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Tabela de Destaques</title></head><body></body></html>'); pd.close();
-
     const st = pd.createElement('style');
-    st.textContent = `
-      *{box-sizing:border-box}
-      body{font-family:Arial,sans-serif;padding:20px;background:#fff;margin:0}
-      h2{color:#1a1a2e;border-bottom:3px solid #1a1a2e;padding-bottom:8px;margin:0 0 12px 0;font-size:1.3rem}
-      .subtitulo{color:#666;font-size:12px;margin-bottom:14px}
-      .barra-acoes{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;padding:10px;background:#f5f7ff;border:1px solid #d0d8f0;border-radius:6px}
-      .barra-acoes button{padding:7px 14px;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:5px}
-      .btn-salvar{background:#1A6B3A;color:#fff}
-      .btn-salvar:hover{background:#125027}
-      .btn-reset{background:#B8860B;color:#fff}
-      .btn-reset:hover{background:#8a6408}
-      .btn-print{background:#1a1a2e;color:#fff}
-      .btn-print:hover{background:#000}
-      .aviso-edicao{margin-left:auto;font-size:11px;color:#666;align-self:center}
-      .aviso-edicao.dirty{color:#B8860B;font-weight:700}
-      table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
-      th{background:#1a1a2e;color:#fff;padding:8px 10px;text-align:left;font-size:11px;letter-spacing:.5px}
-      td{border:1px solid #ccc;padding:6px 8px;vertical-align:top;word-wrap:break-word}
-      tr:nth-child(even){background:#f8faff}
-      .num{font-weight:bold;color:#2c3e6b;white-space:nowrap;font-size:11px}
-      .autoria{font-size:10.5px;color:#555}
-      .descricao{font-size:10.5px;color:#333}
-      .col-textointegro{background:#fffef5;font-style:italic;color:#333;font-size:11px;line-height:1.5;white-space:pre-wrap}
-      .col-sucinta{background:#f0f7f0;font-size:11.5px;color:#1a3a20;line-height:1.5;font-weight:500}
-      .col-completa{font-size:10.5px;color:#444;line-height:1.4;max-height:200px;overflow:auto}
-      [contenteditable="true"]{outline:none;transition:background .15s}
-      [contenteditable="true"]:focus{background:#fff8dc !important;box-shadow:inset 0 0 0 2px #B8860B}
-      [contenteditable="true"]:hover{background:rgba(184,134,11,.08)}
-      .badge-editado{display:inline-block;background:#B8860B;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:4px;vertical-align:middle}
-      .col-widths col:nth-child(1){width:34px}
-      .col-widths col:nth-child(2){width:100px}
-      .col-widths col:nth-child(3){width:130px}
-      .col-widths col:nth-child(4){width:180px}
-      .col-widths col:nth-child(5){width:26%}
-      .col-widths col:nth-child(6){width:22%}
-      .col-widths col:nth-child(7){width:auto}
-      @media print{
-        .barra-acoes{display:none}
-        [contenteditable="true"]:focus{background:transparent !important;box-shadow:none}
-        body{padding:0}
-        table{font-size:10px}
-        .col-completa{max-height:none;overflow:visible}
-      }`;
+    st.textContent = `body{font-family:Arial,sans-serif;padding:24px;background:#fff}
+      h2{color:#1a1a2e;border-bottom:3px solid #1a1a2e;padding-bottom:8px;margin-bottom:16px}
+      table{width:100%;border-collapse:collapse;font-size:12px}
+      th{background:#1a1a2e;color:#fff;padding:8px 10px;text-align:left}
+      td{border:1px solid #ccc;padding:8px 10px;vertical-align:top}
+      tr:nth-child(even){background:#f5f7ff}
+      .num{font-weight:bold;color:#2c3e6b;white-space:nowrap}
+      .analise{font-size:11px;color:#444;max-width:400px}
+      .btn-print{margin-top:16px;padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px}
+      @media print{.btn-print{display:none}}`;
     pd.head.appendChild(st);
 
     const h2 = pd.createElement('h2');
     h2.textContent = `Tabela de Destaques — ${projetoFiltro || 'Todos'}`;
     pd.body.appendChild(h2);
 
-    const sub = pd.createElement('div');
-    sub.className = 'subtitulo';
-    sub.innerHTML = `<i>Gerado em ${new Date().toLocaleString('pt-BR')}. Todas as células de texto são editáveis — clique para modificar e depois clique em <b>Salvar edições</b>.</i>`;
-    pd.body.appendChild(sub);
-
     if (destaques.length === 0) {
-      const p = pd.createElement('p');
-      p.textContent = 'Nenhum destaque analisado encontrado. Analise pelo menos um destaque antes de gerar a tabela.';
+      const p = pd.createElement('p'); p.textContent = 'Nenhum destaque analisado encontrado.';
       pd.body.appendChild(p);
-      return;
+    } else {
+      const tbl = pd.createElement('table');
+      const thead = pd.createElement('thead');
+      thead.innerHTML = '<tr><th>#</th><th>Número</th><th>Autoria</th><th>Descrição</th><th>Análise resumida</th></tr>';
+      tbl.appendChild(thead);
+      const tbody = pd.createElement('tbody');
+      destaques.forEach((d, i) => {
+        const tr = pd.createElement('tr');
+        tr.innerHTML = `<td>${i+1}</td>
+          <td class="num">${d.numero}</td>
+          <td>${d.autoria||'—'}</td>
+          <td>${d.descricao||'—'}</td>
+          <td class="analise">${d.analise||'—'}</td>`;
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      pd.body.appendChild(tbl);
     }
 
-    // Barra de ações
-    const barra = pd.createElement('div');
-    barra.className = 'barra-acoes';
-    barra.innerHTML = `
-      <button class="btn-salvar" id="btn-salvar-edicoes">💾 Salvar edições</button>
-      <button class="btn-reset"   id="btn-reset-edicoes">↺ Restaurar originais</button>
-      <button class="btn-print"   id="btn-imprimir">🖨️ Imprimir / Salvar PDF</button>
-      <span class="aviso-edicao" id="aviso-edicao">Edições salvas ficam gravadas neste navegador.</span>
-    `;
-    pd.body.appendChild(barra);
-
-    // Tabela
-    const tbl = pd.createElement('table');
-    tbl.innerHTML = `
-      <colgroup class="col-widths">
-        <col><col><col><col><col><col><col>
-      </colgroup>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Nº Destaque</th>
-          <th>Autoria</th>
-          <th>Descrição</th>
-          <th>Texto Íntegro do Objeto de Destaque</th>
-          <th>Análise Sucinta</th>
-          <th>Análise Completa</th>
-        </tr>
-      </thead>
-      <tbody></tbody>`;
-    const tbody = tbl.querySelector('tbody');
-    destaques.forEach((d, i) => {
-      const tr = pd.createElement('tr');
-      tr.setAttribute('data-numero', d.numero);
-      tr.innerHTML = `
-        <td>${i+1}</td>
-        <td class="num" contenteditable="true" data-campo="numero">${escapeHtmlDest(d.numero)}${d.editado ? '<span class="badge-editado">EDIT</span>' : ''}</td>
-        <td class="autoria" contenteditable="true" data-campo="autoria">${escapeHtmlDest(d.autoria || '—')}</td>
-        <td class="descricao" contenteditable="true" data-campo="descricao">${escapeHtmlDest(d.descricao || '—')}</td>
-        <td class="col-textointegro" contenteditable="true" data-campo="texto_integro">${escapeHtmlDest(d.texto_integro || '(texto íntegro não localizado — edite aqui manualmente)')}</td>
-        <td class="col-sucinta" contenteditable="true" data-campo="analise_sucinta">${escapeHtmlDest(d.analise_sucinta || '—')}</td>
-        <td class="col-completa" contenteditable="true" data-campo="analise_completa">${escapeHtmlDest(d.analise_completa || '—')}</td>`;
-      tbody.appendChild(tr);
-    });
-    pd.body.appendChild(tbl);
-
-    // ── Lógica de edição ─────────────────────────────────────────────────────
-    const aviso = pd.getElementById('aviso-edicao');
-    let dirty = false;
-    tbody.querySelectorAll('[contenteditable="true"]').forEach(cel => {
-      cel.addEventListener('input', () => {
-        dirty = true;
-        aviso.textContent = '● Alterações não salvas — clique em Salvar edições';
-        aviso.classList.add('dirty');
-      });
-    });
-
-    pd.getElementById('btn-salvar-edicoes').addEventListener('click', () => {
-      let ed = {};
-      try { ed = JSON.parse(window.opener.localStorage.getItem(LS_KEY) || '{}'); } catch(e) {}
-      tbody.querySelectorAll('tr').forEach(tr => {
-        const num = tr.getAttribute('data-numero');
-        if (!num) return;
-        const chave = `${eventoId}::${num}`;
-        ed[chave] = ed[chave] || {};
-        tr.querySelectorAll('[contenteditable="true"]').forEach(cel => {
-          const campo = cel.getAttribute('data-campo');
-          const valor = cel.innerText.replace(/EDIT\s*$/, '').trim();
-          ed[chave][campo] = valor;
-        });
-        ed[chave]._saved_at = new Date().toISOString();
-      });
-      try {
-        window.opener.localStorage.setItem(LS_KEY, JSON.stringify(ed));
-        dirty = false;
-        aviso.textContent = `✓ Salvo em ${new Date().toLocaleTimeString('pt-BR')} (persiste neste navegador)`;
-        aviso.classList.remove('dirty');
-      } catch(e) {
-        alert('Erro ao salvar: ' + e.message);
-      }
-    });
-
-    pd.getElementById('btn-reset-edicoes').addEventListener('click', () => {
-      if (!confirm('Restaurar valores originais da análise da IA? Suas edições locais serão apagadas.')) return;
-      try {
-        let ed = JSON.parse(window.opener.localStorage.getItem(LS_KEY) || '{}');
-        tbody.querySelectorAll('tr').forEach(tr => {
-          const num = tr.getAttribute('data-numero');
-          delete ed[`${eventoId}::${num}`];
-        });
-        window.opener.localStorage.setItem(LS_KEY, JSON.stringify(ed));
-        popup.location.reload();
-      } catch(e) {}
-      // Como recarregar preservando estado é complexo, o mais simples é fechar
-      // e pedir para o usuário reabrir a tabela.
-      alert('Edições removidas. Feche esta janela e reabra "Tabela de Destaques" para ver os valores originais da IA.');
-    });
-
-    pd.getElementById('btn-imprimir').addEventListener('click', () => popup.print());
-
-    // Aviso antes de fechar com edições não salvas
-    popup.addEventListener('beforeunload', (e) => {
-      if (dirty) {
-        e.preventDefault();
-        e.returnValue = 'Você tem edições não salvas. Deseja mesmo sair?';
-        return e.returnValue;
-      }
-    });
-  }
-
-  function escapeHtmlDest(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
+    const btnPr = pd.createElement('button'); btnPr.className = 'btn-print';
+    btnPr.textContent = '🖨️ Imprimir / Salvar PDF';
+    btnPr.onclick = () => popup.print();
+    pd.body.appendChild(btnPr);
   }
 
   async function gerarQuadroDTQ(btn) {
@@ -4328,20 +3958,11 @@ function imprimirBanner() {
             </div>
           </div>
           <div id="bp-nota-container">
-            <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+            <div class="d-flex align-items-center justify-content-between mb-2">
               <strong class="small">Nota Técnica:</strong>
-              <div class="d-flex gap-2 flex-wrap" id="bp-nota-toolbar">
+              <div class="d-flex gap-2">
                 <button class="btn btn-sm btn-outline-primary" onclick="gerarNotaBP()">
                   <img src="/static/logo_gemini.svg" style="width:14px;height:14px;vertical-align:middle;" class="me-1">Gerar com IA
-                </button>
-                <button class="btn btn-sm btn-outline-warning" id="bp-btn-editar" onclick="editarNotaBP()">
-                  <i class="fas fa-edit me-1"></i>Editar Nota
-                </button>
-                <button class="btn btn-sm btn-success" id="bp-btn-salvar" style="display:none;" onclick="salvarNotaBP()">
-                  <i class="fas fa-save me-1"></i>Salvar Permanente
-                </button>
-                <button class="btn btn-sm btn-outline-secondary" id="bp-btn-cancelar" style="display:none;" onclick="cancelarEdicaoBP()">
-                  <i class="fas fa-times me-1"></i>Cancelar
                 </button>
                 <button class="btn btn-sm btn-outline-success" onclick="imprimirNotaBP()">
                   <i class="fas fa-print me-1"></i>Imprimir PDF
@@ -4351,11 +3972,9 @@ function imprimirBanner() {
                 </button>
               </div>
             </div>
-            <div id="bp-nota-status" class="small mb-2" style="display:none;"></div>
             <div id="bp-nota" class="border rounded p-3 bg-light" style="min-height:200px;font-size:0.85rem;white-space:pre-wrap;">
               <span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>
             </div>
-            <textarea id="bp-nota-editor" class="form-control" style="display:none;min-height:260px;font-size:0.85rem;font-family:'Segoe UI',Arial,sans-serif;line-height:1.5;"></textarea>
           </div>
         </div>
       </div>
@@ -4612,14 +4231,6 @@ function abrirModalBuscarProposicao(){
   document.getElementById('bp-numero').value = '';
   document.getElementById('bp-ano').value = new Date().getFullYear();
   document.getElementById('bp-nota').innerHTML = '<span class="text-muted fst-italic">Clique em "Gerar com IA" para gerar a nota técnica.</span>';
-  // Reseta modo de edição
-  const editor = document.getElementById('bp-nota-editor');
-  if (editor) { editor.style.display = 'none'; editor.value = ''; }
-  document.getElementById('bp-nota').style.display = 'block';
-  const btnE = document.getElementById('bp-btn-editar');   if (btnE) btnE.style.display = 'inline-flex';
-  const btnS = document.getElementById('bp-btn-salvar');   if (btnS) btnS.style.display = 'none';
-  const btnC = document.getElementById('bp-btn-cancelar'); if (btnC) btnC.style.display = 'none';
-  _bpEscondeStatus();
   new bootstrap.Modal(document.getElementById('modalBuscarProposicao')).show();
 }
 
@@ -4738,120 +4349,6 @@ function imprimirNotaBP(){
   const hr = pd.createElement('hr'); pd.body.appendChild(hr);
   const div = pd.createElement('div'); div.innerHTML = nota; pd.body.appendChild(div);
   const btnP = pd.createElement('button'); btnP.className='no-print'; btnP.style.cssText='margin-top:20px;padding:8px 20px;background:#1A3A5C;color:#fff;border:none;border-radius:4px;cursor:pointer;'; btnP.textContent='🖨️ Imprimir'; btnP.onclick=()=>popup.print(); pd.body.appendChild(btnP);
-}
-
-// ── Edição inline da nota técnica no modal Buscar Proposição ────────────────
-function _bpMostrarStatus(msg, tipo /* success | danger | info */){
-  const el = document.getElementById('bp-nota-status');
-  if (!el) return;
-  const cor = {success:'alert-success', danger:'alert-danger', info:'alert-info', warning:'alert-warning'}[tipo] || 'alert-info';
-  el.className = 'small mb-2 alert py-1 px-2 ' + cor;
-  el.innerHTML = msg;
-  el.style.display = 'block';
-}
-function _bpEscondeStatus(){
-  const el = document.getElementById('bp-nota-status');
-  if (el) el.style.display = 'none';
-}
-
-function editarNotaBP(){
-  if(!_bpDados){ alert('Busque uma proposição primeiro.'); return; }
-  const view   = document.getElementById('bp-nota');
-  const editor = document.getElementById('bp-nota-editor');
-  if (!view || !editor) return;
-
-  // Extrai APENAS o texto da nota (sem o alerta verde "Nota encontrada no banco")
-  // Strip do alerta success que buscarNotaBancoBP insere.
-  const tmp = document.createElement('div');
-  tmp.innerHTML = view.innerHTML;
-  tmp.querySelectorAll('.alert').forEach(a => a.remove());
-  const textoAtual = (tmp.innerText || '').trim();
-
-  editor.value = textoAtual === '' || /^Clique em .Gerar com IA/i.test(textoAtual)
-    ? '' : textoAtual;
-
-  view.style.display   = 'none';
-  editor.style.display = 'block';
-  editor.focus();
-
-  document.getElementById('bp-btn-editar').style.display   = 'none';
-  document.getElementById('bp-btn-salvar').style.display   = 'inline-flex';
-  document.getElementById('bp-btn-cancelar').style.display = 'inline-flex';
-
-  _bpMostrarStatus('<i class="fas fa-info-circle me-1"></i>Editando — ao salvar, a nota é gravada permanentemente no banco e sincronizada com todas as pautas que contêm esta proposição.', 'info');
-  window._bpEditandoBackup = view.innerHTML;  // backup para cancelar
-}
-
-async function salvarNotaBP(){
-  if(!_bpDados){ alert('Busque uma proposição primeiro.'); return; }
-  const editor = document.getElementById('bp-nota-editor');
-  const btn    = document.getElementById('bp-btn-salvar');
-  const conteudo = (editor.value || '').trim();
-  if (!conteudo){ alert('A nota não pode ficar vazia.'); return; }
-
-  const originalBtn = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Salvando…';
-
-  try{
-    const r = await fetch('/salvar_nota_proposicao', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ id_proposicao: _bpDados.id, nota: conteudo })
-    });
-    const j = await r.json();
-    if (!r.ok || !j.ok) throw new Error(j.error || 'Falha ao salvar.');
-
-    // Aplica na view
-    const view = document.getElementById('bp-nota');
-    // Preserva quebras de linha do textarea convertendo \n em <br>
-    const html = conteudo.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])).replace(/\n/g,'<br>');
-    view.style.whiteSpace = 'normal';
-    view.innerHTML =
-      '<div class="alert alert-success py-1 px-2 mb-2 small">' +
-      '<i class="fas fa-check-circle me-1"></i><strong>Nota salva permanentemente</strong>' +
-      ' em ' + j.saved_at.replace(' ', ' às ').substring(0,19) +
-      ' por <strong>' + (j.saved_by || '') + '</strong>' +
-      (j.pautas_atualizadas ? ' <span class="badge bg-info text-dark ms-1">Sincronizada com ' + j.pautas_atualizadas + ' pauta' + (j.pautas_atualizadas > 1 ? 's' : '') + '</span>' : '') +
-      '</div>' + html;
-    _bpDados.nota = conteudo;
-
-    // Volta ao modo view
-    editor.style.display = 'none';
-    view.style.display   = 'block';
-    document.getElementById('bp-btn-editar').style.display   = 'inline-flex';
-    document.getElementById('bp-btn-salvar').style.display   = 'none';
-    document.getElementById('bp-btn-cancelar').style.display = 'none';
-
-    _bpMostrarStatus(
-      '<i class="fas fa-check-circle me-1"></i>Nota atualizada com sucesso' +
-      (j.pautas_atualizadas ? ` — ${j.pautas_atualizadas} pauta(s) sincronizada(s).` : '.'),
-      'success'
-    );
-    // esconde status após 6s
-    setTimeout(_bpEscondeStatus, 6000);
-  } catch(e){
-    _bpMostrarStatus('<i class="fas fa-exclamation-triangle me-1"></i>Erro ao salvar: ' + e.message, 'danger');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = originalBtn;
-  }
-}
-
-function cancelarEdicaoBP(){
-  const view   = document.getElementById('bp-nota');
-  const editor = document.getElementById('bp-nota-editor');
-  if (window._bpEditandoBackup != null) {
-    view.innerHTML = window._bpEditandoBackup;
-    delete window._bpEditandoBackup;
-  }
-  editor.value = '';
-  editor.style.display = 'none';
-  view.style.display   = 'block';
-  document.getElementById('bp-btn-editar').style.display   = 'inline-flex';
-  document.getElementById('bp-btn-salvar').style.display   = 'none';
-  document.getElementById('bp-btn-cancelar').style.display = 'none';
-  _bpEscondeStatus();
 }
 
 function excluirExtraPauta(idProp, cardEl){
@@ -5044,176 +4541,6 @@ function gerarBannerBP(){
         }
       });
     }
-  </script>
-
-  <!-- ═══════════════════════════════════════════════════════════════════
-       MODAL: REORDENAR ITENS DA PAUTA
-       Uso: quando a ordem do sistema divergir do site da Câmara, o
-       usuário abre este modal, arrasta os itens para a ordem correta e
-       salva. A nova ordem é gravada permanente no cache (backend
-       /reordenar_pauta) com data/hora + usuário responsável.
-  ═══════════════════════════════════════════════════════════════════ -->
-  <div class="modal fade" id="modalReordenar" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-scrollable">
-      <div class="modal-content">
-        <div class="modal-header text-white" style="background:linear-gradient(135deg,#6f42c1,#4a2a8a);">
-          <h5 class="modal-title">
-            <i class="fas fa-arrows-alt-v me-2"></i>Reordenar Itens da Pauta
-          </h5>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
-        </div>
-        <div class="modal-body">
-          <div class="alert alert-info small mb-3">
-            <i class="fas fa-info-circle me-1"></i>
-            <strong>Como usar:</strong> arraste os itens pela alça <i class="fas fa-grip-vertical"></i> à esquerda
-            para reordená-los. Ao salvar, a nova ordem substitui permanentemente a atual no cache
-            e fica registrada com data, hora e seu nome. Um <strong>"Atualizar Pauta"</strong>
-            posterior <u>desfaz a reordenação manual</u> e volta à ordem oficial do PDF/API.
-          </div>
-          <ul id="lista-reordenar" class="list-group">
-            <!-- Preenchido via JS ao abrir -->
-          </ul>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
-            <i class="fas fa-times me-1"></i>Cancelar
-          </button>
-          <button type="button" class="btn text-white" id="btn-salvar-reordenacao"
-            style="background:linear-gradient(135deg,#6f42c1,#4a2a8a);"
-            onclick="salvarReordenacao()">
-            <i class="fas fa-save me-1"></i>Salvar Nova Ordem
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- SortableJS: biblioteca leve para drag-and-drop -->
-  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
-
-  <script>
-  /* ───── Reordenação manual da pauta ─────────────────────────────────── */
-  let _sortableInstance = null;
-
-  window.abrirModalReordenar = function() {
-    const modalEl = document.getElementById('modalReordenar');
-    const lista   = document.getElementById('lista-reordenar');
-    if (!modalEl || !lista) {
-      alert('Modal de reordenação não encontrado.');
-      return;
-    }
-
-    // Fonte de itens: prefere ITENS_DATA global; senão, extrai do DOM
-    let fonte = [];
-    if (window.ITENS_DATA && Array.isArray(window.ITENS_DATA) && window.ITENS_DATA.length) {
-      fonte = window.ITENS_DATA
-        .filter(it => it && it.id_principal && !it.eh_extra_pauta)
-        .map(it => ({
-          id:       String(it.id_principal),
-          ordem:    String(it.ordem || ''),
-          projeto:  it.projeto || it.projeto_original || '(sem código)',
-          ementa:   (it.ementa || '').substring(0, 140),
-        }));
-    }
-    // Fallback: lê linhas da tabela renderizada
-    if (!fonte.length) {
-      document.querySelectorAll('tr[data-id-principal], [data-id-principal]').forEach(el => {
-        const id = el.getAttribute('data-id-principal');
-        if (!id || fonte.find(f => f.id === String(id))) return;
-        const proj = el.querySelector('.col-projeto, .projeto-cell, td:nth-child(2)')?.textContent?.trim() || id;
-        fonte.push({ id: String(id), ordem: '', projeto: proj.substring(0,60), ementa: '' });
-      });
-    }
-
-    if (!fonte.length) {
-      alert('Nenhum item da pauta oficial encontrado para reordenar. Carregue a pauta primeiro.');
-      return;
-    }
-
-    // Preenche a lista
-    lista.innerHTML = fonte.map((it, i) => `
-      <li class="list-group-item d-flex align-items-center gap-3"
-          data-id="${it.id}" style="cursor:grab;">
-        <span class="text-muted" style="cursor:grab;font-size:1.2rem;">
-          <i class="fas fa-grip-vertical"></i>
-        </span>
-        <span class="badge bg-secondary" style="min-width:2.2rem;" data-badge-ordem>${i + 1}</span>
-        <div class="flex-grow-1">
-          <div class="fw-bold" style="color:#0d2137;">${escapeHtmlReord(it.projeto)}</div>
-          ${it.ementa ? `<div class="small text-muted">${escapeHtmlReord(it.ementa)}${it.ementa.length >= 140 ? '…' : ''}</div>` : ''}
-        </div>
-      </li>
-    `).join('');
-
-    // Instancia SortableJS (destrói anterior se houver)
-    if (_sortableInstance) { try { _sortableInstance.destroy(); } catch(e){} }
-    _sortableInstance = Sortable.create(lista, {
-      animation: 150,
-      handle: '.fa-grip-vertical',
-      ghostClass: 'bg-warning-subtle',
-      onEnd: renumerarBadgesReordenar,
-    });
-
-    new bootstrap.Modal(modalEl).show();
-  };
-
-  function renumerarBadgesReordenar() {
-    document.querySelectorAll('#lista-reordenar li').forEach((li, i) => {
-      const b = li.querySelector('[data-badge-ordem]');
-      if (b) b.textContent = i + 1;
-    });
-  }
-
-  function escapeHtmlReord(s) {
-    return String(s || '').replace(/[&<>"']/g, c => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }[c]));
-  }
-
-  window.salvarReordenacao = async function() {
-    const btn = document.getElementById('btn-salvar-reordenacao');
-    const evtId = window.EVENTO_ID;
-    if (!evtId) { alert('EVENTO_ID indisponível.'); return; }
-
-    const ids = Array.from(document.querySelectorAll('#lista-reordenar li'))
-      .map(li => li.getAttribute('data-id'))
-      .filter(Boolean);
-
-    if (!ids.length) { alert('Lista vazia.'); return; }
-
-    const original = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Salvando…';
-
-    try {
-      const r = await fetch(`/reordenar_pauta/${evtId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ordem: ids }),
-      });
-      const j = await r.json();
-      if (!r.ok || !j.ok) throw new Error(j.error || 'Falha ao salvar');
-
-      // Atualiza o quadro da sessão sem recarregar
-      const info = document.getElementById('reordenacao-info');
-      if (info && j.reordered_at) {
-        const dt = new Date(j.reordered_at.replace(' ', 'T'));
-        const fmt = dt.toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-        info.innerHTML = `<span class="badge bg-warning text-dark">${fmt}</span>
-          <span class="text-muted small ms-1">por <strong>${escapeHtmlReord(j.reordered_by || '')}</strong></span>
-          <span class="badge bg-success ms-2">✓ Salvo</span>`;
-      }
-
-      bootstrap.Modal.getInstance(document.getElementById('modalReordenar'))?.hide();
-
-      // Recarrega a página após 800ms para exibir a pauta na nova ordem
-      setTimeout(() => location.reload(), 800);
-    } catch (err) {
-      alert('Erro ao salvar reordenação: ' + err.message);
-      btn.disabled = false;
-      btn.innerHTML = original;
-    }
-  };
   </script>
 </body>
 </html>
