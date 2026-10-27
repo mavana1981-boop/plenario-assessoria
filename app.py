@@ -1149,83 +1149,240 @@ def reordenar_por_ordem_oficial(itens, ordem_oficial):
     return itens_ord
 
 def _ementa_parece_truncada(ementa):
-    """A API de LISTAGEM de proposições da Câmara retorna ementas cortadas
-    (geralmente ~140 chars terminando com '...' ou '…', às vezes cortadas no meio
-    de uma palavra sem reticências). Esta heurística identifica os casos típicos."""
+    """A API de LISTAGEM de proposições da Câmara retorna ementas cortadas.
+    Heurística agressiva — na dúvida, trata como truncada e tenta enriquecer
+    (o pior cenário é fazer uma chamada à API individual à toa)."""
     if not ementa:
         return False
     e = ementa.strip()
     if len(e) < 30:
         return False
-    # Caso 1: termina com reticências explícitas
+    # Reticências explícitas
     if e.endswith('...') or e.endswith('…') or e.endswith('..'):
         return True
-    # Caso 2: comprimento suspeito e NÃO termina com pontuação final — provável corte
-    #         (ementas completas da API quase sempre terminam com '.')
-    if len(e) >= 130 and e[-1] not in '.!?)"\'':
+    # Comprimentos suspeitos típicos dos cortes da API da Câmara (140, 150, 200, 250, 300, 500, 1000 chars)
+    tamanhos_suspeitos = {140, 150, 200, 250, 300, 500, 1000}
+    if len(e) in tamanhos_suspeitos:
         return True
-    # Caso 3: termina abruptamente no meio de uma palavra (sem espaço antes dos
-    #         últimos caracteres e sem pontuação)
-    if len(e) >= 130 and ' ' not in e[-25:] and e[-1].isalpha():
+    # Não termina com pontuação final — ementas íntegras quase sempre terminam com .
+    if len(e) >= 100 and e[-1] not in '.!?)"\'':
         return True
+    # Última palavra parece cortada no meio (sem espaço antes do fim, sem pontuação)
+    if len(e) >= 100 and ' ' not in e[-30:] and e[-1].isalpha():
+        return True
+    # Terminou com conectivo/preposição no final (sinal clássico de corte)
+    conectivos_finais = (' de', ' da', ' do', ' das', ' dos', ' e', ' ou', ' para',
+                         ' por', ' com', ' sem', ' em', ' a', ' o', ' as', ' os',
+                         ' que', ' se', ' ao', ' aos', ' à', ' às', ' na', ' no',
+                         ' nas', ' nos', ' sobre', ' entre', ' pelo', ' pela',
+                         ' pelos', ' pelas', ' além', ' bem')
+    e_lower = e.lower().rstrip('.,;:!? ')
+    for c in conectivos_finais:
+        if e_lower.endswith(c):
+            return True
     return False
 
 
-def enriquecer_ementas_truncadas(itens, max_workers=8, timeout=6):
-    """Para cada item com ementa truncada, busca a ementa completa pela API
-    individual /proposicoes/{id} em paralelo. Falha silenciosa por item: se a
-    chamada der erro ou vier ementa menor, mantém a atual."""
+def _ementa_via_api_individual(id_p, timeout=6):
+    """Fonte 1: API individual da Câmara."""
+    try:
+        r = requests.get(
+            f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_p}",
+            headers={'Accept': 'application/json'}, timeout=timeout
+        )
+        if r.ok:
+            return (r.json().get('dados') or {}).get('ementa', '') or ''
+    except Exception as e:
+        logger.warning(f"ementa_via_api_individual id={id_p}: {e}")
+    return ''
+
+
+def _ementa_via_ficha_tramitacao(id_p, timeout=8):
+    """Fonte 2: scrape da ficha de tramitação pública da proposição.
+    URL: camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id}
+    Essa página sempre carrega a ementa íntegra num bloco de ficha."""
+    try:
+        from bs4 import BeautifulSoup
+        url = f"https://www.camara.leg.br/proposicoesWeb/fichadetramitacao?idProposicao={id_p}"
+        r = requests.get(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml',
+        }, timeout=timeout)
+        if not r.ok:
+            return ''
+        soup = BeautifulSoup(r.text, 'html.parser')
+
+        # Tentativa A: label "Ementa:" seguido do texto (dt/dd ou th/td)
+        for tag in soup.find_all(['dt', 'th', 'strong', 'label', 'span']):
+            texto_tag = (tag.get_text(strip=True) or '').strip(':').strip().lower()
+            if texto_tag in ('ementa', 'ementa:'):
+                # procura próximo nó com texto substancial
+                prox = tag.find_next_sibling(['dd', 'td', 'div', 'span', 'p'])
+                if prox:
+                    t = prox.get_text(' ', strip=True)
+                    if t and len(t) > 20:
+                        return _limpar_ementa_scrape(t)
+                # ou pai contém o texto
+                pai = tag.parent
+                if pai:
+                    t = pai.get_text(' ', strip=True)
+                    # remove o próprio rótulo
+                    for lbl in ('Ementa:', 'Ementa'):
+                        if t.startswith(lbl):
+                            t = t[len(lbl):].strip()
+                            break
+                    if t and len(t) > 20:
+                        return _limpar_ementa_scrape(t)
+
+        # Tentativa B: div/p/section com classe ou id contendo "ementa"
+        for el in soup.find_all(attrs={'class': re.compile(r'ementa', re.I)}):
+            t = el.get_text(' ', strip=True)
+            if t and len(t) > 20:
+                return _limpar_ementa_scrape(t)
+        for el in soup.find_all(attrs={'id': re.compile(r'ementa', re.I)}):
+            t = el.get_text(' ', strip=True)
+            if t and len(t) > 20:
+                return _limpar_ementa_scrape(t)
+
+        # Tentativa C: meta tag description costuma trazer a ementa
+        meta = soup.find('meta', attrs={'name': 'description'})
+        if meta and meta.get('content'):
+            t = (meta['content'] or '').strip()
+            if len(t) > 40:
+                return _limpar_ementa_scrape(t)
+    except Exception as e:
+        logger.warning(f"ementa_via_ficha_tramitacao id={id_p}: {e}")
+    return ''
+
+
+def _ementa_via_pagina_nova(id_p, timeout=8):
+    """Fonte 3: página nova de propostas legislativas (SPA que também renderiza ementa no HTML)."""
+    try:
+        from bs4 import BeautifulSoup
+        url = f"https://www.camara.leg.br/propostas-legislativas/{id_p}"
+        r = requests.get(url, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml',
+        }, timeout=timeout)
+        if not r.ok:
+            return ''
+        soup = BeautifulSoup(r.text, 'html.parser')
+        # meta description
+        meta = soup.find('meta', attrs={'name': 'description'})
+        if meta and meta.get('content'):
+            t = (meta['content'] or '').strip()
+            if len(t) > 40:
+                return _limpar_ementa_scrape(t)
+        # og:description
+        meta2 = soup.find('meta', attrs={'property': 'og:description'})
+        if meta2 and meta2.get('content'):
+            t = (meta2['content'] or '').strip()
+            if len(t) > 40:
+                return _limpar_ementa_scrape(t)
+    except Exception as e:
+        logger.warning(f"ementa_via_pagina_nova id={id_p}: {e}")
+    return ''
+
+
+def _limpar_ementa_scrape(texto):
+    """Normaliza o texto da ementa raspado — remove múltiplos espaços e prefixos."""
+    if not texto:
+        return ''
+    t = re.sub(r'\s+', ' ', texto).strip()
+    # Remove prefixo "Ementa:" se vier junto
+    for lbl in ('Ementa: ', 'Ementa:', 'EMENTA: ', 'EMENTA:'):
+        if t.startswith(lbl):
+            t = t[len(lbl):].strip()
+            break
+    return t
+
+
+def _buscar_melhor_ementa(id_p, atual, timeout=8):
+    """Tenta várias fontes em cascata e retorna a melhor (mais longa e não truncada).
+    Retorna (ementa, fonte_usada) — se nenhuma for melhor, retorna ('', '')."""
+    atual = (atual or '').strip()
+    candidatas = []
+
+    fontes = [
+        ('api_individual',   _ementa_via_api_individual),
+        ('ficha_tramitacao', _ementa_via_ficha_tramitacao),
+        ('pagina_nova',      _ementa_via_pagina_nova),
+    ]
+    for nome, fn in fontes:
+        try:
+            e = (fn(id_p, timeout=timeout) or '').strip()
+        except Exception:
+            e = ''
+        if e and len(e) > len(atual):
+            candidatas.append((nome, e))
+            # Se já achou uma que não parece truncada, pode parar
+            if not _ementa_parece_truncada(e):
+                return e, nome
+
+    # Se nenhuma passou pelo filtro de "não truncada", pega a maior disponível
+    if candidatas:
+        candidatas.sort(key=lambda x: len(x[1]), reverse=True)
+        return candidatas[0][1], candidatas[0][0]
+    return '', ''
+
+
+def enriquecer_ementas_truncadas(itens, max_workers=6, timeout=8, retornar_diagnostico=False):
+    """Para cada item com ementa truncada, tenta várias fontes em cascata até achar
+    a versão completa. Retorna número de atualizações, ou dict com diagnóstico detalhado
+    se retornar_diagnostico=True."""
     try:
         from concurrent.futures import ThreadPoolExecutor, as_completed
     except Exception:
-        return 0
+        return {'atualizados': 0, 'detalhes': []} if retornar_diagnostico else 0
 
     candidatos = []
     for i, it in enumerate(itens or []):
         id_p = str(it.get('id_principal') or '')
         if id_p and _ementa_parece_truncada(it.get('ementa', '')):
-            candidatos.append((i, id_p))
+            candidatos.append((i, id_p, (it.get('ementa') or '').strip()))
 
     if not candidatos:
-        return 0
+        return {'atualizados': 0, 'detalhes': []} if retornar_diagnostico else 0
 
-    headers = {'Accept': 'application/json'}
-    def fetch_um(idx_id):
-        idx, id_p = idx_id
-        try:
-            r = requests.get(
-                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_p}",
-                headers=headers, timeout=timeout
-            )
-            if r.ok:
-                ementa_full = (r.json().get('dados') or {}).get('ementa', '')
-                return idx, ementa_full or ''
-        except Exception as e:
-            logger.warning(f"enriquecer_ementas: falha id={id_p}: {e}")
-        return idx, ''
+    def processar(cand):
+        idx, id_p, atual = cand
+        nova, fonte = _buscar_melhor_ementa(id_p, atual, timeout=timeout)
+        return idx, id_p, atual, nova, fonte
 
     atualizados = 0
+    detalhes = []
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futures = [ex.submit(fetch_um, c) for c in candidatos]
+        futures = [ex.submit(processar, c) for c in candidatos]
         for fut in as_completed(futures):
             try:
-                idx, ementa_full = fut.result()
-            except Exception:
+                idx, id_p, atual, nova, fonte = fut.result()
+            except Exception as e:
+                detalhes.append({'id': '?', 'erro': str(e)})
                 continue
-            if not ementa_full:
-                continue
-            atual = (itens[idx].get('ementa') or '').strip()
-            # Só substitui se a nova for maior E não parecer também truncada
-            if len(ementa_full) > len(atual) and not _ementa_parece_truncada(ementa_full):
-                itens[idx]['ementa'] = ementa_full
+            codigo = itens[idx].get('projeto', '') or itens[idx].get('projeto_original', '')
+            if nova and len(nova) > len(atual):
+                itens[idx]['ementa'] = nova
                 atualizados += 1
-            elif len(ementa_full) > len(atual):
-                # Veio maior mas ainda parece truncada — usa mesmo assim (é melhor que a atual)
-                itens[idx]['ementa'] = ementa_full
-                atualizados += 1
+                detalhes.append({
+                    'id': id_p, 'codigo': codigo, 'ordem': itens[idx].get('ordem', ''),
+                    'ok': True, 'fonte': fonte,
+                    'tamanho_antes': len(atual), 'tamanho_depois': len(nova),
+                })
+            else:
+                detalhes.append({
+                    'id': id_p, 'codigo': codigo, 'ordem': itens[idx].get('ordem', ''),
+                    'ok': False, 'fonte_tentada': 'todas',
+                    'tamanho_antes': len(atual), 'tamanho_depois': len(nova or ''),
+                    'motivo': 'nenhuma fonte retornou ementa maior',
+                })
 
     if atualizados:
         logger.info(f"📝 Ementas enriquecidas: {atualizados}/{len(candidatos)} candidatos")
+    else:
+        logger.warning(f"⚠️ Nenhuma ementa enriquecida de {len(candidatos)} candidatos")
+
+    if retornar_diagnostico:
+        return {'atualizados': atualizados, 'detalhes': detalhes, 'total_candidatos': len(candidatos)}
     return atualizados
 
 
@@ -4768,11 +4925,11 @@ def delete_usuario(user_id):
 @app.route('/reenriquecer_ementas/<int:evento_id>', methods=['POST'])
 @login_required
 def reenriquecer_ementas(evento_id):
-    """Varre o cache da pauta, identifica ementas truncadas (típico da API de
-    listagem da Câmara) e busca a versão completa via API individual.
-    Não refaz a extração do PDF nem mexe em notas/orientações/ordem — só substitui
-    o campo 'ementa' dos itens afetados. Útil quando a pauta já está no cache mas
-    algumas ementas vieram cortadas."""
+    """Varre o cache da pauta, identifica ementas truncadas e busca a versão
+    completa em múltiplas fontes em cascata: API individual, ficha de tramitação,
+    página pública nova. Não refaz a extração do PDF nem mexe em notas, orientações,
+    ordem ou reordenação manual — só substitui 'ementa' dos itens afetados.
+    Retorna diagnóstico detalhado por item."""
     if current_user.categoria == 'restrito':
         return jsonify({'error': 'Sem permissão'}), 403
     conn = get_conn()
@@ -4781,24 +4938,45 @@ def reenriquecer_ementas(evento_id):
         c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
         row = c.fetchone()
         if not row:
-            return jsonify({'error': 'Cache da pauta não encontrado'}), 404
+            return jsonify({'error': 'Cache da pauta não encontrado — carregue a pauta primeiro'}), 404
         itens = json.loads(row[0])
-        total_candidatos = sum(1 for it in itens if _ementa_parece_truncada(it.get('ementa', '')))
-        atualizados = enriquecer_ementas_truncadas(itens)
+        total_itens = len(itens)
+        resultado = enriquecer_ementas_truncadas(itens, retornar_diagnostico=True)
+        atualizados = resultado['atualizados']
+        detalhes = resultado['detalhes']
+        total_candidatos = resultado.get('total_candidatos', 0)
+
         if atualizados:
             now_str = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
             c.execute("UPDATE pauta_cache_db SET json_pauta = ?, last_updated = ? WHERE evento_id = ?",
                       (json.dumps(itens), now_str, evento_id))
             conn.commit()
             pauta_cache.pop(str(evento_id), None)
+
+        # Também lista as ementas atuais da pauta para debug (ordem, código, tamanho, final)
+        amostra = []
+        for it in itens:
+            e = (it.get('ementa') or '').strip()
+            amostra.append({
+                'ordem': it.get('ordem', ''),
+                'codigo': it.get('projeto', '') or it.get('projeto_original', ''),
+                'tamanho': len(e),
+                'final': e[-40:] if len(e) > 40 else e,
+                'parece_truncada': _ementa_parece_truncada(e),
+            })
+
         return jsonify({
             'ok': True,
+            'total_itens': total_itens,
             'candidatos': total_candidatos,
             'atualizados': atualizados,
+            'detalhes': detalhes,
+            'amostra_pos_execucao': amostra,
         })
     except Exception as e:
-        logger.error(f"reenriquecer_ementas erro: {e}")
-        return jsonify({'error': str(e)}), 500
+        import traceback
+        logger.error(f"reenriquecer_ementas erro: {e}\n{traceback.format_exc()}")
+        return jsonify({'error': str(e), 'traceback': traceback.format_exc()}), 500
     finally:
         conn.close()
 
