@@ -4419,16 +4419,100 @@ def resumo_ementa():
 @app.route('/resumos_evento/<int:evento_id>')
 @login_required
 def resumos_evento(evento_id):
+    """Retorna resumos IA salvos para o evento, FILTRANDO automaticamente os
+    resumos ruins (menos de 4 palavras ou menos de 20 chars) — assim o frontend
+    pede regeração em vez de exibir lixo antigo."""
     conn = get_conn()
     c = conn.cursor()
     try:
         c.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
         rows = c.fetchall()
-        return jsonify({str(r[0]): r[1] for r in rows})
-    except Exception:
+        bons = {}
+        descartados = 0
+        for id_p, resumo in rows:
+            r = (resumo or '').strip()
+            qtd_palavras = len(r.split())
+            if qtd_palavras >= 4 and len(r) >= 20:
+                bons[str(id_p)] = r
+            else:
+                descartados += 1
+        if descartados:
+            logger.info(f"resumos_evento {evento_id}: {descartados} resumo(s) ruim(s) ignorado(s), {len(bons)} válido(s) retornado(s)")
+        return jsonify(bons)
+    except Exception as e:
+        logger.warning(f"resumos_evento erro: {e}")
         return jsonify({})
     finally:
         conn.close()
+
+
+@app.route('/regenerar_resumo_ia', methods=['POST'])
+@login_required
+def regenerar_resumo_ia():
+    """Apaga o resumo salvo de UMA proposição e re-gera via IA imediatamente.
+    Usado quando o resumo em cache veio ruim (uma palavra, truncado, etc.).
+    Body: {evento_id, id_proposicao, projeto, ementa, autor}"""
+    if current_user.categoria == 'restrito':
+        return jsonify({'error': 'Sem permissão'}), 403
+    data = request.get_json() or {}
+    evento_id = data.get('evento_id')
+    id_prop   = str(data.get('id_proposicao', ''))
+    if not evento_id or not id_prop:
+        return jsonify({'error': 'evento_id e id_proposicao obrigatórios'}), 400
+
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        # 1. Apaga do cache
+        c.execute('DELETE FROM resumos_ia WHERE evento_id=? AND id_proposicao=?',
+                  (evento_id, id_prop))
+        conn.commit()
+        logger.info(f"regenerar_resumo_ia: cache de {id_prop}@{evento_id} apagado")
+    except Exception as e:
+        logger.warning(f"regenerar_resumo_ia delete falhou: {e}")
+    finally:
+        conn.close()
+
+    # 2. Chama a geração reaproveitando o impl existente
+    gerado = resumo_ementa_impl({
+        'projeto':      data.get('projeto', ''),
+        'ementa':       data.get('ementa', ''),
+        'autor':        data.get('autor', ''),
+        'id_principal': id_prop,
+    })
+    # 3. Se vier um resumo bom, salva no banco já corrigido
+    try:
+        import json as _json
+        body = gerado.get_json() if hasattr(gerado, 'get_json') else _json.loads(gerado.data)
+    except Exception:
+        body = {}
+    novo = (body.get('resumo') or '').strip()
+    if novo and len(novo.split()) >= 4 and len(novo) >= 20:
+        try:
+            conn2 = get_conn()
+            c2 = conn2.cursor()
+            c2.execute('''CREATE TABLE IF NOT EXISTS resumos_ia (
+                evento_id INTEGER, id_proposicao TEXT, resumo TEXT,
+                PRIMARY KEY (evento_id, id_proposicao))''')
+            if USE_POSTGRES:
+                c2.execute('''INSERT INTO resumos_ia (evento_id, id_proposicao, resumo) VALUES (%s,%s,%s)
+                              ON CONFLICT (evento_id, id_proposicao) DO UPDATE SET resumo=EXCLUDED.resumo''',
+                           (evento_id, id_prop, novo))
+            else:
+                c2.execute('INSERT OR REPLACE INTO resumos_ia (evento_id, id_proposicao, resumo) VALUES (?,?,?)',
+                           (evento_id, id_prop, novo))
+            conn2.commit()
+            conn2.close()
+            logger.info(f"regenerar_resumo_ia: novo resumo salvo para {id_prop} ({len(novo)} chars)")
+        except Exception as e:
+            logger.warning(f"regenerar_resumo_ia save falhou: {e}")
+
+    return jsonify({
+        'ok': bool(novo),
+        'resumo': novo,
+        'motivo': body.get('motivo', ''),
+        'fonte': body.get('fonte', ''),
+    })
 
 @app.route('/salvar_resumo_ia', methods=['POST'])
 @login_required
@@ -4685,21 +4769,54 @@ Ementa: {ementa}
 Responda APENAS com o resumo, sem introdução, sem aspas."""
 
     # Usa ia_chain: Groq → Cloudflare → Gemini
+    # ATENÇÃO: max_tokens precisa ser SUFICIENTE para 1 linha completa em pt-BR.
+    # Em português, cada palavra consome ~2-3 tokens (vs 1-1.3 em inglês), então
+    # 80 tokens dão só ~25-30 palavras — e o modelo frequentemente corta no meio
+    # da primeira frase, gerando "resumos" com uma única palavra ou frase incompleta.
+    # 220 tokens dão folga para 1 linha longa (~60 palavras pt-BR) + buffer de segurança.
     try:
-        texto, fonte = ia_chain(prompt, max_tokens=80, temperatura=0.4, contexto="resumo_ementa")
-        texto = texto.strip()
+        texto, fonte = ia_chain(prompt, max_tokens=220, temperatura=0.4, contexto="resumo_ementa")
+        texto = (texto or '').strip()
+
+        # Normaliza: remove aspas, prefixos comuns e múltiplos espaços
+        texto = re.sub(r'^["\'\s]+|["\'\s]+$', '', texto)
+        for prefixo in ('Resumo:', 'RESUMO:', 'resumo:', 'R:', 'r:'):
+            if texto.startswith(prefixo):
+                texto = texto[len(prefixo):].strip()
+        texto = re.sub(r'\s+', ' ', texto)
+
+        # ── VALIDAÇÕES DE QUALIDADE ──
+        palavras = texto.split()
+        qtd_palavras = len(palavras)
+        qtd_chars = len(texto)
+
+        # Rejeita se tiver menos de 4 palavras ou menos de 20 caracteres
+        if qtd_palavras < 4 or qtd_chars < 20:
+            logger.warning(f"resumo_ementa: resposta muito curta ({qtd_palavras} palavras, {qtd_chars} chars): '{texto}' — descartando")
+            return jsonify({'resumo': '', 'motivo': 'resposta muito curta (modelo retornou poucas palavras)'})
+
+        # Rejeita se terminar no meio de uma palavra (sem pontuação final e última palavra "cortada")
+        # Sinal: termina sem ., !, ?, ), " e última palavra tem só 1-2 chars (típico de corte)
+        if texto[-1] not in '.!?)"\'':
+            # Se tem muitos tokens e cortou no final, provavelmente estourou max_tokens
+            if qtd_chars > 180 or (qtd_chars > 50 and len(palavras[-1]) <= 2):
+                logger.warning(f"resumo_ementa: possível truncamento no final: '{texto[-30:]}' — descartando")
+                return jsonify({'resumo': '', 'motivo': 'resumo parece ter sido cortado no final'})
+
         # Rejeita se for igual ou muito similar à ementa
         ementa_norm = re.sub(r'\s+', ' ', ementa.strip().lower())
         texto_norm  = re.sub(r'\s+', ' ', texto.lower())
         if (texto_norm == ementa_norm or
-            ementa_norm[:80] in texto_norm or
-            texto_norm[:80] in ementa_norm):
-            logger.warning(f"Resumo igual à ementa — descartando")
-            return jsonify({'resumo': ''})
-        return jsonify({'resumo': texto})
+            (len(ementa_norm) >= 80 and ementa_norm[:80] in texto_norm) or
+            (len(texto_norm)  >= 80 and texto_norm[:80]  in ementa_norm)):
+            logger.warning(f"resumo_ementa: igual à ementa — descartando")
+            return jsonify({'resumo': '', 'motivo': 'resumo veio igual à ementa'})
+
+        logger.info(f"resumo_ementa OK ({fonte}, {qtd_palavras} palavras, {qtd_chars} chars)")
+        return jsonify({'resumo': texto, 'fonte': fonte})
     except Exception as e:
         logger.warning(f"resumo_ementa: todos provedores falharam: {e}")
-        return jsonify({'resumo': ''})
+        return jsonify({'resumo': '', 'motivo': f'erro na IA: {e}'})
 
 @app.route('/enriquecer_ementa', methods=['POST'])
 @login_required
