@@ -174,45 +174,38 @@
         if (!r.ok || !j.ok) {
           throw new Error(j.error || ('HTTP ' + r.status));
         }
+        const linkDebug = '/debug_ementas/' + window.EVENTO_ID;
         if (j.atualizados > 0) {
-          status.innerHTML = `<span class="text-success">✓ ${j.atualizados} ementa(s) corrigida(s) — recarregando…</span>`;
+          status.innerHTML = `<span class="text-success">✓ ${j.atualizados} ementa(s) corrigida(s) — recarregando…</span>
+            <a href="${linkDebug}" target="_blank" class="small ms-2">(ver diagnóstico completo)</a>`;
           console.log('[reenriquecer] detalhes:', j.detalhes);
-          setTimeout(() => location.reload(), 1200);
+          setTimeout(() => location.reload(), 1500);
           return;
         }
         // Nenhuma atualizada — mostra diagnóstico detalhado para o usuário entender
-        const amostra = j.amostra_pos_execucao || [];
-        const truncadas = amostra.filter(a => a.parece_truncada);
-        let html = `<div class="mt-2 p-2 small" style="background:#fff3cd;border:1px solid #ffc107;border-radius:4px;max-width:720px;">`;
+        let html = `<div class="mt-2 p-2 small" style="background:#fff3cd;border:1px solid #ffc107;border-radius:4px;max-width:820px;">`;
         html += `<strong>Diagnóstico:</strong> ${j.total_itens} itens na pauta, `;
-        html += `<strong>${j.candidatos}</strong> detectado(s) como truncado(s), `;
-        html += `<strong>${j.atualizados}</strong> corrigido(s).<br>`;
+        html += `${j.candidatos} tentativa(s), `;
+        html += `<strong>${j.atualizados}</strong> substituição(ões).<br>`;
+        html += `<a href="${linkDebug}" target="_blank" class="btn btn-sm btn-outline-primary mt-2">
+          <i class="fas fa-microscope me-1"></i>Abrir diagnóstico profundo (todas as fontes por item)
+        </a><br>`;
+        html += `<em class="d-block mt-2">Esta página mostra, para cada item, o que vem de cada fonte externa (API individual, ficha de tramitação, página nova) e permite entender exatamente por que uma substituição não aconteceu.</em>`;
 
-        if (j.candidatos === 0) {
-          html += '<em>Nenhum item foi considerado truncado pela heurística. Veja abaixo a amostra — se algum deveria ter sido corrigido, me diga o nº de ordem para eu ajustar a detecção.</em>';
-        } else if (j.detalhes && j.detalhes.length) {
-          html += '<em>Detalhes dos candidatos (fontes tentadas: API individual, ficha de tramitação, página nova):</em>';
-          html += '<ul class="mb-0 mt-1" style="padding-left:18px;">';
-          for (const d of j.detalhes) {
-            const marca = d.ok ? '✓' : '✗';
-            const info  = d.ok
-              ? `<strong>${d.codigo}</strong> (item ${d.ordem}): ${d.tamanho_antes}→${d.tamanho_depois} chars, fonte: ${d.fonte}`
-              : `<strong>${d.codigo}</strong> (item ${d.ordem}): ${d.tamanho_antes} chars, ${d.motivo || d.erro || 'falhou'}`;
-            html += `<li>${marca} ${info}</li>`;
-          }
-          html += '</ul>';
-        }
-
-        // Mostra amostra de todos os itens para debug
-        if (truncadas.length) {
-          html += `<details class="mt-2"><summary style="cursor:pointer;"><strong>Ver ${truncadas.length} item(s) ainda marcados como truncados</strong></summary>`;
-          html += '<ul class="mb-0 mt-1" style="padding-left:18px;font-family:monospace;font-size:11px;">';
-          for (const a of truncadas) {
-            html += `<li>Item ${a.ordem} — ${a.codigo} — ${a.tamanho} chars — fim: "…${a.final.replace(/</g,'&lt;')}"</li>`;
-          }
+        if (j.detalhes && j.detalhes.length) {
+          html += `<details class="mt-2"><summary style="cursor:pointer;"><strong>Ver resumo das ${j.detalhes.length} tentativas</strong></summary>`;
+          html += '<ul class="mb-0 mt-1" style="padding-left:18px;font-size:11px;">';
+          const falhas = j.detalhes.filter(d => !d.ok);
+          const sucessos = j.detalhes.filter(d => d.ok);
+          sucessos.forEach(d => {
+            html += `<li>✓ <strong>${d.codigo}</strong> (item ${d.ordem}): ${d.tamanho_antes}→${d.tamanho_depois} chars via <code>${d.fonte}</code></li>`;
+          });
+          falhas.forEach(d => {
+            const marca = d.parecia_truncada ? '⚠' : '·';
+            html += `<li>${marca} ${d.codigo} (item ${d.ordem}): ${d.tamanho_antes} chars — ${d.motivo}${d.parecia_truncada ? ' <span class="text-danger">(heurística disse: truncada)</span>' : ''}</li>`;
+          });
           html += '</ul></details>';
         }
-
         html += `</div>`;
         status.innerHTML = html;
         btn.disabled = false; btn.innerHTML = orig;
