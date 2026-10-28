@@ -1155,11 +1155,11 @@ def _ementa_parece_truncada(ementa):
     if not ementa:
         return False
     e = ementa.strip()
-    if len(e) < 30:
-        return False
-    # Reticências explícitas
+    # Reticências explícitas — sinal inequívoco, independe de tamanho
     if e.endswith('...') or e.endswith('…') or e.endswith('..'):
         return True
+    if len(e) < 30:
+        return False
     # Comprimentos suspeitos típicos dos cortes da API da Câmara (140, 150, 200, 250, 300, 500, 1000 chars)
     tamanhos_suspeitos = {140, 150, 200, 250, 300, 500, 1000}
     if len(e) in tamanhos_suspeitos:
@@ -1326,26 +1326,33 @@ def _buscar_melhor_ementa(id_p, atual, timeout=8):
     return '', ''
 
 
-def enriquecer_ementas_truncadas(itens, max_workers=6, timeout=8, retornar_diagnostico=False):
-    """Para cada item com ementa truncada, tenta várias fontes em cascata até achar
-    a versão completa. Retorna número de atualizações, ou dict com diagnóstico detalhado
-    se retornar_diagnostico=True."""
+def enriquecer_ementas_truncadas(itens, max_workers=6, timeout=8, retornar_diagnostico=False, forcar_todos=False):
+    """Estratégia revisada: por padrão TENTA TODOS os itens (não confia na heurística),
+    substituindo somente quando a fonte externa retornar ementa estritamente maior.
+    Isso elimina falsos negativos (ementa cortada que não bate na heurística) e
+    falsos positivos (ementa íntegra que a heurística marcou errado — como vai
+    pedir a mesma à API, se a atual já for a maior, não substitui).
+
+    Se forcar_todos=False, ainda inclui todos — a flag existe para compatibilidade."""
     try:
         from concurrent.futures import ThreadPoolExecutor, as_completed
     except Exception:
         return {'atualizados': 0, 'detalhes': []} if retornar_diagnostico else 0
 
+    # Monta lista de todos os itens com id — não filtra por heurística
     candidatos = []
     for i, it in enumerate(itens or []):
         id_p = str(it.get('id_principal') or '')
-        if id_p and _ementa_parece_truncada(it.get('ementa', '')):
-            candidatos.append((i, id_p, (it.get('ementa') or '').strip()))
+        if not id_p:
+            continue
+        candidatos.append((i, id_p, (it.get('ementa') or '').strip()))
 
     if not candidatos:
         return {'atualizados': 0, 'detalhes': []} if retornar_diagnostico else 0
 
     def processar(cand):
         idx, id_p, atual = cand
+        # Pede todas as fontes em paralelo e retorna o maior
         nova, fonte = _buscar_melhor_ementa(id_p, atual, timeout=timeout)
         return idx, id_p, atual, nova, fonte
 
@@ -1360,30 +1367,78 @@ def enriquecer_ementas_truncadas(itens, max_workers=6, timeout=8, retornar_diagn
                 detalhes.append({'id': '?', 'erro': str(e)})
                 continue
             codigo = itens[idx].get('projeto', '') or itens[idx].get('projeto_original', '')
+            ordem = itens[idx].get('ordem', '')
+            heur_antes = _ementa_parece_truncada(atual)
             if nova and len(nova) > len(atual):
                 itens[idx]['ementa'] = nova
                 atualizados += 1
                 detalhes.append({
-                    'id': id_p, 'codigo': codigo, 'ordem': itens[idx].get('ordem', ''),
+                    'id': id_p, 'codigo': codigo, 'ordem': ordem,
                     'ok': True, 'fonte': fonte,
                     'tamanho_antes': len(atual), 'tamanho_depois': len(nova),
+                    'parecia_truncada': heur_antes,
                 })
             else:
                 detalhes.append({
-                    'id': id_p, 'codigo': codigo, 'ordem': itens[idx].get('ordem', ''),
-                    'ok': False, 'fonte_tentada': 'todas',
-                    'tamanho_antes': len(atual), 'tamanho_depois': len(nova or ''),
-                    'motivo': 'nenhuma fonte retornou ementa maior',
+                    'id': id_p, 'codigo': codigo, 'ordem': ordem,
+                    'ok': False,
+                    'tamanho_antes': len(atual),
+                    'tamanho_externa': len(nova or ''),
+                    'motivo': 'ementa atual já é maior ou igual às fontes externas' if nova else 'nenhuma fonte retornou ementa',
+                    'parecia_truncada': heur_antes,
                 })
 
     if atualizados:
-        logger.info(f"📝 Ementas enriquecidas: {atualizados}/{len(candidatos)} candidatos")
+        logger.info(f"📝 Ementas enriquecidas: {atualizados}/{len(candidatos)} tentativas")
     else:
-        logger.warning(f"⚠️ Nenhuma ementa enriquecida de {len(candidatos)} candidatos")
+        logger.warning(f"⚠️ Nenhuma ementa enriquecida de {len(candidatos)} tentativas")
 
     if retornar_diagnostico:
         return {'atualizados': atualizados, 'detalhes': detalhes, 'total_candidatos': len(candidatos)}
     return atualizados
+
+
+def diagnostico_ementa_item(id_p, atual, timeout=8):
+    """Diagnóstico profundo de UM item: busca em todas as fontes separadamente
+    e retorna comprimento + últimos 60 chars de cada uma. Para debug visual."""
+    atual = (atual or '').strip()
+    res = {
+        'id': id_p,
+        'atual': {
+            'tamanho': len(atual),
+            'fim': atual[-80:] if len(atual) > 80 else atual,
+            'parece_truncada': _ementa_parece_truncada(atual),
+        },
+        'fontes': {},
+    }
+    fontes = [
+        ('api_individual',   _ementa_via_api_individual),
+        ('ficha_tramitacao', _ementa_via_ficha_tramitacao),
+        ('pagina_nova',      _ementa_via_pagina_nova),
+    ]
+    for nome, fn in fontes:
+        try:
+            e = (fn(id_p, timeout=timeout) or '').strip()
+            res['fontes'][nome] = {
+                'tamanho': len(e),
+                'fim': e[-80:] if len(e) > 80 else e,
+                'ok': bool(e),
+                'maior_que_atual': len(e) > len(atual),
+            }
+        except Exception as ex:
+            res['fontes'][nome] = {'erro': str(ex)}
+    # Decisão final que o enriquecer teria tomado
+    melhor_nome = None
+    melhor_tam = len(atual)
+    for nome, info in res['fontes'].items():
+        if info.get('ok') and info.get('tamanho', 0) > melhor_tam:
+            melhor_tam = info['tamanho']
+            melhor_nome = nome
+    res['decisao'] = {
+        'substituiria_por': melhor_nome,
+        'tamanho_final': melhor_tam,
+    }
+    return res
 
 
 def fetch_pauta(evento_id, force_reload=False):
@@ -4920,6 +4975,99 @@ def delete_usuario(user_id):
         logger.error(f"Erro delete_usuario: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+
+@app.route('/debug_ementas/<int:evento_id>', methods=['GET'])
+@login_required
+def debug_ementas(evento_id):
+    """Diagnóstico profundo: para cada item da pauta, mostra comprimento + fim
+    da ementa atual e de CADA fonte externa separadamente. Resposta inclui a
+    decisão que o enriquecimento tomaria. HTML visual se Accept=text/html,
+    JSON caso contrário."""
+    if current_user.categoria == 'restrito':
+        return jsonify({'error': 'Sem permissão'}), 403
+    item_filtro = request.args.get('ordem', '').strip()  # opcional: só o item X
+    conn = get_conn()
+    c = conn.cursor()
+    try:
+        c.execute("SELECT json_pauta FROM pauta_cache_db WHERE evento_id = ?", (evento_id,))
+        row = c.fetchone()
+        if not row:
+            return jsonify({'error': 'Pauta não está no cache'}), 404
+        itens = json.loads(row[0])
+
+        alvos = []
+        for it in itens:
+            if item_filtro and str(it.get('ordem', '')) != item_filtro:
+                continue
+            alvos.append(it)
+
+        if not alvos:
+            return jsonify({'error': f'Item {item_filtro} não encontrado'}), 404
+
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+        except Exception:
+            resultados = [diagnostico_ementa_item(str(it.get('id_principal', '')), it.get('ementa', '')) for it in alvos]
+        else:
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                resultados = list(ex.map(
+                    lambda it: diagnostico_ementa_item(str(it.get('id_principal', '')), it.get('ementa', '')),
+                    alvos
+                ))
+            # anexa metadata do item (ordem, código)
+            for it, r in zip(alvos, resultados):
+                r['ordem'] = it.get('ordem', '')
+                r['codigo'] = it.get('projeto', '') or it.get('projeto_original', '')
+
+        if 'text/html' in (request.headers.get('Accept') or ''):
+            html = ['<html><head><meta charset="utf-8"><title>Diagnóstico Ementas</title>',
+                    '<style>body{font-family:system-ui,sans-serif;padding:20px;max-width:1200px;margin:0 auto;background:#f5f7fa;}',
+                    'h1{color:#1A3A5C;}table{width:100%;border-collapse:collapse;margin:12px 0;background:#fff;font-size:12px;}',
+                    'th{background:#1A3A5C;color:#fff;padding:6px;text-align:left;}',
+                    'td{padding:6px;border-bottom:1px solid #eee;vertical-align:top;}',
+                    '.hdr{background:#eef4fa;padding:10px;border-radius:6px;margin:14px 0 6px;}',
+                    '.hdr strong{color:#1A3A5C;font-size:14px;}',
+                    '.trunc{color:#c0392b;font-weight:700;}',
+                    '.ok{color:#1A6B3A;font-weight:700;}',
+                    '.decisao{background:#fff3cd;padding:6px 10px;border-left:3px solid #ffc107;margin-top:4px;}',
+                    'code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:11px;}',
+                    '</style></head><body>',
+                    f'<h1>Diagnóstico de Ementas — Evento {evento_id}</h1>']
+            for r in resultados:
+                html.append(f'<div class="hdr"><strong>Item {r.get("ordem","?")} — {r.get("codigo","?")}</strong> (id {r["id"]})</div>')
+                html.append('<table><thead><tr><th style="width:160px">Fonte</th><th style="width:70px">Tamanho</th><th>Últimos 80 chars</th><th style="width:90px">Status</th></tr></thead><tbody>')
+                a = r['atual']
+                marca_atual = '<span class="trunc">TRUNCADA</span>' if a['parece_truncada'] else '<span class="ok">OK</span>'
+                html.append(f'<tr><td><strong>ATUAL (cache)</strong></td><td>{a["tamanho"]}</td><td><code>…{escape_html_simple(a["fim"])}</code></td><td>{marca_atual}</td></tr>')
+                for nome, info in r['fontes'].items():
+                    if 'erro' in info:
+                        html.append(f'<tr><td>{nome}</td><td colspan="2"><span class="trunc">ERRO: {escape_html_simple(info["erro"])}</span></td><td>—</td></tr>')
+                    else:
+                        marca = '<span class="ok">↑ MAIOR</span>' if info.get('maior_que_atual') else '≤ atual'
+                        html.append(f'<tr><td>{nome}</td><td>{info["tamanho"]}</td><td><code>…{escape_html_simple(info["fim"])}</code></td><td>{marca}</td></tr>')
+                html.append('</tbody></table>')
+                dec = r['decisao']
+                if dec['substituiria_por']:
+                    html.append(f'<div class="decisao">✓ O enriquecimento <strong>substituiria</strong> por <code>{dec["substituiria_por"]}</code> ({dec["tamanho_final"]} chars)</div>')
+                else:
+                    html.append(f'<div class="decisao">✗ O enriquecimento <strong>NÃO substituiria</strong>: nenhuma fonte retornou ementa maior que a atual ({a["tamanho"]} chars)</div>')
+            html.append('</body></html>')
+            from flask import Response
+            return Response('\n'.join(html), mimetype='text/html')
+
+        return jsonify({'evento_id': evento_id, 'itens': resultados})
+    except Exception as e:
+        import traceback
+        logger.error(f"debug_ementas erro: {e}\n{traceback.format_exc()}")
+        return jsonify({'error': str(e), 'traceback': traceback.format_exc()}), 500
+    finally:
+        conn.close()
+
+
+def escape_html_simple(s):
+    """HTML escape minimalista para o endpoint de debug."""
+    return str(s or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
 
 
 @app.route('/reenriquecer_ementas/<int:evento_id>', methods=['POST'])
