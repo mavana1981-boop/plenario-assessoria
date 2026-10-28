@@ -152,12 +152,17 @@
         </span>
         {% if user_categoria != 'restrito' %}
         <br>
-        <button type="button" class="btn btn-sm btn-outline-info mt-2"
-                style="font-size:0.72rem;padding:2px 8px;" onclick="reenriquecerEmentasPauta(this)"
-                title="Busca na API individual da Câmara a ementa completa dos itens cuja descrição foi cortada">
-          <i class="fas fa-magic me-1"></i>Corrigir ementas truncadas
+        <button type="button" class="btn btn-sm btn-outline-info mt-2 me-2"
+                style="font-size:0.72rem;padding:2px 8px;" onclick="regenerarResumosRuinsPauta(this)"
+                title="Varre todos os resumos IA da pauta e regera os que estão curtos/truncados (ex: uma palavra só)">
+          <i class="fas fa-sync-alt me-1"></i>Regenerar resumos IA ruins
         </button>
-        <span id="reenrich-status" class="small ms-2"></span>
+        <button type="button" class="btn btn-sm btn-outline-secondary mt-2"
+                style="font-size:0.72rem;padding:2px 8px;" onclick="reenriquecerEmentasPauta(this)"
+                title="(Avançado) Corrige a EMENTA oficial — não o resumo da IA. Usar só se a ementa longa aparecer cortada.">
+          <i class="fas fa-magic me-1"></i>Corrigir ementas oficiais
+        </button>
+        <span id="reenrich-status" class="small d-block mt-1"></span>
         {% endif %}
       </div>
     </div>
@@ -844,67 +849,129 @@
       window.resumoCache = window.resumoCache || {};
       const resumoCache = window.resumoCache;
 
-    async function carregarResumoIA(el) {
+    // Avalia se um resumo IA é "ruim" (truncado / curto demais) e deve ser rejeitado/regenerado
+    function _resumoEhRuim(txt) {
+      const t = (txt || '').trim();
+      if (!t) return true;
+      const palavras = t.split(/\s+/).filter(Boolean);
+      // < 4 palavras → ruim (típico "Regulamenta")
+      if (palavras.length < 4) return true;
+      // < 20 chars → ruim
+      if (t.length < 20) return true;
+      // Termina sem pontuação final E parece cortado no meio
+      const ultChar = t.charAt(t.length - 1);
+      const terminaBem = /[.!?)"'»”]/.test(ultChar);
+      if (!terminaBem && t.length > 50) {
+        const ult = palavras[palavras.length - 1] || '';
+        // Última palavra muito curta (1-2 chars) sem pontuação → cortado
+        if (ult.length <= 2) return true;
+      }
+      return false;
+    }
+
+    async function carregarResumoIA(el, forceRegen = false) {
       const id     = el.dataset.id;
       const proj   = el.dataset.projeto;
       const ementa = el.dataset.ementa;
       const autor  = el.dataset.autor;
-      if (resumoCache[id]) {
-        el.textContent = resumoCache[id];
-        el.style.display = 'block';
+      if (!forceRegen && resumoCache[id] && !_resumoEhRuim(resumoCache[id])) {
+        _renderResumoIA(el, resumoCache[id], id);
         return;
       }
+      // Se force ou cache ruim, limpa o cache local
+      if (forceRegen || (resumoCache[id] && _resumoEhRuim(resumoCache[id]))) {
+        delete resumoCache[id];
+      }
+
+      const endpoint = forceRegen ? '/regenerar_resumo_ia' : '/resumo_ementa';
+      const body = forceRegen
+        ? {evento_id: window.EVENTO_ID, id_proposicao: id, projeto: proj, ementa, autor}
+        : {id_principal: id, projeto: proj, ementa, autor};
+
       try {
-        const r = await fetch('/resumo_ementa', {
+        const r = await fetch(endpoint, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({id_principal: id, projeto: proj, ementa, autor})
+          body: JSON.stringify(body)
         });
         const j = await r.json();
         if (j.resumo) {
-          // Rejeita resumo igual (ou quase igual) à ementa — força branco
           const resumoLimpo = j.resumo.trim();
           const ementaLimpa = (ementa || '').trim();
           const muitoSimilar = resumoLimpo.length > 20 &&
             (resumoLimpo === ementaLimpa ||
              ementaLimpa.startsWith(resumoLimpo.substring(0, Math.min(80, resumoLimpo.length))) ||
              resumoLimpo.startsWith(ementaLimpa.substring(0, Math.min(80, ementaLimpa.length))));
-          if (muitoSimilar) return; // deixa em branco
+          if (muitoSimilar) return;
+
+          // Validação final: se o servidor devolveu, mas ainda vem ruim, abandona
+          if (_resumoEhRuim(resumoLimpo)) {
+            console.warn('[resumo-ia] descartado por qualidade:', id, resumoLimpo);
+            el.innerHTML = `<span class="text-muted small">⚠ resumo IA ruim — <a href="#" onclick="regenerarResumoIA('${id}');return false;">clique para regenerar</a></span>`;
+            el.style.display = 'block';
+            return;
+          }
           resumoCache[id] = resumoLimpo;
-          el.textContent = j.resumo;
+          _renderResumoIA(el, resumoLimpo, id);
+          // Se não foi regen (que já salva no backend), persiste
+          if (!forceRegen) {
+            fetch('/salvar_resumo_ia', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({evento_id: window.EVENTO_ID, id_principal: id, resumo: resumoLimpo})
+            }).catch(()=>{});
+          }
+        } else if (j.motivo) {
+          // Backend recusou (resumo ruim detectado no servidor)
+          el.innerHTML = `<span class="text-muted small">⚠ ${j.motivo} — <a href="#" onclick="regenerarResumoIA('${id}');return false;">tentar novamente</a></span>`;
           el.style.display = 'block';
-          // Salva no backend para exportar/infográfico
-          fetch('/salvar_resumo_ia', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({evento_id: window.EVENTO_ID, id_principal: id, resumo: j.resumo})
-          }).catch(()=>{});
         }
       } catch(e) { /* silencioso */ }
     }
 
+    function _renderResumoIA(el, texto, id) {
+      // Renderiza o resumo + um botãozinho discreto de regenerar
+      el.innerHTML = `<span class="resumo-ia-texto">${(texto || '').replace(/</g,'&lt;')}</span>
+        <a href="#" class="ms-1" style="font-size:0.7rem;color:#999;text-decoration:none;"
+           onclick="regenerarResumoIA('${id}');return false;"
+           title="Regenerar este resumo (ex: se vier curto demais)">↻</a>`;
+      el.style.display = 'block';
+      if (window.ITENS_DATA) {
+        const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
+        if (item) item.resumo_ia = texto;
+      }
+    }
+
+    // Função global para o botão "↻" ao lado do resumo
+    window.regenerarResumoIA = async function(id) {
+      const el = document.getElementById('resumo-ia-' + id);
+      if (!el) return;
+      el.innerHTML = '<span class="text-muted small"><i class="fas fa-spinner fa-spin me-1"></i>Regenerando resumo…</span>';
+      el.style.display = 'block';
+      await carregarResumoIA(el, true);
+    };
+
     // Carrega resumos e popula ITENS_DATA com resumo_ia
     async function carregarTodosResumos() {
       // 1. Pré-carrega resumos já salvos no banco (evita chamadas IA desnecessárias)
+      //    Observação: o backend /resumos_evento JÁ FILTRA resumos ruins (< 4 palavras
+      //    ou < 20 chars), então o que chega aqui é só o que vale a pena mostrar.
+      //    Mesmo assim fazemos a validação local como defesa em profundidade.
       try {
         const rCache = await fetch('/resumos_evento/' + window.EVENTO_ID);
         if (rCache.ok) {
           const cached = await rCache.json();
           Object.entries(cached).forEach(([id, resumo]) => {
-            if (resumo) {
+            if (resumo && !_resumoEhRuim(resumo)) {
               resumoCache[id] = resumo;
               const el = document.getElementById('resumo-ia-' + id);
-              if (el) { el.textContent = resumo; el.style.display = 'block'; }
-              if (window.ITENS_DATA) {
-                const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
-                if (item) item.resumo_ia = resumo;
-              }
+              if (el) _renderResumoIA(el, resumo, id);
             }
           });
         }
       } catch(e) {}
 
-      // 2. Para itens sem resumo em cache, gera via IA
+      // 2. Para itens sem resumo em cache (ou com cache ruim), gera via IA
       const els = document.querySelectorAll('.resumo-ia-ementa');
       for (const el of els) {
         await carregarResumoIA(el);
