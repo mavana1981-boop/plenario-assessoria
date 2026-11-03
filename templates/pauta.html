@@ -3192,7 +3192,7 @@ async function gerarPautaBannerLetraGrande(){
           <div style="font-size:18px;font-weight:800;color:${tipo==='urg'?'#5A1A1A':(ehPri?'#7A5500':'#1A2A5C')};">${proj}${oriBadge}</div>
           ${autor?`<div style="font-size:16px;color:#444;margin-top:3px;">Autor: ${autor}</div>`:''}
           ${rel?`<div style="font-size:16px;color:#666;">Rel.: ${rel}</div>`:''}
-          ${res?`<div style="font-size:16px;color:#333;margin-top:3px;line-height:1.4;">${res.substring(0,160)}</div>`:''}
+          ${res?`<div style="font-size:16px;color:#333;margin-top:3px;line-height:1.4;word-wrap:break-word;">${res}</div>`:''}
         </div>
       </div>`;
     }
@@ -3370,7 +3370,7 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
     return`<div style="position:relative;padding:8px 28px 8px 12px;border-bottom:1px solid #f0f0f0;display:flex;gap:7px;align-items:flex-start;font-size:10.5px;color:#222;">
       ${badgeOrientacao(it)}
       <div style="min-width:20px;height:20px;background:#7A1A1A;color:#fff;border-radius:3px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:9.5px;flex-shrink:0;">${n}</div>
-      <div data-pb-edit><b>${p}</b>${a?` <span style="color:#666;">(${a})</span>`:''}${res?`<div style="color:#444;margin-top:1px;font-size:10px;line-height:1.35;">${res.substring(0,120)}</div>`:''}</div>
+      <div data-pb-edit style="word-wrap:break-word;overflow-wrap:break-word;min-width:0;flex:1;"><b>${p}</b>${a?` <span style="color:#666;">(${a})</span>`:''}${res?`<div style="color:#444;margin-top:1px;font-size:10px;line-height:1.35;">${res}</div>`:''}</div>
     </div>`;
   }
 
@@ -3381,10 +3381,10 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
     return`<div style="position:relative;padding:10px 80px 10px 12px;border-bottom:1px solid #f0f0f0;display:flex;gap:9px;align-items:flex-start;">
       ${badgeOrientacao(it)}
       <div style="min-width:26px;height:26px;background:#1A3A2A;color:#fff;border-radius:4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:11px;flex-shrink:0;">${n}</div>
-      <div data-pb-edit style="font-size:11px;color:#1a1a1a;">
+      <div data-pb-edit style="font-size:11px;color:#1a1a1a;word-wrap:break-word;overflow-wrap:break-word;min-width:0;flex:1;">
         <div style="font-weight:800;color:#1A3A2A;">${p}</div>
         ${a?`<div style="font-size:10px;color:#555;">Autor: ${a}</div>`:''}
-        ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,160)}</div>`:''}
+        ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res}</div>`:''}
       </div>
     </div>`;
   }
@@ -3395,7 +3395,6 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
     const rel=ePB((it.relator||'').replace('Não atribuído','').substring(0,40));
     const res=ePB((window.resumoCache&&window.resumoCache[String(it.id_principal)])||it.ementa||'');
     const ehPri=priIds.has(String(it.id_principal));
-    const maxRes = compacto ? 100 : 160;
     const badgeN = ehPri
       ? `<div style="display:flex;align-items:center;gap:2px;flex-shrink:0;">`
         +`<div style="height:${compacto?20:26}px;background:#7A5500;color:#fff;border-radius:${compacto?3:4}px;padding:0 4px;display:flex;align-items:center;justify-content:center;font-size:${compacto?8:10}px;white-space:nowrap;">⭐ ${n}</div>`
@@ -3409,11 +3408,11 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
     return`<div style="position:relative;padding:${padV} ${padRight}px ${padV} ${padL};border-bottom:1px solid #f0f0f0;${rowBg}display:flex;gap:${gap};align-items:flex-start;">
       ${badgeOrientacao(it)}
       ${badgeN}
-      <div data-pb-edit style="font-size:${compacto?10:11}px;color:#1a1a1a;">
+      <div data-pb-edit style="font-size:${compacto?10:11}px;color:#1a1a1a;word-wrap:break-word;overflow-wrap:break-word;min-width:0;flex:1;">
         <div style="font-weight:800;color:${ehPri?'#7A5500':'#1A2A5C'};">${p}</div>
         ${a?`<div style="font-size:${compacto?9:10}px;color:#555;">Autor: ${a}</div>`:''}
         ${(!compacto&&rel)?`<div style="font-size:10px;color:#777;">Rel.: ${rel}</div>`:''}
-        ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res.substring(0,maxRes)}</div>`:''}
+        ${res?`<div style="margin-top:2px;color:#333;line-height:1.4;">${res}</div>`:''}
       </div>
     </div>`;
   }
@@ -3439,11 +3438,13 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
   const nEsq = (materias||[]).length + (urgencias||[]).length;
   const nDir = todosProj.length;
 
-  // LAYOUT A — 2 colunas simétricas (equilibrado)
+  // LAYOUT A — 2 colunas simétricas (equilibrado), usado quando há POUCOS projetos
   // LAYOUT B — vertical: urgências/matérias no topo (linha inteira),
-  //            projetos embaixo em 2 sub-colunas side-by-side
-  // Usa B quando projetos > 2× (matérias+urgências)
-  const usarLayoutVertical = nDir > 2 * Math.max(nEsq, 1);
+  //            projetos embaixo em 2 sub-colunas side-by-side com FLUXO VERTICAL
+  //            (coluna 1 = primeira metade em ordem; coluna 2 = segunda metade em ordem)
+  //            — item 2 abaixo do 1, item 3 abaixo do 2, etc.
+  // Usa Layout B sempre que houver mais de 2 projetos (padrão "jornal": 2 colunas verticais).
+  const usarLayoutVertical = todosProj.length > 2;
 
   const cardMaterias  = (materias&&materias.length)
     ? wrapCard(cardHeader('📄','Matérias sobre a Mesa','#1A3A2A') + materias.map(itemMateria).join('')) : '';
@@ -3462,15 +3463,14 @@ function _buildPBHv4({materias,urgencias,projetos,prioridade,dataFmt,imgB64,imgM
     </div>`;
 
   } else {
-    // LAYOUT B: linha superior com matérias+urgências, linha inferior com projetos em 2 sub-colunas
-    // Divide projetos em 2 sub-colunas com greedy por altura
-    const H = 80;
-    const sub1=[], sub2=[];
-    let h1=0, h2=0;
-    todosProj.forEach(it=>{
-      if(h1<=h2){sub1.push(it);h1+=H;}
-      else       {sub2.push(it);h2+=H;}
-    });
+    // LAYOUT B: linha superior com matérias+urgências, projetos abaixo em 2 sub-colunas verticais.
+    // FLUXO VERTICAL (padrão jornal): coluna esquerda recebe a primeira metade em ordem
+    // (itens 1..N/2), coluna direita recebe a segunda metade em ordem (itens N/2+1..N).
+    // Assim, o item 2 fica abaixo do 1, o 3 abaixo do 2, etc. — como pediu o usuário.
+    const n = todosProj.length;
+    const mid = Math.ceil(n / 2);  // Math.ceil garante que col esquerda não fique menor que a direita
+    const sub1 = todosProj.slice(0, mid);
+    const sub2 = todosProj.slice(mid);
 
     // Card de projetos com 2 sub-colunas internas
     const projBody = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:0;align-items:start;">
