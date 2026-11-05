@@ -2979,19 +2979,48 @@ _cache_tarefas_painel = {}
 @app.route('/painel/tarefas')
 @login_required
 def painel_tarefas():
+    return jsonify(_consultar_painel(request.args.get('fresco') == '1'))
+
+
+@app.route('/painel/diagnostico')
+@login_required
+def painel_diagnostico():
+    """Página simples para conferir a ligação com o Painel da Câmara (qualquer usuário logado)."""
+    d = _consultar_painel(True)
+    base = (os.environ.get('PAINEL_URL') or '').strip()
+    linhas = [
+        ('Usuário logado no Minha Pauta', f'{current_user.username} (perfil: {current_user.role})'),
+        ('Nome exibido', getattr(current_user, 'nome_display', None) or '—'),
+        ('PAINEL_URL', base or 'NÃO CONFIGURADA'),
+        ('PAINEL_TOKEN', 'configurada' if (os.environ.get('PAINEL_TOKEN') or '').strip() else 'NÃO CONFIGURADA'),
+        ('Ligação com o Painel', 'OK' if d.get('ok') else 'com problema'),
+        ('Motivo / observação', d.get('detalhe') or '—'),
+        ('Login usado no Painel', d.get('login') or '—'),
+        ('Solicitações em aberto', str(d.get('total', '—'))),
+        ('Novas', str(d.get('novas', '—'))),
+    ]
+    import html as _h
+    corpo = ''.join(f'<tr><th>{_h.escape(k)}</th><td>{_h.escape(str(v))}</td></tr>' for k, v in linhas)
+    return (f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>Diagnóstico do aviso do Painel</title><body style="font-family:system-ui,sans-serif;padding:20px;max-width:760px">'
+            f'<h2>Diagnóstico do aviso do Painel da Câmara</h2><table cellpadding="8" style="border-collapse:collapse">{corpo}</table>'
+            f'<p><a href="/">voltar</a></p></body>')
+
+
+def _consultar_painel(fresco=False):
     base = (os.environ.get('PAINEL_URL') or '').strip().rstrip('/')
     token = (os.environ.get('PAINEL_TOKEN') or '').strip()
     faltam = [n for n, v in (('PAINEL_URL', base), ('PAINEL_TOKEN', token)) if not v]
     if faltam:
-        return jsonify({'ok': False, 'motivo': 'desligado',
-                        'detalhe': 'Falta configurar no Railway do Minha Pauta: ' + ' e '.join(faltam) + '.'})
+        return {'ok': False, 'motivo': 'desligado',
+                'detalhe': 'Falta configurar no Railway do Minha Pauta: ' + ' e '.join(faltam) + '.'}
     if not base.startswith('http'):
         base = 'https://' + base
     login = (current_user.username or '').strip().lower()
     agora = datetime.now().timestamp()
     em_cache = _cache_tarefas_painel.get(login)
-    if em_cache and agora - em_cache[0] < 60 and request.args.get('fresco') != '1':
-        return jsonify(em_cache[1])
+    if em_cache and agora - em_cache[0] < 60 and not fresco:
+        return em_cache[1]
     nome = (getattr(current_user, 'nome_display', None) or '').strip()
     try:
         r = requests.get(f'{base}/api/tarefas', params={'login': login, 'nome': nome},
@@ -3019,7 +3048,7 @@ def painel_tarefas():
         dados = {'ok': False, 'motivo': 'indisponivel',
                  'detalhe': f'Não consegui falar com {base}. Confira PAINEL_URL ou se o Painel está no ar.'}
     _cache_tarefas_painel[login] = (agora, dados)
-    return jsonify(dados)
+    return dados
 
 @app.route('/trocar-senha', methods=['GET', 'POST'])
 @login_required
