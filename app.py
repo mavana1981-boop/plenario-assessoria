@@ -588,24 +588,49 @@ def load_user(user_id):
 # EVENTOS & PAUTA
 # --------------------------------------------------------------------------
 def fetch_eventos_por_data(data):
+    """Busca sessões deliberativas do Plenário na data informada.
+
+    IMPORTANTE: a API da Câmara registra tipos como "Sessão Deliberativa Extraordinária",
+    "Sessão Deliberativa Ordinária", "Sessão Deliberativa Solene", etc. Por isso filtramos
+    por qualquer descricaoTipo que CONTENHA "deliberativa" (case-insensitive) — não por
+    match exato "Sessão Deliberativa". Antes, quintas-feiras com sessão extraordinária
+    (padrão da Câmara) retornavam lista vazia."""
     url = f"https://dadosabertos.camara.leg.br/api/v2/eventos?idOrgao=180&dataInicio={data}&dataFim={data}&itens=50"
     try:
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         dados = r.json().get('dados', [])
-        return [
-            {
-                'id': str(e.get('id')),
-                'descricao': e.get('descricao', 'Sem descrição'),
-                'tipo': e.get('descricaoTipo', ''),
-                'dataHoraInicio': e.get('dataHoraInicio', 'N/D'),
-                'local': e.get('localCamara', {}).get('nome', 'N/D') if isinstance(e.get('localCamara'), dict) else e.get('localCamara', 'N/D'),
-                'situacao': e.get('situacao', 'N/D')
-            }
-            for e in dados if e.get('descricaoTipo') == "Sessão Deliberativa"
-        ]
+
+        resultado = []
+        descartados = []
+        for e in dados:
+            tipo = (e.get('descricaoTipo', '') or '').strip()
+            if 'deliberativa' in tipo.lower():
+                resultado.append({
+                    'id': str(e.get('id')),
+                    'descricao': e.get('descricao', 'Sem descrição'),
+                    'tipo': tipo,
+                    'dataHoraInicio': e.get('dataHoraInicio', 'N/D'),
+                    'local': e.get('localCamara', {}).get('nome', 'N/D') if isinstance(e.get('localCamara'), dict) else e.get('localCamara', 'N/D'),
+                    'situacao': e.get('situacao', 'N/D')
+                })
+            else:
+                descartados.append(tipo or '(sem tipo)')
+
+        if not resultado:
+            # Log detalhado: a API retornou algo ou nada?
+            if not dados:
+                logger.info(f"fetch_eventos_por_data({data}): API retornou 0 eventos")
+            else:
+                logger.warning(
+                    f"fetch_eventos_por_data({data}): {len(dados)} evento(s) na API, "
+                    f"mas NENHUM é 'deliberativa'. Tipos descartados: {descartados}"
+                )
+        else:
+            logger.info(f"fetch_eventos_por_data({data}): {len(resultado)} sessão(ões) deliberativa(s) encontrada(s)")
+        return resultado
     except Exception as e:
-        logger.error(f"Erro ao buscar eventos: {e}")
+        logger.error(f"Erro ao buscar eventos para {data}: {e}")
         return []
 
 def _extrair_sigla_num_ano(texto):
@@ -1808,6 +1833,109 @@ def selecionar_data():
     data = request.form.get('data', now_brasilia().strftime('%Y-%m-%d'))
     eventos = fetch_eventos_por_data(data)
     return render_template('selecionar_data.html', data_selecionada=data, eventos=eventos, user_role=current_user.role)
+
+
+@app.route('/debug_eventos_api', methods=['GET'])
+@login_required
+def debug_eventos_api():
+    """Diagnóstico: mostra a resposta BRUTA da API da Câmara para uma data,
+    sem filtro algum. Use ?data=YYYY-MM-DD (padrão: hoje em Brasília).
+    Responde HTML legível com cada evento + o filtro que seria aplicado."""
+    data = request.args.get('data') or now_brasilia().strftime('%Y-%m-%d')
+    url = f"https://dadosabertos.camara.leg.br/api/v2/eventos?idOrgao=180&dataInicio={data}&dataFim={data}&itens=50"
+
+    saida = {
+        'data_consultada': data,
+        'hora_brasilia_agora': now_brasilia().strftime('%Y-%m-%d %H:%M:%S'),
+        'url_chamada': url,
+        'sucesso': False,
+        'status_http': None,
+        'erro': None,
+        'total_eventos_brutos': 0,
+        'eventos': [],
+    }
+
+    try:
+        import time
+        t0 = time.time()
+        r = requests.get(url, timeout=10)
+        saida['status_http'] = r.status_code
+        saida['tempo_ms'] = int((time.time() - t0) * 1000)
+        r.raise_for_status()
+        j = r.json()
+        dados = j.get('dados', [])
+        saida['total_eventos_brutos'] = len(dados)
+        for e in dados:
+            tipo = (e.get('descricaoTipo', '') or '').strip()
+            saida['eventos'].append({
+                'id': e.get('id'),
+                'descricaoTipo': tipo,
+                'descricao': e.get('descricao', ''),
+                'dataHoraInicio': e.get('dataHoraInicio', ''),
+                'situacao': e.get('situacao', ''),
+                'passa_filtro_antigo_exato': tipo == 'Sessão Deliberativa',
+                'passa_filtro_novo_contains': 'deliberativa' in tipo.lower(),
+            })
+        saida['sucesso'] = True
+    except requests.exceptions.Timeout:
+        saida['erro'] = 'TIMEOUT: a API da Câmara não respondeu em 10s'
+    except requests.exceptions.ConnectionError as e:
+        saida['erro'] = f'CONNECTION ERROR: {e}'
+    except requests.exceptions.HTTPError as e:
+        saida['erro'] = f'HTTP {r.status_code}: {e}'
+    except Exception as e:
+        saida['erro'] = f'{type(e).__name__}: {e}'
+
+    # Renderiza HTML visual se o navegador aceitar
+    if 'text/html' in (request.headers.get('Accept') or ''):
+        html = [
+            '<!doctype html><html><head><meta charset="utf-8"><title>Debug Eventos</title>',
+            '<style>body{font-family:system-ui,sans-serif;padding:20px;max-width:1100px;margin:0 auto;background:#f5f7fa;}',
+            'h1{color:#1A3A5C;}',
+            '.meta{background:#fff;padding:12px;border-radius:6px;margin-bottom:14px;font-family:monospace;font-size:12px;}',
+            '.evt{background:#fff;padding:10px 14px;margin-bottom:8px;border-radius:6px;border-left:4px solid #999;}',
+            '.evt.pass{border-left-color:#1A6B3A;}',
+            '.evt.fail{border-left-color:#c0392b;}',
+            '.tag{display:inline-block;background:#eef4fa;color:#1A3A5C;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:700;margin-right:5px;}',
+            '.ok{color:#1A6B3A;font-weight:700;}',
+            '.no{color:#c0392b;font-weight:700;}',
+            '.vazio{background:#fff3cd;padding:12px;border-radius:6px;color:#856404;}',
+            'pre{background:#fff;padding:12px;border-radius:6px;font-size:12px;overflow:auto;}',
+            '</style></head><body>',
+            f'<h1>Debug Eventos da Câmara</h1>',
+            f'<div class="meta">',
+            f'<strong>Data consultada:</strong> {saida["data_consultada"]}<br>',
+            f'<strong>Agora em Brasília:</strong> {saida["hora_brasilia_agora"]}<br>',
+            f'<strong>URL chamada:</strong> <a href="{saida["url_chamada"]}" target="_blank">{saida["url_chamada"]}</a><br>',
+            f'<strong>Status HTTP:</strong> {saida.get("status_http", "—")}',
+            f' (tempo: {saida.get("tempo_ms", "—")}ms)' if saida.get("tempo_ms") else '',
+            f'<br><strong>Total de eventos retornados:</strong> {saida["total_eventos_brutos"]}',
+            '</div>',
+        ]
+        if saida['erro']:
+            html.append(f'<div class="vazio"><strong>⚠ Erro:</strong> {escape_html_simple(saida["erro"])}</div>')
+        elif saida['total_eventos_brutos'] == 0:
+            html.append('<div class="vazio">A API respondeu normalmente, mas devolveu ZERO eventos para esta data. Significa que a Câmara não tem nenhum evento (deliberativo ou não) marcado neste dia para o Plenário (idOrgao=180).</div>')
+        else:
+            n_novo = sum(1 for e in saida['eventos'] if e['passa_filtro_novo_contains'])
+            n_ant = sum(1 for e in saida['eventos'] if e['passa_filtro_antigo_exato'])
+            html.append(f'<p><strong>Filtro ANTIGO (exato):</strong> {n_ant} passaria(m) &nbsp;|&nbsp; <strong>Filtro NOVO (contains "deliberativa"):</strong> {n_novo} passa(m)</p>')
+            for e in saida['eventos']:
+                klass = 'pass' if e['passa_filtro_novo_contains'] else 'fail'
+                html.append(f'<div class="evt {klass}">')
+                html.append(f'<div><span class="tag">{escape_html_simple(e["descricaoTipo"] or "(sem tipo)")}</span>')
+                html.append(f'<span class="tag">{escape_html_simple(e.get("situacao", ""))}</span>')
+                html.append(f'id={e["id"]} · {escape_html_simple(e["dataHoraInicio"])}</div>')
+                html.append(f'<div style="margin-top:4px;font-size:13px;color:#333;">{escape_html_simple(e["descricao"])}</div>')
+                html.append(f'<div style="margin-top:4px;font-size:11px;">Antigo exato: {"<span class=ok>✓</span>" if e["passa_filtro_antigo_exato"] else "<span class=no>✗</span>"} &nbsp;|&nbsp; Novo contains: {"<span class=ok>✓</span>" if e["passa_filtro_novo_contains"] else "<span class=no>✗</span>"}</div>')
+                html.append('</div>')
+        html.append('<hr><details><summary>JSON bruto</summary><pre>' + escape_html_simple(json.dumps(saida, indent=2, ensure_ascii=False)) + '</pre></details>')
+        html.append(f'<p style="margin-top:20px;"><a href="/debug_eventos_api?data={ (datetime.strptime(data, "%Y-%m-%d").date() - timedelta(days=1)).strftime("%Y-%m-%d") if data else "" }">← dia anterior</a> &nbsp;|&nbsp; <a href="/debug_eventos_api">hoje</a> &nbsp;|&nbsp; <a href="/debug_eventos_api?data={ (datetime.strptime(data, "%Y-%m-%d").date() + timedelta(days=1)).strftime("%Y-%m-%d") if data else "" }">dia seguinte →</a></p>')
+        html.append('</body></html>')
+        from flask import Response
+        return Response('\n'.join(html), mimetype='text/html')
+
+    return jsonify(saida)
 
 @app.route('/pauta/<int:evento_id>/view')
 @login_required
