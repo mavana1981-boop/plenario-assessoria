@@ -1,0 +1,64 @@
+{# Aviso das solicitações atribuídas no Painel da Câmara (some sozinho se não houver nada ou se o painel não estiver ligado) #}
+<div id="avisoPainel" class="aviso-painel" hidden>
+  <button type="button" class="ap-fechar" aria-label="Fechar aviso" title="Fechar">×</button>
+  <div class="ap-cab">
+    <span class="ap-ico">📋</span>
+    <div><b class="ap-tit"></b><small class="ap-sub"></small></div>
+  </div>
+  <ul class="ap-lista"></ul>
+  <a class="ap-btn" target="_blank" rel="noopener">Abrir no Painel da Câmara</a>
+</div>
+<style>
+.aviso-painel{position:fixed;right:16px;bottom:16px;z-index:1080;width:340px;max-width:calc(100vw - 32px);background:#fff;border:1px solid #d6e3f7;border-left:4px solid #1d5fbf;border-radius:12px;box-shadow:0 10px 30px rgba(16,40,80,.18);padding:12px 14px 12px;font-family:inherit;color:#1c2128}
+.aviso-painel[hidden]{display:none}
+.ap-fechar{position:absolute;top:6px;right:8px;border:0;background:none;font-size:20px;line-height:1;color:#8a94a3;cursor:pointer}
+.ap-cab{display:flex;gap:10px;align-items:flex-start;padding-right:16px}
+.ap-ico{font-size:22px;line-height:1}
+.ap-tit{display:block;font-size:.95rem}
+.ap-sub{display:block;color:#5f6874;font-size:.8rem;margin-top:1px}
+.ap-lista{list-style:none;margin:8px 0;padding:0;display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto}
+.ap-lista a{display:block;text-decoration:none;color:#1c2128;font-size:.85rem;line-height:1.3;padding:6px 8px;border-radius:8px;background:#f5f8fd}
+.ap-lista a:hover{background:#e8f0fc}
+.ap-lista small{display:block;color:#5f6874;font-size:.75rem;margin-top:2px}
+.ap-nova{display:inline-block;font-size:.65rem;font-weight:700;text-transform:uppercase;background:#1d5fbf;color:#fff;border-radius:8px;padding:1px 6px;margin-right:4px;vertical-align:1px}
+.ap-atr{color:#b03021 !important;font-weight:600}
+.ap-btn{display:block;text-align:center;background:#1d5fbf;color:#fff !important;text-decoration:none;font-weight:600;font-size:.88rem;border-radius:8px;padding:8px 10px}
+.ap-btn:hover{background:#164c99}
+@media (max-width:576px){.aviso-painel{left:12px;right:12px;bottom:12px;width:auto}}
+</style>
+<script>
+(function () {
+  var box = document.getElementById('avisoPainel');
+  if (!box || !window.fetch) return;
+  var CHAVE = 'avisoPainelFechado';
+  function ler() { try { return sessionStorage.getItem(CHAVE) || ''; } catch (e) { return ''; } }
+  function gravar(v) { try { sessionStorage.setItem(CHAVE, v); } catch (e) {} }
+  function esc(t) { var d = document.createElement('div'); d.textContent = t == null ? '' : String(t); return d.innerHTML; }
+  function dataBr(iso) { if (!iso) return ''; var p = String(iso).split('-'); return p.length === 3 ? p[2] + '/' + p[1] : iso; }
+  var assinatura = '';
+  function mostrar(d) {
+    if (!d || !d.ok || !d.total) { box.hidden = true; return; }
+    assinatura = d.total + ':' + d.novas;
+    if (ler() === assinatura) { box.hidden = true; return; }       // fechado e nada mudou desde então
+    box.querySelector('.ap-tit').textContent = d.novas
+      ? (d.novas === 1 ? 'Você recebeu 1 solicitação nova' : 'Você recebeu ' + d.novas + ' solicitações novas')
+      : (d.total === 1 ? 'Você tem 1 solicitação em aberto' : 'Você tem ' + d.total + ' solicitações em aberto');
+    box.querySelector('.ap-sub').textContent = 'no Painel da Câmara' +
+      (d.atrasadas ? ' · ' + d.atrasadas + ' com prazo vencido' : '');
+    box.querySelector('.ap-lista').innerHTML = (d.itens || []).slice(0, 5).map(function (t) {
+      return '<li><a href="' + esc(t.url) + '" target="_blank" rel="noopener">' + (t.nova ? '<span class="ap-nova">nova</span>' : '') +
+        esc(t.titulo) + '<small>' + esc(t.deputado || '') + (t.prazo ? ' · <span class="' + (t.atrasada ? 'ap-atr' : '') + '">prazo ' +
+        esc(dataBr(t.prazo)) + '</span>' : '') + '</small></a></li>';
+    }).join('');
+    box.querySelector('.ap-btn').href = d.url;
+    box.hidden = false;
+  }
+  function buscar() {
+    fetch('/painel/tarefas', {credentials: 'same-origin'}).then(function (r) { return r.ok ? r.json() : null; })
+      .then(mostrar).catch(function () {});
+  }
+  box.querySelector('.ap-fechar').addEventListener('click', function () { gravar(assinatura); box.hidden = true; });
+  buscar();
+  setInterval(buscar, 5 * 60 * 1000);
+})();
+</script>

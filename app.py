@@ -2967,6 +2967,38 @@ def export_resumo(evento_id):
 from exportar_pauta import exportar_bp
 app.register_blueprint(exportar_bp)
 
+
+# ─── Aviso de solicitações do Painel da Câmara ──────────────────────────────
+# O Painel da Câmara (painel-camara) expõe /api/tarefas protegido por uma chave compartilhada. Este app consulta
+# pelo servidor (a chave nunca vai para o navegador) as solicitações em aberto do usuário logado e mostra um aviso
+# com link. Variáveis no Railway: PAINEL_URL (endereço do painel) e PAINEL_TOKEN (igual ao TAREFAS_TOKEN de lá).
+# Sem as variáveis, o aviso simplesmente não aparece.
+_cache_tarefas_painel = {}
+
+
+@app.route('/painel/tarefas')
+@login_required
+def painel_tarefas():
+    base = (os.environ.get('PAINEL_URL') or '').strip().rstrip('/')
+    token = (os.environ.get('PAINEL_TOKEN') or '').strip()
+    if not base or not token:
+        return jsonify({'ok': False, 'motivo': 'desligado'})
+    login = (current_user.username or '').strip().lower()
+    agora = datetime.now().timestamp()
+    em_cache = _cache_tarefas_painel.get(login)
+    if em_cache and agora - em_cache[0] < 60 and request.args.get('fresco') != '1':
+        return jsonify(em_cache[1])
+    try:
+        r = requests.get(f'{base}/api/tarefas', params={'login': login},
+                         headers={'X-Painel-Token': token}, timeout=6)
+        r.raise_for_status()
+        dados = {'ok': True, **r.json()}
+    except Exception as e:
+        logging.getLogger(__name__).warning('Painel da Câmara indisponível para o aviso de tarefas: %s', e)
+        dados = {'ok': False, 'motivo': 'indisponivel'}
+    _cache_tarefas_painel[login] = (agora, dados)
+    return jsonify(dados)
+
 @app.route('/trocar-senha', methods=['GET', 'POST'])
 @login_required
 def trocar_senha():
