@@ -25,6 +25,14 @@
 .ap-btn{display:block;text-align:center;background:#1d5fbf;color:#fff !important;text-decoration:none;font-weight:600;font-size:.88rem;border-radius:8px;padding:8px 10px}
 .ap-btn:hover{background:#164c99}
 @media (max-width:576px){.aviso-painel{left:12px;right:12px;bottom:12px;width:auto}}
+/* dentro do quadro amarelo da pauta */
+.ptq{font-size:.82rem;color:#5d4037;margin-top:4px;line-height:1.45}
+.ptq[hidden]{display:none}
+.ptq a{color:#1d5fbf;font-weight:600;text-decoration:none}
+.ptq a:hover{text-decoration:underline}
+.ptq .ptq-nova{display:inline-block;font-size:.65rem;font-weight:700;text-transform:uppercase;background:#1d5fbf;color:#fff;border-radius:8px;padding:1px 6px;margin-right:4px;vertical-align:1px}
+.ptq .ptq-atr{color:#b03021;font-weight:700}
+.ptq .ptq-vazio{color:#8d6e63;font-style:italic}
 </style>
 <script>
 (function () {
@@ -36,7 +44,32 @@
   function esc(t) { var d = document.createElement('div'); d.textContent = t == null ? '' : String(t); return d.innerHTML; }
   function dataBr(iso) { if (!iso) return ''; var p = String(iso).split('-'); return p.length === 3 ? p[2] + '/' + p[1] : iso; }
   var assinatura = '';
+  var quadro = document.getElementById('painelTarefasQuadro');     // quadro amarelo da pauta, se houver
+  function plural(n, um, varios) { return n === 1 ? um : varios; }
+  function noQuadro(d) {
+    if (!d || !d.ok) { quadro.hidden = true; return; }
+    var html = '';
+    if (!d.total) {
+      html = '<span class="ptq-vazio">Não há solicitações em aberto para você no Painel da Câmara.</span>';
+    } else {
+      var novas = (d.itens || []).filter(function (t) { return t.nova; });
+      if (d.novas) {
+        html += '📋 Você recebeu <strong>' + d.novas + ' ' + plural(d.novas, 'solicitação nova', 'solicitações novas') +
+          '</strong> no Painel da Câmara: ' + novas.slice(0, 3).map(function (t) {
+            return '<a href="' + esc(t.url) + '" target="_blank" rel="noopener"><span class="ptq-nova">nova</span>' + esc(t.titulo) + '</a>';
+          }).join(', ') + (d.novas > 3 ? ' e mais ' + (d.novas - 3) : '') + '.<br>';
+      } else {
+        html += '📋 ';
+      }
+      html += 'Tarefas em aberto no Painel: <strong>' + d.total + '</strong>' +
+        (d.atrasadas ? ' · <span class="ptq-atr">' + d.atrasadas + ' com prazo vencido</span>' : '') +
+        ' — <a href="' + esc(d.url) + '" target="_blank" rel="noopener">abrir no Painel</a>';
+    }
+    quadro.innerHTML = html;
+    quadro.hidden = false;
+  }
   function mostrar(d) {
+    if (quadro) { noQuadro(d); box.hidden = true; return; }
     if (!d || !d.ok || !d.total) { box.hidden = true; return; }
     assinatura = d.total + ':' + d.novas;
     if (ler() === assinatura) { box.hidden = true; return; }       // fechado e nada mudou desde então
