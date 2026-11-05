@@ -33,6 +33,7 @@
 .ptq .ptq-nova{display:inline-block;font-size:.65rem;font-weight:700;text-transform:uppercase;background:#1d5fbf;color:#fff;border-radius:8px;padding:1px 6px;margin-right:4px;vertical-align:1px}
 .ptq .ptq-atr{color:#b03021;font-weight:700}
 .ptq .ptq-vazio{color:#8d6e63;font-style:italic}
+.ptq .ptq-diag{color:#8a6d3b;background:#fff3cd;border-radius:6px;padding:1px 6px;font-size:.78rem}
 </style>
 <script>
 (function () {
@@ -47,8 +48,17 @@
   var quadro = document.getElementById('painelTarefasQuadro');     // quadro amarelo da pauta, se houver
   function plural(n, um, varios) { return n === 1 ? um : varios; }
   function noQuadro(d) {
-    if (!d || !d.ok) { quadro.hidden = true; return; }
+    var admin = quadro.dataset.admin === '1';
+    if (!d || !d.ok) {
+      // para quem administra, diz por que o aviso não aparece; para os demais, fica escondido
+      if (admin && d && d.detalhe) {
+        quadro.innerHTML = '<span class="ptq-diag">⚙️ Aviso do Painel da Câmara desligado: ' + esc(d.detalhe) + '</span>';
+        quadro.hidden = false;
+      } else { quadro.hidden = true; }
+      return;
+    }
     var html = '';
+    if (admin && d.detalhe) html += '<span class="ptq-diag">⚙️ ' + esc(d.detalhe) + '</span><br>';
     if (!d.total) {
       html = '<span class="ptq-vazio">Não há solicitações em aberto para você no Painel da Câmara.</span>';
     } else {
@@ -86,9 +96,11 @@
     box.querySelector('.ap-btn').href = d.url;
     box.hidden = false;
   }
+  var primeira = true;
   function buscar() {
-    fetch('/painel/tarefas', {credentials: 'same-origin'}).then(function (r) { return r.ok ? r.json() : null; })
+    fetch('/painel/tarefas' + (primeira ? '?fresco=1' : ''), {credentials: 'same-origin'}).then(function (r) { return r.ok ? r.json() : null; })
       .then(mostrar).catch(function () {});
+    primeira = false;
   }
   box.querySelector('.ap-fechar').addEventListener('click', function () { gravar(assinatura); box.hidden = true; });
   buscar();

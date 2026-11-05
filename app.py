@@ -2981,21 +2981,43 @@ _cache_tarefas_painel = {}
 def painel_tarefas():
     base = (os.environ.get('PAINEL_URL') or '').strip().rstrip('/')
     token = (os.environ.get('PAINEL_TOKEN') or '').strip()
-    if not base or not token:
-        return jsonify({'ok': False, 'motivo': 'desligado'})
+    faltam = [n for n, v in (('PAINEL_URL', base), ('PAINEL_TOKEN', token)) if not v]
+    if faltam:
+        return jsonify({'ok': False, 'motivo': 'desligado',
+                        'detalhe': 'Falta configurar no Railway do Minha Pauta: ' + ' e '.join(faltam) + '.'})
+    if not base.startswith('http'):
+        base = 'https://' + base
     login = (current_user.username or '').strip().lower()
     agora = datetime.now().timestamp()
     em_cache = _cache_tarefas_painel.get(login)
     if em_cache and agora - em_cache[0] < 60 and request.args.get('fresco') != '1':
         return jsonify(em_cache[1])
+    nome = (getattr(current_user, 'nome_display', None) or '').strip()
     try:
-        r = requests.get(f'{base}/api/tarefas', params={'login': login},
-                         headers={'X-Painel-Token': token}, timeout=6)
-        r.raise_for_status()
-        dados = {'ok': True, **r.json()}
+        r = requests.get(f'{base}/api/tarefas', params={'login': login, 'nome': nome},
+                         headers={'X-Painel-Token': token}, timeout=8)
+        try:
+            corpo = r.json()
+        except ValueError:
+            corpo = None
+        if r.status_code == 200 and isinstance(corpo, dict):
+            dados = {'ok': True, **corpo}
+            if not corpo.get('usuario_encontrado', True):
+                dados['detalhe'] = (f'O usuário "{login}" não foi encontrado no Painel da Câmara '
+                                    '(nem pelo nome). Confira se o login é o mesmo nos dois apps.')
+        elif isinstance(corpo, dict) and corpo.get('erro') == 'sem_token':
+            dados = {'ok': False, 'motivo': 'sem_token', 'detalhe': 'Falta configurar TAREFAS_TOKEN no Railway do Painel da Câmara.'}
+        elif isinstance(corpo, dict) and corpo.get('erro') == 'token_diferente':
+            dados = {'ok': False, 'motivo': 'token_diferente',
+                     'detalhe': 'PAINEL_TOKEN (Minha Pauta) e TAREFAS_TOKEN (Painel) estão com valores diferentes.'}
+        else:
+            dados = {'ok': False, 'motivo': 'url',
+                     'detalhe': f'O endereço {base}/api/tarefas respondeu HTTP {r.status_code}. Confira PAINEL_URL '
+                                '(endereço público do Painel, sem barra no final).'}
     except Exception as e:
         logging.getLogger(__name__).warning('Painel da Câmara indisponível para o aviso de tarefas: %s', e)
-        dados = {'ok': False, 'motivo': 'indisponivel'}
+        dados = {'ok': False, 'motivo': 'indisponivel',
+                 'detalhe': f'Não consegui falar com {base}. Confira PAINEL_URL ou se o Painel está no ar.'}
     _cache_tarefas_painel[login] = (agora, dados)
     return jsonify(dados)
 

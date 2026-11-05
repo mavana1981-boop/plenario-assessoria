@@ -247,7 +247,7 @@
           </div>
           {% endif %}
           <!-- Solicitações do Painel da Câmara (preenchido por _aviso_painel.html) -->
-          <div id="painelTarefasQuadro" class="ptq" hidden></div>
+          <div id="painelTarefasQuadro" class="ptq" data-admin="{{ '1' if current_user.role and current_user.role.lower() == 'admin' else '0' }}" hidden></div>
         </div>
       </div>
     </div>
