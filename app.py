@@ -587,51 +587,126 @@ def load_user(user_id):
 # --------------------------------------------------------------------------
 # EVENTOS & PAUTA
 # --------------------------------------------------------------------------
+# Cache em memória de eventos por data (TTL 10 min) — resiliência quando
+# a API da Câmara dá timeout momentâneo. Chave = "YYYY-MM-DD", valor = {timestamp, eventos}
+_eventos_cache = {}
+_EVENTOS_CACHE_TTL = 600  # 10 minutos
+_ULTIMO_ERRO_FETCH = {'data': None, 'erro': None, 'timestamp': None}
+
+
 def fetch_eventos_por_data(data):
     """Busca sessões deliberativas do Plenário na data informada.
 
-    IMPORTANTE: a API da Câmara registra tipos como "Sessão Deliberativa Extraordinária",
-    "Sessão Deliberativa Ordinária", "Sessão Deliberativa Solene", etc. Por isso filtramos
-    por qualquer descricaoTipo que CONTENHA "deliberativa" (case-insensitive) — não por
-    match exato "Sessão Deliberativa". Antes, quintas-feiras com sessão extraordinária
-    (padrão da Câmara) retornavam lista vazia."""
+    Resiliência:
+      - Timeout 20s por tentativa (API da Câmara é notoriamente lenta)
+      - 3 tentativas com backoff (1s, 2s)
+      - Cache em memória por 10 min — se já conseguiu uma vez, serve o cache
+        quando a API falhar depois
+      - Registra último erro em _ULTIMO_ERRO_FETCH para a view exibir ao usuário
+
+    Filtro: aceita qualquer descricaoTipo que contenha "deliberativa"
+    (case-insensitive) — pega "Sessão Deliberativa Extraordinária",
+    "Sessão Deliberativa Ordinária", "Sessão Deliberativa Solene" etc.
+    """
+    import time as _time
+    global _ULTIMO_ERRO_FETCH
+
+    # 1. Tenta cache em memória primeiro
+    cached = _eventos_cache.get(data)
+    if cached and (_time.time() - cached['timestamp']) < _EVENTOS_CACHE_TTL:
+        logger.info(f"fetch_eventos_por_data({data}): servindo do cache em memória ({len(cached['eventos'])} eventos)")
+        _ULTIMO_ERRO_FETCH = {'data': None, 'erro': None, 'timestamp': None}
+        return cached['eventos']
+
     url = f"https://dadosabertos.camara.leg.br/api/v2/eventos?idOrgao=180&dataInicio={data}&dataFim={data}&itens=50"
-    try:
-        r = requests.get(url, timeout=10)
-        r.raise_for_status()
-        dados = r.json().get('dados', [])
+    ultimo_erro = None
+    tentativas = 3
+    backoffs = [1, 2]  # entre tentativa 1→2 e 2→3
 
-        resultado = []
-        descartados = []
-        for e in dados:
-            tipo = (e.get('descricaoTipo', '') or '').strip()
-            if 'deliberativa' in tipo.lower():
-                resultado.append({
-                    'id': str(e.get('id')),
-                    'descricao': e.get('descricao', 'Sem descrição'),
-                    'tipo': tipo,
-                    'dataHoraInicio': e.get('dataHoraInicio', 'N/D'),
-                    'local': e.get('localCamara', {}).get('nome', 'N/D') if isinstance(e.get('localCamara'), dict) else e.get('localCamara', 'N/D'),
-                    'situacao': e.get('situacao', 'N/D')
-                })
-            else:
-                descartados.append(tipo or '(sem tipo)')
+    for tentativa in range(1, tentativas + 1):
+        try:
+            t0 = _time.time()
+            r = requests.get(url, timeout=20, headers={
+                'Accept': 'application/json',
+                'User-Agent': 'PautaPlenario/1.0 (Liderança da Oposição - Câmara dos Deputados)',
+            })
+            dur_ms = int((_time.time() - t0) * 1000)
+            r.raise_for_status()
+            dados = r.json().get('dados', [])
 
-        if not resultado:
-            # Log detalhado: a API retornou algo ou nada?
-            if not dados:
-                logger.info(f"fetch_eventos_por_data({data}): API retornou 0 eventos")
+            resultado = []
+            descartados = []
+            for e in dados:
+                tipo = (e.get('descricaoTipo', '') or '').strip()
+                if 'deliberativa' in tipo.lower():
+                    resultado.append({
+                        'id': str(e.get('id')),
+                        'descricao': e.get('descricao', 'Sem descrição'),
+                        'tipo': tipo,
+                        'dataHoraInicio': e.get('dataHoraInicio', 'N/D'),
+                        'local': e.get('localCamara', {}).get('nome', 'N/D') if isinstance(e.get('localCamara'), dict) else e.get('localCamara', 'N/D'),
+                        'situacao': e.get('situacao', 'N/D')
+                    })
+                else:
+                    descartados.append(tipo or '(sem tipo)')
+
+            # Log do que aconteceu
+            if not resultado:
+                if not dados:
+                    logger.info(f"fetch_eventos_por_data({data}): API OK em {dur_ms}ms, 0 eventos (sem sessão real neste dia)")
+                else:
+                    logger.warning(
+                        f"fetch_eventos_por_data({data}): API OK em {dur_ms}ms, {len(dados)} evento(s), "
+                        f"mas NENHUM é 'deliberativa'. Tipos descartados: {descartados}"
+                    )
             else:
-                logger.warning(
-                    f"fetch_eventos_por_data({data}): {len(dados)} evento(s) na API, "
-                    f"mas NENHUM é 'deliberativa'. Tipos descartados: {descartados}"
-                )
-        else:
-            logger.info(f"fetch_eventos_por_data({data}): {len(resultado)} sessão(ões) deliberativa(s) encontrada(s)")
-        return resultado
-    except Exception as e:
-        logger.error(f"Erro ao buscar eventos para {data}: {e}")
-        return []
+                logger.info(f"fetch_eventos_por_data({data}): API OK em {dur_ms}ms, {len(resultado)} sessão(ões) deliberativa(s) encontrada(s) (tentativa {tentativa}/{tentativas})")
+
+            # Salva no cache e limpa erro
+            _eventos_cache[data] = {'timestamp': _time.time(), 'eventos': resultado}
+            _ULTIMO_ERRO_FETCH = {'data': None, 'erro': None, 'timestamp': None}
+            return resultado
+
+        except requests.exceptions.Timeout:
+            ultimo_erro = f"TIMEOUT ({tentativa}/{tentativas}): API da Câmara não respondeu em 20s"
+            logger.warning(f"fetch_eventos_por_data({data}): {ultimo_erro}")
+        except requests.exceptions.HTTPError as e:
+            ultimo_erro = f"HTTP {r.status_code} ({tentativa}/{tentativas}): {e}"
+            logger.warning(f"fetch_eventos_por_data({data}): {ultimo_erro}")
+            # HTTP 4xx não resolve com retry
+            if 400 <= r.status_code < 500:
+                break
+        except requests.exceptions.ConnectionError as e:
+            ultimo_erro = f"CONEXÃO ({tentativa}/{tentativas}): {e}"
+            logger.warning(f"fetch_eventos_por_data({data}): {ultimo_erro}")
+        except Exception as e:
+            ultimo_erro = f"{type(e).__name__} ({tentativa}/{tentativas}): {e}"
+            logger.warning(f"fetch_eventos_por_data({data}): {ultimo_erro}")
+
+        # Backoff antes da próxima tentativa
+        if tentativa < tentativas:
+            _time.sleep(backoffs[tentativa - 1])
+
+    # Todas as tentativas falharam. Tenta servir do cache mesmo expirado como último recurso.
+    if cached:
+        idade_min = int((_time.time() - cached['timestamp']) / 60)
+        logger.warning(f"fetch_eventos_por_data({data}): todas as {tentativas} tentativas falharam — servindo cache expirado ({idade_min} min antigo)")
+        _ULTIMO_ERRO_FETCH = {
+            'data': data,
+            'erro': f"API da Câmara indisponível ({ultimo_erro}). Mostrando dados do cache ({idade_min} min atrás).",
+            'timestamp': _time.time(),
+            'cache_stale': True,
+        }
+        return cached['eventos']
+
+    logger.error(f"fetch_eventos_por_data({data}): FALHA DEFINITIVA após {tentativas} tentativas — {ultimo_erro}")
+    _ULTIMO_ERRO_FETCH = {
+        'data': data,
+        'erro': f"API da Câmara indisponível após {tentativas} tentativas — {ultimo_erro}. Tente novamente em alguns minutos.",
+        'timestamp': _time.time(),
+        'cache_stale': False,
+    }
+    return []
 
 def _extrair_sigla_num_ano(texto):
     """Extrai (sigla_curta, numero, ano) de QUALQUER formato de menção a projeto
@@ -1832,7 +1907,18 @@ def logout():
 def selecionar_data():
     data = request.form.get('data', now_brasilia().strftime('%Y-%m-%d'))
     eventos = fetch_eventos_por_data(data)
-    return render_template('selecionar_data.html', data_selecionada=data, eventos=eventos, user_role=current_user.role)
+
+    # Se a busca falhou (API da Câmara indisponível), avisa o usuário via flash —
+    # muito mais claro que "nenhuma sessão" quando o problema é a Câmara estar fora.
+    if _ULTIMO_ERRO_FETCH.get('data') == data and _ULTIMO_ERRO_FETCH.get('erro'):
+        flash(_ULTIMO_ERRO_FETCH['erro'], 'warning' if _ULTIMO_ERRO_FETCH.get('cache_stale') else 'error')
+
+    return render_template('selecionar_data.html',
+                           data_selecionada=data,
+                           eventos=eventos,
+                           user_role=current_user.role,
+                           fetch_erro=_ULTIMO_ERRO_FETCH.get('erro') if _ULTIMO_ERRO_FETCH.get('data') == data else None,
+                           fetch_cache_stale=_ULTIMO_ERRO_FETCH.get('cache_stale', False))
 
 
 @app.route('/debug_eventos_api', methods=['GET'])
