@@ -3160,6 +3160,89 @@ def export_resumo(evento_id):
 from exportar_pauta import exportar_bp
 app.register_blueprint(exportar_bp)
 
+
+# ─── Aviso de solicitações do Painel da Câmara ──────────────────────────────
+# O Painel da Câmara (painel-camara) expõe /api/tarefas protegido por uma chave compartilhada. Este app consulta
+# pelo servidor (a chave nunca vai para o navegador) as solicitações em aberto do usuário logado e mostra um aviso
+# com link. Variáveis no Railway: PAINEL_URL (endereço do painel) e PAINEL_TOKEN (igual ao TAREFAS_TOKEN de lá).
+# Sem as variáveis, o aviso simplesmente não aparece.
+_cache_tarefas_painel = {}
+
+
+@app.route('/painel/tarefas')
+@login_required
+def painel_tarefas():
+    return jsonify(_consultar_painel(request.args.get('fresco') == '1'))
+
+
+@app.route('/painel/diagnostico')
+@login_required
+def painel_diagnostico():
+    """Página simples para conferir a ligação com o Painel da Câmara (qualquer usuário logado)."""
+    d = _consultar_painel(True)
+    base = (os.environ.get('PAINEL_URL') or '').strip()
+    linhas = [
+        ('Usuário logado no Minha Pauta', f'{current_user.username} (perfil: {current_user.role})'),
+        ('Nome exibido', getattr(current_user, 'nome_display', None) or '—'),
+        ('PAINEL_URL', base or 'NÃO CONFIGURADA'),
+        ('PAINEL_TOKEN', 'configurada' if (os.environ.get('PAINEL_TOKEN') or '').strip() else 'NÃO CONFIGURADA'),
+        ('Ligação com o Painel', 'OK' if d.get('ok') else 'com problema'),
+        ('Motivo / observação', d.get('detalhe') or '—'),
+        ('Login usado no Painel', d.get('login') or '—'),
+        ('Solicitações em aberto', str(d.get('total', '—'))),
+        ('Novas', str(d.get('novas', '—'))),
+    ]
+    import html as _h
+    corpo = ''.join(f'<tr><th>{_h.escape(k)}</th><td>{_h.escape(str(v))}</td></tr>' for k, v in linhas)
+    return (f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>Diagnóstico do aviso do Painel</title><body style="font-family:system-ui,sans-serif;padding:20px;max-width:760px">'
+            f'<h2>Diagnóstico do aviso do Painel da Câmara</h2><table cellpadding="8" style="border-collapse:collapse">{corpo}</table>'
+            f'<p><a href="/">voltar</a></p></body>')
+
+
+def _consultar_painel(fresco=False):
+    base = (os.environ.get('PAINEL_URL') or '').strip().rstrip('/')
+    token = (os.environ.get('PAINEL_TOKEN') or '').strip()
+    faltam = [n for n, v in (('PAINEL_URL', base), ('PAINEL_TOKEN', token)) if not v]
+    if faltam:
+        return {'ok': False, 'motivo': 'desligado',
+                'detalhe': 'Falta configurar no Railway do Minha Pauta: ' + ' e '.join(faltam) + '.'}
+    if not base.startswith('http'):
+        base = 'https://' + base
+    login = (current_user.username or '').strip().lower()
+    agora = datetime.now().timestamp()
+    em_cache = _cache_tarefas_painel.get(login)
+    if em_cache and agora - em_cache[0] < 60 and not fresco:
+        return em_cache[1]
+    nome = (getattr(current_user, 'nome_display', None) or '').strip()
+    try:
+        r = requests.get(f'{base}/api/tarefas', params={'login': login, 'nome': nome},
+                         headers={'X-Painel-Token': token}, timeout=8)
+        try:
+            corpo = r.json()
+        except ValueError:
+            corpo = None
+        if r.status_code == 200 and isinstance(corpo, dict):
+            dados = {'ok': True, **corpo}
+            if not corpo.get('usuario_encontrado', True):
+                dados['detalhe'] = (f'O usuário "{login}" não foi encontrado no Painel da Câmara '
+                                    '(nem pelo nome). Confira se o login é o mesmo nos dois apps.')
+        elif isinstance(corpo, dict) and corpo.get('erro') == 'sem_token':
+            dados = {'ok': False, 'motivo': 'sem_token', 'detalhe': 'Falta configurar TAREFAS_TOKEN no Railway do Painel da Câmara.'}
+        elif isinstance(corpo, dict) and corpo.get('erro') == 'token_diferente':
+            dados = {'ok': False, 'motivo': 'token_diferente',
+                     'detalhe': 'PAINEL_TOKEN (Minha Pauta) e TAREFAS_TOKEN (Painel) estão com valores diferentes.'}
+        else:
+            dados = {'ok': False, 'motivo': 'url',
+                     'detalhe': f'O endereço {base}/api/tarefas respondeu HTTP {r.status_code}. Confira PAINEL_URL '
+                                '(endereço público do Painel, sem barra no final).'}
+    except Exception as e:
+        logging.getLogger(__name__).warning('Painel da Câmara indisponível para o aviso de tarefas: %s', e)
+        dados = {'ok': False, 'motivo': 'indisponivel',
+                 'detalhe': f'Não consegui falar com {base}. Confira PAINEL_URL ou se o Painel está no ar.'}
+    _cache_tarefas_painel[login] = (agora, dados)
+    return dados
+
 @app.route('/trocar-senha', methods=['GET', 'POST'])
 @login_required
 def trocar_senha():
