@@ -128,6 +128,51 @@ def cloudflare_post(prompt, max_tokens=1500, temperatura=0.3):
     return r.json()['result']['response']
 
 
+def ia_chain_validado(prompt, validar_fn, max_tokens=1500, temperatura=0.3, contexto=""):
+    """Como ia_chain, mas também muda de provider quando o texto vem tecnicamente
+    ok (sem exceção) mas NÃO passa em validar_fn(texto). Útil quando um provider
+    devolve resposta curta/truncada e queremos tentar o próximo.
+
+    validar_fn: função (str)->bool. Retorna True se texto é aceitável.
+    Retorna (texto_bom, fonte) do primeiro provider que passar na validação.
+    Lança Exception se todos falharem (erro ou texto reprovado).
+    Loga qual provider deu qual resposta e por que foi aceita/rejeitada."""
+    erros = []
+    rejeitados = []
+
+    provedores = []
+    groq_key = os.environ.get('GROQ_API_KEY', '')
+    if groq_key:
+        provedores.append(('groq', lambda: groq_post(prompt, max_tokens=max_tokens, temperatura=temperatura)))
+    gemini_key = os.environ.get('GEMINI_API_KEY', '')
+    if gemini_key:
+        provedores.append(('gemini', lambda: gemini_post(gemini_key, prompt, max_tokens=max_tokens, temperatura=temperatura, tentativas=1)))
+    cf_account = os.environ.get('CF_ACCOUNT_ID', '')
+    cf_token   = os.environ.get('CF_API_TOKEN', '')
+    if cf_account and cf_token:
+        provedores.append(('cloudflare', lambda: cloudflare_post(prompt, max_tokens=max_tokens, temperatura=temperatura)))
+
+    for nome, fn in provedores:
+        try:
+            texto = fn()
+            if not texto or not texto.strip():
+                erros.append(f"{nome}: resposta vazia")
+                logger.warning(f"ia_chain_validado [{contexto}]: {nome} vazio")
+                continue
+            texto = texto.strip()
+            if validar_fn(texto):
+                logger.info(f"ia_chain_validado [{contexto}]: {nome} OK e aceito ({len(texto)} chars, {len(texto.split())} palavras)")
+                return texto, nome
+            else:
+                rejeitados.append(f"{nome}({len(texto)}ch,{len(texto.split())}p)")
+                logger.warning(f"ia_chain_validado [{contexto}]: {nome} RESPOSTA RUIM (reprovada): '{texto[:80]}'")
+        except Exception as e:
+            erros.append(f"{nome}: {e}")
+            logger.warning(f"ia_chain_validado [{contexto}]: {nome} exceção — {e}")
+
+    raise Exception(f"Todos provedores falharam/rejeitados. Erros: {erros} | Rejeitados: {rejeitados}")
+
+
 def ia_chain(prompt, max_tokens=1500, temperatura=0.3, contexto=""):
     """Cadeia tripla: Gemini → Groq → Cloudflare AI. Máx 15s por tentativa.
     Retorna (texto, fonte) ou lança Exception se todos falharem."""
@@ -2967,89 +3012,6 @@ def export_resumo(evento_id):
 from exportar_pauta import exportar_bp
 app.register_blueprint(exportar_bp)
 
-
-# ─── Aviso de solicitações do Painel da Câmara ──────────────────────────────
-# O Painel da Câmara (painel-camara) expõe /api/tarefas protegido por uma chave compartilhada. Este app consulta
-# pelo servidor (a chave nunca vai para o navegador) as solicitações em aberto do usuário logado e mostra um aviso
-# com link. Variáveis no Railway: PAINEL_URL (endereço do painel) e PAINEL_TOKEN (igual ao TAREFAS_TOKEN de lá).
-# Sem as variáveis, o aviso simplesmente não aparece.
-_cache_tarefas_painel = {}
-
-
-@app.route('/painel/tarefas')
-@login_required
-def painel_tarefas():
-    return jsonify(_consultar_painel(request.args.get('fresco') == '1'))
-
-
-@app.route('/painel/diagnostico')
-@login_required
-def painel_diagnostico():
-    """Página simples para conferir a ligação com o Painel da Câmara (qualquer usuário logado)."""
-    d = _consultar_painel(True)
-    base = (os.environ.get('PAINEL_URL') or '').strip()
-    linhas = [
-        ('Usuário logado no Minha Pauta', f'{current_user.username} (perfil: {current_user.role})'),
-        ('Nome exibido', getattr(current_user, 'nome_display', None) or '—'),
-        ('PAINEL_URL', base or 'NÃO CONFIGURADA'),
-        ('PAINEL_TOKEN', 'configurada' if (os.environ.get('PAINEL_TOKEN') or '').strip() else 'NÃO CONFIGURADA'),
-        ('Ligação com o Painel', 'OK' if d.get('ok') else 'com problema'),
-        ('Motivo / observação', d.get('detalhe') or '—'),
-        ('Login usado no Painel', d.get('login') or '—'),
-        ('Solicitações em aberto', str(d.get('total', '—'))),
-        ('Novas', str(d.get('novas', '—'))),
-    ]
-    import html as _h
-    corpo = ''.join(f'<tr><th>{_h.escape(k)}</th><td>{_h.escape(str(v))}</td></tr>' for k, v in linhas)
-    return (f'<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            f'<title>Diagnóstico do aviso do Painel</title><body style="font-family:system-ui,sans-serif;padding:20px;max-width:760px">'
-            f'<h2>Diagnóstico do aviso do Painel da Câmara</h2><table cellpadding="8" style="border-collapse:collapse">{corpo}</table>'
-            f'<p><a href="/">voltar</a></p></body>')
-
-
-def _consultar_painel(fresco=False):
-    base = (os.environ.get('PAINEL_URL') or '').strip().rstrip('/')
-    token = (os.environ.get('PAINEL_TOKEN') or '').strip()
-    faltam = [n for n, v in (('PAINEL_URL', base), ('PAINEL_TOKEN', token)) if not v]
-    if faltam:
-        return {'ok': False, 'motivo': 'desligado',
-                'detalhe': 'Falta configurar no Railway do Minha Pauta: ' + ' e '.join(faltam) + '.'}
-    if not base.startswith('http'):
-        base = 'https://' + base
-    login = (current_user.username or '').strip().lower()
-    agora = datetime.now().timestamp()
-    em_cache = _cache_tarefas_painel.get(login)
-    if em_cache and agora - em_cache[0] < 60 and not fresco:
-        return em_cache[1]
-    nome = (getattr(current_user, 'nome_display', None) or '').strip()
-    try:
-        r = requests.get(f'{base}/api/tarefas', params={'login': login, 'nome': nome},
-                         headers={'X-Painel-Token': token}, timeout=8)
-        try:
-            corpo = r.json()
-        except ValueError:
-            corpo = None
-        if r.status_code == 200 and isinstance(corpo, dict):
-            dados = {'ok': True, **corpo}
-            if not corpo.get('usuario_encontrado', True):
-                dados['detalhe'] = (f'O usuário "{login}" não foi encontrado no Painel da Câmara '
-                                    '(nem pelo nome). Confira se o login é o mesmo nos dois apps.')
-        elif isinstance(corpo, dict) and corpo.get('erro') == 'sem_token':
-            dados = {'ok': False, 'motivo': 'sem_token', 'detalhe': 'Falta configurar TAREFAS_TOKEN no Railway do Painel da Câmara.'}
-        elif isinstance(corpo, dict) and corpo.get('erro') == 'token_diferente':
-            dados = {'ok': False, 'motivo': 'token_diferente',
-                     'detalhe': 'PAINEL_TOKEN (Minha Pauta) e TAREFAS_TOKEN (Painel) estão com valores diferentes.'}
-        else:
-            dados = {'ok': False, 'motivo': 'url',
-                     'detalhe': f'O endereço {base}/api/tarefas respondeu HTTP {r.status_code}. Confira PAINEL_URL '
-                                '(endereço público do Painel, sem barra no final).'}
-    except Exception as e:
-        logging.getLogger(__name__).warning('Painel da Câmara indisponível para o aviso de tarefas: %s', e)
-        dados = {'ok': False, 'motivo': 'indisponivel',
-                 'detalhe': f'Não consegui falar com {base}. Confira PAINEL_URL ou se o Painel está no ar.'}
-    _cache_tarefas_painel[login] = (agora, dados)
-    return dados
-
 @app.route('/trocar-senha', methods=['GET', 'POST'])
 @login_required
 def trocar_senha():
@@ -4708,6 +4670,241 @@ def limpar_resumos_ia(evento_id):
     finally:
         conn.close()
 
+
+@app.route('/debug_resumo_providers', methods=['GET'])
+@login_required
+def debug_resumo_providers():
+    """Diagnóstico ao vivo: testa cada provider de IA com um prompt padrão de
+    resumo de ementa e retorna, para cada um:
+      - se a chave está configurada
+      - se respondeu (e em quantos ms)
+      - qual foi o texto retornado
+      - se passaria no validador de qualidade
+      - qual seria o escolhido pelo ia_chain_validado (ordem: Groq → Gemini → Cloudflare)
+
+    Acesse: https://<app>/debug_resumo_providers
+    Também pode testar com sua própria ementa: /debug_resumo_providers?ementa=...&projeto=...
+    """
+    import time as _time
+
+    projeto = request.args.get('projeto', 'PL 1234/2025')
+    ementa  = request.args.get('ementa', 'Dispõe sobre a criação de programa nacional de incentivo à agricultura familiar e ao pequeno produtor rural, e dá outras providências.')
+    autor   = request.args.get('autor',  'Dep. Fulano de Tal')
+
+    prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
+Gere um resumo PRÓPRIO do que esta proposição trata na prática em UMA linha (máximo 140 caracteres). Seja direto.
+NÃO copie a ementa. Escreva com suas próprias palavras.
+- Explique o efeito prático para o cidadão ou para o parlamento
+- Não repita o número da proposição. Termine com ponto final.
+
+Proposição: {projeto}
+Autor: {autor}
+Ementa: {ementa}
+
+Responda APENAS com o resumo em uma linha, sem introdução, sem aspas, terminando em ponto final."""
+
+    def _valida(t):
+        if not t: return False
+        t = (t or '').strip()
+        ps = t.split()
+        if len(ps) < 4 or len(t) < 20: return False
+        if t[-1] not in '.!?)"\'':
+            if len(t) > 180 or (len(t) > 60 and len(ps[-1]) <= 2): return False
+        return True
+
+    resultado = {
+        'agora_brasilia': now_brasilia().strftime('%Y-%m-%d %H:%M:%S'),
+        'prompt_usado': prompt,
+        'providers': {},
+        'ordem_cadeia': ['groq', 'gemini', 'cloudflare'],
+        'chaves_configuradas': {
+            'GROQ_API_KEY':       bool(os.environ.get('GROQ_API_KEY', '')),
+            'GEMINI_API_KEY':     bool(os.environ.get('GEMINI_API_KEY', '')),
+            'CF_ACCOUNT_ID':      bool(os.environ.get('CF_ACCOUNT_ID', '')),
+            'CF_API_TOKEN':       bool(os.environ.get('CF_API_TOKEN', '')),
+        },
+    }
+
+    # 1. Groq
+    groq_key = os.environ.get('GROQ_API_KEY', '')
+    if groq_key:
+        t0 = _time.time()
+        try:
+            txt = groq_post(prompt, max_tokens=400, temperatura=0.4)
+            ms = int((_time.time() - t0) * 1000)
+            resultado['providers']['groq'] = {
+                'configurado': True, 'modelo': 'llama-3.3-70b-versatile',
+                'ok': True, 'tempo_ms': ms,
+                'texto': (txt or '').strip(),
+                'tamanho': len((txt or '').strip()),
+                'palavras': len((txt or '').strip().split()),
+                'passa_validador': _valida(txt),
+            }
+        except Exception as e:
+            resultado['providers']['groq'] = {
+                'configurado': True, 'modelo': 'llama-3.3-70b-versatile',
+                'ok': False, 'erro': f'{type(e).__name__}: {e}',
+            }
+    else:
+        resultado['providers']['groq'] = {'configurado': False, 'motivo': 'GROQ_API_KEY ausente'}
+
+    # 2. Gemini
+    gemini_key = os.environ.get('GEMINI_API_KEY', '')
+    if gemini_key:
+        t0 = _time.time()
+        try:
+            txt = gemini_post(gemini_key, prompt, max_tokens=400, temperatura=0.4, tentativas=1)
+            ms = int((_time.time() - t0) * 1000)
+            resultado['providers']['gemini'] = {
+                'configurado': True, 'modelo': _gemini_modelo_cache.get('modelo', 'desconhecido'),
+                'ok': True, 'tempo_ms': ms,
+                'texto': (txt or '').strip(),
+                'tamanho': len((txt or '').strip()),
+                'palavras': len((txt or '').strip().split()),
+                'passa_validador': _valida(txt),
+            }
+        except Exception as e:
+            resultado['providers']['gemini'] = {
+                'configurado': True, 'modelo': _gemini_modelo_cache.get('modelo', 'desconhecido'),
+                'ok': False, 'erro': f'{type(e).__name__}: {e}',
+            }
+    else:
+        resultado['providers']['gemini'] = {'configurado': False, 'motivo': 'GEMINI_API_KEY ausente'}
+
+    # 3. Cloudflare
+    cf_account = os.environ.get('CF_ACCOUNT_ID', '')
+    cf_token   = os.environ.get('CF_API_TOKEN', '')
+    if cf_account and cf_token:
+        t0 = _time.time()
+        try:
+            txt = cloudflare_post(prompt, max_tokens=400, temperatura=0.4)
+            ms = int((_time.time() - t0) * 1000)
+            resultado['providers']['cloudflare'] = {
+                'configurado': True, 'modelo': '@cf/meta/llama-3.1-70b-instruct',
+                'ok': True, 'tempo_ms': ms,
+                'texto': (txt or '').strip(),
+                'tamanho': len((txt or '').strip()),
+                'palavras': len((txt or '').strip().split()),
+                'passa_validador': _valida(txt),
+            }
+        except Exception as e:
+            resultado['providers']['cloudflare'] = {
+                'configurado': True, 'modelo': '@cf/meta/llama-3.1-70b-instruct',
+                'ok': False, 'erro': f'{type(e).__name__}: {e}',
+            }
+    else:
+        resultado['providers']['cloudflare'] = {'configurado': False, 'motivo': 'CF_ACCOUNT_ID/CF_API_TOKEN ausente'}
+
+    # Decide qual seria o escolhido pelo ia_chain_validado (ordem: Groq → Gemini → Cloudflare, aceita primeiro válido)
+    escolhido = None
+    for nome in resultado['ordem_cadeia']:
+        p = resultado['providers'].get(nome, {})
+        if p.get('ok') and p.get('passa_validador'):
+            escolhido = nome
+            break
+    resultado['escolhido_pela_cadeia'] = escolhido
+    resultado['explicacao'] = (
+        f"O ia_chain_validado tentaria na ordem {resultado['ordem_cadeia']} e usaria o primeiro que passasse no validador. "
+        f"Com base neste teste, o escolhido seria: {escolhido or 'NENHUM (todos reprovados — cairia no fallback mecânico)'}"
+    )
+
+    if 'text/html' in (request.headers.get('Accept') or ''):
+        def _esc(s): return str(s or '').replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+        html = ['<!doctype html><html><head><meta charset="utf-8"><title>Debug Providers IA</title>',
+                '<style>body{font-family:system-ui,sans-serif;padding:20px;max-width:1000px;margin:0 auto;background:#f5f7fa;}',
+                'h1{color:#1A3A5C;}',
+                '.meta{background:#fff;padding:10px;border-radius:6px;margin-bottom:14px;font-family:monospace;font-size:12px;}',
+                '.p{background:#fff;padding:14px;margin-bottom:12px;border-radius:6px;border-left:5px solid #ccc;}',
+                '.p.ok{border-left-color:#1A6B3A;} .p.fail{border-left-color:#c0392b;} .p.off{border-left-color:#999;opacity:.6;}',
+                '.p.escolhido{background:#fff8e1;border-left-color:#B8860B;border-left-width:7px;}',
+                '.tag{display:inline-block;background:#1A3A5C;color:#fff;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:700;margin-right:6px;}',
+                '.tagok{background:#1A6B3A;} .tagno{background:#c0392b;} .tagwarn{background:#B8860B;}',
+                'pre{background:#fafafa;border:1px solid #eee;padding:10px;border-radius:4px;font-size:12px;white-space:pre-wrap;}',
+                '</style></head><body>',
+                f'<h1>Debug — Providers de IA para Resumo de Ementa</h1>',
+                f'<div class="meta">Agora (Brasília): <strong>{resultado["agora_brasilia"]}</strong><br>',
+                f'Ordem da cadeia: <strong>{" → ".join(resultado["ordem_cadeia"])}</strong></div>']
+
+        for nome in resultado['ordem_cadeia']:
+            p = resultado['providers'][nome]
+            klass = 'p ok' if p.get('ok') and p.get('passa_validador') else ('p fail' if p.get('configurado') else 'p off')
+            if escolhido == nome:
+                klass += ' escolhido'
+            html.append(f'<div class="{klass}">')
+            titulo = f'<h2 style="margin:0 0 6px;color:#1A3A5C;">{nome.upper()}'
+            if escolhido == nome:
+                titulo += ' &nbsp;<span class="tag tagwarn">★ ESCOLHIDO</span>'
+            titulo += '</h2>'
+            html.append(titulo)
+            if not p.get('configurado'):
+                html.append(f'<div><span class="tag">OFF</span>{_esc(p.get("motivo",""))}</div>')
+            elif not p.get('ok'):
+                html.append(f'<div><span class="tag tagno">ERRO</span>Modelo: <code>{_esc(p.get("modelo",""))}</code></div>')
+                html.append(f'<pre>{_esc(p.get("erro",""))}</pre>')
+            else:
+                ok_val = '<span class="tag tagok">✓ PASSA VALIDADOR</span>' if p.get('passa_validador') else '<span class="tag tagno">✗ REPROVADO</span>'
+                html.append(f'<div>{ok_val} <span class="tag">{p.get("tempo_ms")}ms</span> <span class="tag">{p.get("palavras")} palavras</span> <span class="tag">{p.get("tamanho")} chars</span></div>')
+                html.append(f'<div style="margin:4px 0;font-size:11px;color:#666;">Modelo: <code>{_esc(p.get("modelo",""))}</code></div>')
+                html.append(f'<pre>{_esc(p.get("texto",""))}</pre>')
+            html.append('</div>')
+
+        html.append(f'<div class="meta" style="background:#fff8e1;"><strong>→ Veredicto:</strong> {_esc(resultado["explicacao"])}</div>')
+        html.append('<details style="margin-top:14px;"><summary>Testar com outra ementa</summary>')
+        html.append('<form method="get" style="margin-top:10px;">')
+        html.append(f'<label>Projeto: <input name="projeto" value="{_esc(projeto)}" style="width:300px;"></label><br>')
+        html.append(f'<label>Autor: <input name="autor" value="{_esc(autor)}" style="width:300px;"></label><br>')
+        html.append(f'<label>Ementa:<br><textarea name="ementa" rows="4" style="width:100%;">{_esc(ementa)}</textarea></label><br>')
+        html.append('<button type="submit">Testar novamente</button>')
+        html.append('</form></details>')
+        html.append('<details style="margin-top:14px;"><summary>JSON bruto</summary><pre>' + _esc(json.dumps(resultado, indent=2, ensure_ascii=False)) + '</pre></details>')
+        html.append('</body></html>')
+        from flask import Response
+        return Response('\n'.join(html), mimetype='text/html')
+
+    return jsonify(resultado)
+
+
+@app.route('/limpar_resumos_ruins_global', methods=['POST'])
+@login_required
+def limpar_resumos_ruins_global():
+    """Varre a tabela resumos_ia INTEIRA e remove os que não passam no critério
+    de qualidade (< 4 palavras ou < 20 chars). Rota administrativa para limpar o
+    lixo histórico de uma vez. O auto-retry do frontend regera no próximo acesso."""
+    if current_user.categoria == 'restrito':
+        return jsonify({'error': 'Sem permissão'}), 403
+    conn = get_conn()
+    c = conn.cursor()
+    removidos = 0
+    examinados = 0
+    try:
+        c.execute('SELECT evento_id, id_proposicao, resumo FROM resumos_ia')
+        rows = c.fetchall()
+        examinados = len(rows)
+        ruins = []
+        for evt_id, id_p, r in rows:
+            r = (r or '').strip()
+            if len(r.split()) < 4 or len(r) < 20:
+                ruins.append((evt_id, id_p))
+        for evt_id, id_p in ruins:
+            if USE_POSTGRES:
+                c.execute('DELETE FROM resumos_ia WHERE evento_id=%s AND id_proposicao=%s', (evt_id, id_p))
+            else:
+                c.execute('DELETE FROM resumos_ia WHERE evento_id=? AND id_proposicao=?', (evt_id, id_p))
+            removidos += 1
+        conn.commit()
+        logger.info(f"limpar_resumos_ruins_global: {removidos}/{examinados} removidos")
+        return jsonify({
+            'ok': True,
+            'examinados': examinados,
+            'removidos': removidos,
+            'preservados': examinados - removidos,
+        })
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        conn.close()
+
 @app.route('/resumo_ementa', methods=['POST'])
 @login_required
 def resumo_ementa():
@@ -4939,74 +5136,78 @@ def resumo_ementa_impl(data):
     eh_req = any(proj_base.upper().startswith(s) for s in siglas_req)
 
     # ── Para REQ: busca ementa completa e PL referenciado ────────────────────
+    # Estratégia: PRIMEIRO tenta achar o PL referenciado e gera resumo DELE
+    # (conforme definido). SE falhar (PL não identificado, API fora, sem ementa),
+    # NÃO retorna vazio — faz fallback para resumo baseado só na ementa do REQ,
+    # que pelo menos explica o que o requerimento pede.
     contexto_pl = ''
+    ementa_completa = ementa or ''
     if eh_req:
         try:
-            # Passo 1: busca ementa completa do REQ (API retorna truncada)
-            ementa_completa = ementa or ''
+            # Passo 1: busca ementa completa do REQ (API retorna truncada) — com retry
             if id_principal:
-                try:
-                    r_req = requests.get(
-                        f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_principal}",
-                        headers={'Accept': 'application/json'}, timeout=6
-                    )
-                    if r_req.ok:
-                        ementa_api = r_req.json().get('dados', {}).get('ementa', '')
-                        if ementa_api and len(ementa_api) > len(ementa_completa):
-                            ementa_completa = ementa_api
-                            logger.info(f"Ementa completa REQ {id_principal}: {ementa_completa[:80]}")
-                except Exception as e:
-                    logger.warning(f"Erro buscar ementa completa: {e}")
+                for _tent in (1, 2):
+                    try:
+                        r_req = requests.get(
+                            f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_principal}",
+                            headers={'Accept': 'application/json'}, timeout=12
+                        )
+                        if r_req.ok:
+                            ementa_api = r_req.json().get('dados', {}).get('ementa', '')
+                            if ementa_api and len(ementa_api) > len(ementa_completa):
+                                ementa_completa = ementa_api
+                                logger.info(f"Ementa completa REQ {id_principal}: {ementa_completa[:80]}")
+                            break
+                    except Exception as e:
+                        logger.warning(f"Tentativa {_tent} buscar ementa completa REQ falhou: {e}")
 
-            # Passo 2: extrai sigla+número+ano do PL referenciado na ementa completa
-            # Suporta tanto sigla curta (PLP 221/2024) quanto texto por extenso
-            # ("Projeto de Lei Complementar nº 221, de 2024")
+            # Passo 2: extrai sigla+número+ano do PL referenciado
             sigla_ref = num_ref = ano_ref = ''
-
             for txt in [ementa_completa, projeto]:
                 sigla_ref, num_ref, ano_ref = _extrair_sigla_num_ano(txt)
                 if sigla_ref and num_ref and ano_ref:
                     logger.info(f"REQ {id_principal}: PL extraído de '{txt[:60]}' → {sigla_ref} {num_ref}/{ano_ref}")
                     break
 
-            # Passo 3: se não achou sigla+número+ano completos → retorna vazio
-            # Nunca faz busca sem ano para evitar pegar PL errado
             if not (sigla_ref and num_ref and ano_ref):
-                logger.warning(f"REQ {id_principal}: não encontrou PL com sigla+num+ano — retornando vazio")
-                return jsonify({'resumo': ''})
-
-            logger.info(f"REQ referencia: {sigla_ref} {num_ref}/{ano_ref}")
-
-            # Passo 4: busca ementa do PL referenciado com sigla+número+ano exatos
-            r_pl = requests.get(
-                f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
-                f"?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
-                headers={'Accept': 'application/json'}, timeout=8
-            )
-            if not r_pl.ok:
-                logger.warning(f"API PL {sigla_ref} {num_ref}/{ano_ref}: HTTP {r_pl.status_code}")
-                return jsonify({'resumo': ''})
-
-            dados_pl = r_pl.json().get('dados', [])
-            if not dados_pl:
-                logger.warning(f"PL {sigla_ref} {num_ref}/{ano_ref} não encontrado na API")
-                return jsonify({'resumo': ''})
-
-            ementa_pl  = dados_pl[0].get('ementa', '')
-            sigla_real = dados_pl[0].get('siglaTipo', sigla_ref)
-            num_real   = dados_pl[0].get('numero', num_ref)
-            ano_real   = dados_pl[0].get('ano', ano_ref)
-
-            if not ementa_pl:
-                logger.warning(f"PL {sigla_ref} {num_ref}/{ano_ref} sem ementa")
-                return jsonify({'resumo': ''})
-
-            contexto_pl = f"\nO {sigla_real} {num_real}/{ano_real} (referenciado) trata de: {ementa_pl}"
-            logger.info(f"PL referenciado encontrado: {sigla_real} {num_real}/{ano_real}")
+                logger.info(f"REQ {id_principal}: não achou PL com sigla+num+ano — gerará resumo só da ementa do REQ")
+            else:
+                # Passo 3: busca ementa do PL referenciado — com retry e timeout maior
+                for _tent in (1, 2):
+                    try:
+                        r_pl = requests.get(
+                            f"https://dadosabertos.camara.leg.br/api/v2/proposicoes"
+                            f"?siglaTipo={sigla_ref}&numero={num_ref}&ano={ano_ref}&itens=1",
+                            headers={'Accept': 'application/json'}, timeout=12
+                        )
+                        if r_pl.ok:
+                            dados_pl = r_pl.json().get('dados', [])
+                            if dados_pl:
+                                ementa_pl  = dados_pl[0].get('ementa', '')
+                                sigla_real = dados_pl[0].get('siglaTipo', sigla_ref)
+                                num_real   = dados_pl[0].get('numero', num_ref)
+                                ano_real   = dados_pl[0].get('ano', ano_ref)
+                                if ementa_pl:
+                                    contexto_pl = f"\nO {sigla_real} {num_real}/{ano_real} (referenciado) trata de: {ementa_pl}"
+                                    logger.info(f"PL referenciado encontrado (tentativa {_tent}): {sigla_real} {num_real}/{ano_real}")
+                                    break
+                                else:
+                                    logger.warning(f"PL {sigla_ref} {num_ref}/{ano_ref} achado mas sem ementa — fallback para ementa do REQ")
+                                    break
+                            else:
+                                logger.warning(f"PL {sigla_ref} {num_ref}/{ano_ref} não encontrado na API — fallback para ementa do REQ")
+                                break
+                        else:
+                            logger.warning(f"API PL {sigla_ref} {num_ref}/{ano_ref}: HTTP {r_pl.status_code} (tentativa {_tent})")
+                    except Exception as e:
+                        logger.warning(f"Tentativa {_tent} buscar PL falhou: {e}")
 
         except Exception as e:
-            logger.error(f"Erro ao buscar PL do REQ: {e}")
-            return jsonify({'resumo': ''})
+            logger.error(f"Erro ao buscar PL do REQ: {e} — seguindo com ementa do REQ só")
+
+        # Atualiza 'ementa' para usar a versão completa no prompt
+        if ementa_completa and len(ementa_completa) > len(ementa):
+            ementa = ementa_completa
 
     # ── Para não-REQ: busca PL mencionado na ementa se houver ────────────────
     elif not contexto_pl:
@@ -5040,80 +5241,120 @@ def resumo_ementa_impl(data):
         except Exception as e:
             logger.warning(f"Erro ao buscar PL mencionado: {e}")
 
-    if contexto_pl and eh_req:
+    # ── Monta prompt (3 variantes: REQ com PL, REQ sem PL, proposição comum) ──
+    if eh_req and contexto_pl:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo PRÓPRIO do que este REQUERIMENTO pede em UMA linha (máximo 120 caracteres). Seja direto e objetivo.
-NÃO copie a ementa. Escreva com suas próprias palavras.
+Gere um resumo PRÓPRIO do que este REQUERIMENTO pede em UMA linha (máximo 140 caracteres). Seja direto.
 - Se for urgência: comece com "Urgência para o PL que (explique o PL em poucas palavras)"
 - Se for adiamento/retirada: comece com "Adiamento/Retirada do PL que..."
-- Seja direto. Não repita número da proposição.
+- Seja direto. Não repita número da proposição. Termine com ponto final.
 
 Requerimento: {projeto}
 Ementa: {ementa}{contexto_pl}
 
-Responda APENAS com o resumo, sem introdução, sem aspas."""
+Responda APENAS com o resumo em uma linha, sem introdução, sem aspas, terminando em ponto final."""
+    elif eh_req:
+        # REQ sem PL identificado — resumo baseado só na ementa do próprio REQ
+        prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
+Gere um resumo PRÓPRIO do que este REQUERIMENTO pede em UMA linha (máximo 140 caracteres). Seja direto.
+- Se for urgência para uma proposição: comece com "Urgência para a proposição que..."
+- Se for adiamento/retirada: comece com "Adiamento/Retirada da proposição que..."
+- Se for outro tipo de requerimento, descreva objetivamente o que se pede.
+- Não repita número da proposição. Termine com ponto final.
+
+Requerimento: {projeto}
+Ementa: {ementa}
+
+Responda APENAS com o resumo em uma linha, sem introdução, sem aspas, terminando em ponto final."""
     else:
         prompt = f"""Você é um assessor legislativo da Câmara dos Deputados do Brasil.
-Gere um resumo PRÓPRIO do que esta proposição trata na prática em UMA linha (máximo 120 caracteres). Seja direto e objetivo.
-NÃO copie a ementa. Escreva com suas próprias palavras, de forma simples e direta.
+Gere um resumo PRÓPRIO do que esta proposição trata na prática em UMA linha (máximo 140 caracteres). Seja direto.
+NÃO copie a ementa. Escreva com suas próprias palavras.
 - Explique o efeito prático para o cidadão ou para o parlamento
-- Não repita o número da proposição
+- Não repita o número da proposição. Termine com ponto final.
 
 Proposição: {projeto}
 Autor: {autor}
 Ementa: {ementa}
 
-Responda APENAS com o resumo, sem introdução, sem aspas."""
+Responda APENAS com o resumo em uma linha, sem introdução, sem aspas, terminando em ponto final."""
 
-    # Usa ia_chain: Groq → Cloudflare → Gemini
-    # ATENÇÃO: max_tokens precisa ser SUFICIENTE para 1 linha completa em pt-BR.
-    # Em português, cada palavra consome ~2-3 tokens (vs 1-1.3 em inglês), então
-    # 80 tokens dão só ~25-30 palavras — e o modelo frequentemente corta no meio
-    # da primeira frase, gerando "resumos" com uma única palavra ou frase incompleta.
-    # 220 tokens dão folga para 1 linha longa (~60 palavras pt-BR) + buffer de segurança.
-    try:
-        texto, fonte = ia_chain(prompt, max_tokens=220, temperatura=0.4, contexto="resumo_ementa")
-        texto = (texto or '').strip()
+    # ── Validador de qualidade (usado por ia_chain_validado para rejeitar
+    #    respostas ruins e tentar próximo provider automaticamente) ──
+    ementa_norm_check = re.sub(r'\s+', ' ', (ementa or '').strip().lower())
 
-        # Normaliza: remove aspas, prefixos comuns e múltiplos espaços
-        texto = re.sub(r'^["\'\s]+|["\'\s]+$', '', texto)
+    def _validar_resumo(txt):
+        """True se o texto é um resumo aceitável, False se é ruim/truncado/igual à ementa."""
+        if not txt:
+            return False
+        t = re.sub(r'^["\'\s]+|["\'\s]+$', '', txt)
         for prefixo in ('Resumo:', 'RESUMO:', 'resumo:', 'R:', 'r:'):
-            if texto.startswith(prefixo):
-                texto = texto[len(prefixo):].strip()
-        texto = re.sub(r'\s+', ' ', texto)
+            if t.startswith(prefixo):
+                t = t[len(prefixo):].strip()
+        t = re.sub(r'\s+', ' ', t)
+        palavras = t.split()
+        if len(palavras) < 4 or len(t) < 20:
+            return False
+        # Último char deve ser pontuação final OU tem que ser longo o suficiente sem parecer cortado
+        if t[-1] not in '.!?)"\'':
+            # Última palavra muito curta E texto longo → provável corte do max_tokens
+            if len(t) > 180 or (len(t) > 60 and len(palavras[-1]) <= 2):
+                return False
+        # Igual à ementa
+        t_norm = t.lower()
+        if ementa_norm_check and (
+            t_norm == ementa_norm_check or
+            (len(ementa_norm_check) >= 80 and ementa_norm_check[:80] in t_norm) or
+            (len(t_norm) >= 80 and t_norm[:80] in ementa_norm_check)
+        ):
+            return False
+        return True
 
-        # ── VALIDAÇÕES DE QUALIDADE ──
-        palavras = texto.split()
-        qtd_palavras = len(palavras)
-        qtd_chars = len(texto)
+    def _normalizar_resposta(txt):
+        """Aplica as mesmas limpezas do validador para devolver texto pronto."""
+        t = re.sub(r'^["\'\s]+|["\'\s]+$', '', txt or '')
+        for prefixo in ('Resumo:', 'RESUMO:', 'resumo:', 'R:', 'r:'):
+            if t.startswith(prefixo):
+                t = t[len(prefixo):].strip()
+        return re.sub(r'\s+', ' ', t).strip()
 
-        # Rejeita se tiver menos de 4 palavras ou menos de 20 caracteres
-        if qtd_palavras < 4 or qtd_chars < 20:
-            logger.warning(f"resumo_ementa: resposta muito curta ({qtd_palavras} palavras, {qtd_chars} chars): '{texto}' — descartando")
-            return jsonify({'resumo': '', 'motivo': 'resposta muito curta (modelo retornou poucas palavras)'})
-
-        # Rejeita se terminar no meio de uma palavra (sem pontuação final e última palavra "cortada")
-        # Sinal: termina sem ., !, ?, ), " e última palavra tem só 1-2 chars (típico de corte)
-        if texto[-1] not in '.!?)"\'':
-            # Se tem muitos tokens e cortou no final, provavelmente estourou max_tokens
-            if qtd_chars > 180 or (qtd_chars > 50 and len(palavras[-1]) <= 2):
-                logger.warning(f"resumo_ementa: possível truncamento no final: '{texto[-30:]}' — descartando")
-                return jsonify({'resumo': '', 'motivo': 'resumo parece ter sido cortado no final'})
-
-        # Rejeita se for igual ou muito similar à ementa
-        ementa_norm = re.sub(r'\s+', ' ', ementa.strip().lower())
-        texto_norm  = re.sub(r'\s+', ' ', texto.lower())
-        if (texto_norm == ementa_norm or
-            (len(ementa_norm) >= 80 and ementa_norm[:80] in texto_norm) or
-            (len(texto_norm)  >= 80 and texto_norm[:80]  in ementa_norm)):
-            logger.warning(f"resumo_ementa: igual à ementa — descartando")
-            return jsonify({'resumo': '', 'motivo': 'resumo veio igual à ementa'})
-
-        logger.info(f"resumo_ementa OK ({fonte}, {qtd_palavras} palavras, {qtd_chars} chars)")
+    # ── Usa ia_chain_validado — tenta os 3 providers em sequência, aceitando
+    #    somente quem passar no validador. max_tokens=400 dá folga tripla
+    #    (antes 220 travou em respostas longas em pt-BR). ──
+    try:
+        texto, fonte = ia_chain_validado(
+            prompt, _validar_resumo,
+            max_tokens=400, temperatura=0.4,
+            contexto=f"resumo_ementa({'REQ' if eh_req else 'PL'}{'+pl' if contexto_pl else ''})"
+        )
+        texto = _normalizar_resposta(texto)
+        logger.info(f"resumo_ementa OK via {fonte}: {len(texto)} chars, {len(texto.split())} palavras")
         return jsonify({'resumo': texto, 'fonte': fonte})
     except Exception as e:
-        logger.warning(f"resumo_ementa: todos provedores falharam: {e}")
-        return jsonify({'resumo': '', 'motivo': f'erro na IA: {e}'})
+        logger.warning(f"resumo_ementa: TODOS providers reprovados: {e}")
+
+    # ── Fallback MECÂNICO: se a IA não quis cooperar, sintetiza da própria ementa ──
+    # Isso garante que o usuário SEMPRE vê algo em vez de linha em branco.
+    try:
+        base = (ementa_completa or ementa or '').strip()
+        if base:
+            # Limita a ~140 chars em limite de palavra, termina com ponto
+            if len(base) <= 140:
+                fallback = base if base.endswith(('.', '!', '?')) else base + '.'
+            else:
+                corte = base[:140].rsplit(' ', 1)[0]
+                fallback = corte.rstrip('.,;:') + '…'
+            # Prefixo claro para o usuário saber que é a ementa original, não um resumo IA
+            if eh_req:
+                fallback = f"[Resumo automático indisponível] {fallback}"
+            else:
+                fallback = f"[Resumo automático indisponível] {fallback}"
+            logger.info(f"resumo_ementa: usando fallback mecânico ({len(fallback)} chars)")
+            return jsonify({'resumo': fallback, 'fonte': 'fallback_mecanico'})
+    except Exception as e:
+        logger.warning(f"resumo_ementa: fallback mecânico falhou: {e}")
+
+    return jsonify({'resumo': '', 'motivo': 'nenhum provider e nenhum fallback produziu resumo'})
 
 @app.route('/enriquecer_ementa', methods=['POST'])
 @login_required
