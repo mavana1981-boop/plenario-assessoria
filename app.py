@@ -128,29 +128,42 @@ def cloudflare_post(prompt, max_tokens=1500, temperatura=0.3):
     return r.json()['result']['response']
 
 
-def ia_chain_validado(prompt, validar_fn, max_tokens=1500, temperatura=0.3, contexto=""):
+def ia_chain_validado(prompt, validar_fn, max_tokens=1500, temperatura=0.3, contexto="",
+                      ordem_providers=('groq', 'gemini', 'cloudflare')):
     """Como ia_chain, mas também muda de provider quando o texto vem tecnicamente
     ok (sem exceção) mas NÃO passa em validar_fn(texto). Útil quando um provider
     devolve resposta curta/truncada e queremos tentar o próximo.
 
     validar_fn: função (str)->bool. Retorna True se texto é aceitável.
+    ordem_providers: tupla com nomes ('groq','gemini','cloudflare') na ordem desejada.
+                     Default: ('groq','gemini','cloudflare'). Um chamador pode
+                     passar outra ordem — por exemplo resumo_ementa usa
+                     ('cloudflare','gemini','groq') por preferência explícita do usuário.
     Retorna (texto_bom, fonte) do primeiro provider que passar na validação.
     Lança Exception se todos falharem (erro ou texto reprovado).
     Loga qual provider deu qual resposta e por que foi aceita/rejeitada."""
     erros = []
     rejeitados = []
 
-    provedores = []
+    # Monta o dict de provedores disponíveis
+    disponiveis = {}
     groq_key = os.environ.get('GROQ_API_KEY', '')
     if groq_key:
-        provedores.append(('groq', lambda: groq_post(prompt, max_tokens=max_tokens, temperatura=temperatura)))
+        disponiveis['groq'] = lambda: groq_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     if gemini_key:
-        provedores.append(('gemini', lambda: gemini_post(gemini_key, prompt, max_tokens=max_tokens, temperatura=temperatura, tentativas=1)))
+        disponiveis['gemini'] = lambda: gemini_post(gemini_key, prompt, max_tokens=max_tokens, temperatura=temperatura, tentativas=1)
     cf_account = os.environ.get('CF_ACCOUNT_ID', '')
     cf_token   = os.environ.get('CF_API_TOKEN', '')
     if cf_account and cf_token:
-        provedores.append(('cloudflare', lambda: cloudflare_post(prompt, max_tokens=max_tokens, temperatura=temperatura)))
+        disponiveis['cloudflare'] = lambda: cloudflare_post(prompt, max_tokens=max_tokens, temperatura=temperatura)
+
+    # Monta lista final na ordem solicitada, pulando os não configurados
+    provedores = [(nome, disponiveis[nome]) for nome in ordem_providers if nome in disponiveis]
+    if not provedores:
+        raise Exception("Nenhum provider de IA configurado")
+
+    logger.info(f"ia_chain_validado [{contexto}]: ordem = {[n for n,_ in provedores]}")
 
     for nome, fn in provedores:
         try:
@@ -2867,26 +2880,42 @@ def analisar_ia():
 
     prompt = cabecalho + dados + instrucao + estrutura + regras + secao_criticas
 
-    # ── Cadeia tripla: Groq → Cloudflare → Gemini ───────────────────────────
+    # ── Cadeia tripla (preferência do usuário): Cloudflare → Gemini → Groq ──
+    # Cloudflare Workers AI tem 500 RPM e timeout mais tolerante para textos longos;
+    # Gemini entra como qualidade alternativa; Groq fica como última linha (limite
+    # agressivo de TPM no plano gratuito costuma truncar análises de 3000 tokens).
     try:
-        # Para análise técnica completa, usa Gemini primeiro (melhor para textos longos)
-        # Groq pode truncar por limite de tokens/minuto no plano gratuito
         texto = None
         fonte = None
         _erros_ia = []
 
-        # 1. Gemini
-        _gkey = os.environ.get('GEMINI_API_KEY', '')
-        if _gkey:
+        # 1. Cloudflare
+        _cf_account = os.environ.get('CF_ACCOUNT_ID', '')
+        _cf_token   = os.environ.get('CF_API_TOKEN', '')
+        if _cf_account and _cf_token:
             try:
-                texto = gemini_post(_gkey, prompt, max_tokens=3000, temperatura=0.3, tentativas=2)
+                texto = cloudflare_post(prompt, max_tokens=3000, temperatura=0.3)
                 if texto and texto.strip():
-                    fonte = 'gemini'
+                    fonte = 'cloudflare'
+                    logger.info('analisar_ia: Cloudflare OK')
             except Exception as _e:
-                _erros_ia.append(f'Gemini: {_e}')
-                logger.warning(f'analisar_ia: Gemini falhou — {_e}')
+                _erros_ia.append(f'Cloudflare: {_e}')
+                logger.warning(f'analisar_ia: Cloudflare falhou — {_e}')
 
-        # 2. Groq
+        # 2. Gemini
+        if not texto:
+            _gkey = os.environ.get('GEMINI_API_KEY', '')
+            if _gkey:
+                try:
+                    texto = gemini_post(_gkey, prompt, max_tokens=3000, temperatura=0.3, tentativas=2)
+                    if texto and texto.strip():
+                        fonte = 'gemini'
+                        logger.info(f'analisar_ia: Gemini OK ({_gemini_modelo_cache.get("modelo","?")})')
+                except Exception as _e:
+                    _erros_ia.append(f'Gemini: {_e}')
+                    logger.warning(f'analisar_ia: Gemini falhou — {_e}')
+
+        # 3. Groq
         if not texto:
             _grok = os.environ.get('GROQ_API_KEY', '')
             if _grok:
@@ -2894,22 +2923,16 @@ def analisar_ia():
                     texto = groq_post(prompt, max_tokens=3000, temperatura=0.3)
                     if texto and texto.strip():
                         fonte = 'groq'
+                        logger.info('analisar_ia: Groq OK')
                 except Exception as _e:
                     _erros_ia.append(f'Groq: {_e}')
                     logger.warning(f'analisar_ia: Groq falhou — {_e}')
-
-        # 3. Cloudflare
-        if not texto:
-            try:
-                texto, fonte = ia_chain(prompt, max_tokens=3000, contexto="analisar_ia")
-            except Exception as _e:
-                _erros_ia.append(f'Cloudflare: {_e}')
 
         if not texto:
             raise Exception('; '.join(_erros_ia))
     except Exception as e:
         import traceback
-        logger.error(f"ia_chain falhou em analisar_ia: {e}\n{traceback.format_exc()[-300:]}")
+        logger.error(f"analisar_ia: todos os provedores falharam — {e}\n{traceback.format_exc()[-300:]}")
         return jsonify({'error': 'Serviço de IA indisponível. Tente novamente.'}), 503
 
     # Pós-processamento: garante que cada título fique sozinho na linha
@@ -5322,10 +5345,13 @@ Responda APENAS com o resumo em uma linha, sem introdução, sem aspas, terminan
     #    somente quem passar no validador. max_tokens=400 dá folga tripla
     #    (antes 220 travou em respostas longas em pt-BR). ──
     try:
+        # Ordem explícita conforme preferência do usuário: Cloudflare → Gemini → Groq
+        # (Cloudflare tem 500 RPM — raramente estoura; Gemini como qualidade; Groq por último)
         texto, fonte = ia_chain_validado(
             prompt, _validar_resumo,
             max_tokens=400, temperatura=0.4,
-            contexto=f"resumo_ementa({'REQ' if eh_req else 'PL'}{'+pl' if contexto_pl else ''})"
+            contexto=f"resumo_ementa({'REQ' if eh_req else 'PL'}{'+pl' if contexto_pl else ''})",
+            ordem_providers=('cloudflare', 'gemini', 'groq')
         )
         texto = _normalizar_resposta(texto)
         logger.info(f"resumo_ementa OK via {fonte}: {len(texto)} chars, {len(texto.split())} palavras")
