@@ -2373,6 +2373,19 @@ def view_pauta(evento_id):
     # Itens atribuídos ao usuário logado
     itens_atribuidos = [item for item in itens if item.get('responsavel_username') == current_user.username]
 
+    # Resultados (aprovado/rejeitado/retirado...) para sessões que já passaram
+    resultados, resultados_atualizados_em = carregar_resultados_evento(evento_id)
+    for item in itens:
+        item['resultado'] = resultados.get(str(item.get('id_principal') or ''))
+    sit_ev = _norm_txt(evento.get('situacao') or '')
+    hoje = now_brasilia().strftime('%Y-%m-%d')
+    evento_passado = bool(data_evento) and (data_evento < hoje or sit_ev.startswith('encerrad'))
+    # Atualiza sozinho se a sessão já passou e ainda não há resultado, ou se o último
+    # levantamento foi feito no dia da sessão (a Câmara costuma registrar depois).
+    auto_atualizar_resultados = evento_passado and (
+        not resultados or not resultados_atualizados_em
+        or str(resultados_atualizados_em)[:10] <= data_evento)
+
     return render_template('pauta.html', evento_id=evento_id, evento=evento, itens=itens,
                            from_cache=from_cache, user_role=current_user.role,
                            user_categoria=current_user.categoria,
@@ -2382,7 +2395,10 @@ def view_pauta(evento_id):
                            eh_responsavel_pauta=eh_responsavel_pauta,
                            user_nome_display=user_nome_display,
                            user_foto=user_foto,
-                           itens_atribuidos=itens_atribuidos)
+                           itens_atribuidos=itens_atribuidos,
+                           evento_passado=evento_passado,
+                           resultados_atualizados_em=resultados_atualizados_em,
+                           auto_atualizar_resultados=auto_atualizar_resultados)
 
 @app.route('/save_item', methods=['POST'])
 @login_required
@@ -4163,6 +4179,314 @@ def buscar_votos(evento_id):
 
     # Se nada funcionar, retorna vazio para o frontend pedir manual
     return jsonify({'votacoes': [], 'total': 0, 'info': 'Votos não encontrados automaticamente — insira manualmente.'})
+
+# --------------------------------------------------------------------------
+# RESULTADOS DOS ITENS (sessões que já passaram)
+# Descobre o que aconteceu com cada item: aprovado, rejeitado, retirado, adiado...
+# Fontes: situacaoItem da API de pauta + tramitações da proposição no PLEN
+# durante a sessão + placar da API de votações. Resultado fica salvo no banco.
+# --------------------------------------------------------------------------
+_tabela_resultados_ok = {'ok': False}
+
+# categoria -> (rótulo, cor bootstrap, prioridade)
+_RESULTADO_INFO = {
+    'aprovado':            ('Aprovado',                   'success',   100),
+    'rejeitado':           ('Rejeitado',                  'danger',    100),
+    'aprovado_1turno':     ('Aprovado em 1º turno',       'success',    95),
+    'aprovado_texto_base': ('Aprovado (texto-base)',      'success',    90),
+    'urgencia_aprovada':   ('Urgência aprovada',          'success',    85),
+    'urgencia_rejeitada':  ('Urgência rejeitada',         'danger',     85),
+    'prejudicado':         ('Prejudicado',                'dark',       80),
+    'retirado':            ('Retirado de pauta',          'secondary',  70),
+    'adiado':              ('Adiado',                     'warning',    60),
+    'nao_apreciado':       ('Não apreciado',              'warning',    50),
+    'discussao_encerrada': ('Discussão encerrada',        'info',       30),
+    'sem_registro':        ('Sem deliberação registrada', 'light',       0),
+}
+
+
+def _garantir_tabela_resultados():
+    if _tabela_resultados_ok['ok']:
+        return
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS resultados_pauta (
+            evento_id INTEGER, id_proposicao TEXT, categoria TEXT, rotulo TEXT, cor TEXT,
+            detalhe TEXT, placar TEXT, fonte TEXT, data_hora TEXT, atualizado_em TEXT,
+            PRIMARY KEY (evento_id, id_proposicao))''')
+        conn.commit()
+        _tabela_resultados_ok['ok'] = True
+    finally:
+        conn.close()
+
+
+def _norm_txt(t):
+    import unicodedata
+    t = unicodedata.normalize('NFKD', (t or '').lower())
+    return ''.join(ch for ch in t if not unicodedata.combining(ch))
+
+
+def _classificar_resultado(texto):
+    """Classifica um despacho/situação em uma categoria de resultado (ou None)."""
+    t = _norm_txt(texto)
+    if not t.strip():
+        return None
+    aprov = bool(re.search(r'\baprovad[ao]s?\b|\baprovou\b', t))
+    rejeit = bool(re.search(r'\brejeitad[ao]s?\b|\brejeitou\b', t))
+
+    # Requerimentos procedimentais: só contam se aprovados
+    if 'requerimento' in t and re.search(r'retirada? de pauta', t):
+        return 'retirado' if aprov else None
+    if 'requerimento' in t and re.search(r'adiamento', t):
+        return 'adiado' if aprov else None
+    if 'requerimento' in t and 'urgencia' in t:
+        if aprov:
+            return 'urgencia_aprovada'
+        if rejeit:
+            return 'urgencia_rejeitada'
+        return None
+
+    if re.search(r'retirad[ao]s?\b.{0,60}\bpauta|retirada de pauta', t):
+        return 'retirado'
+    if re.search(r'prejudicad[ao]', t):
+        return 'prejudicado'
+    if re.search(r'nao (foi )?(apreciad|deliberad|votad)|encerramento da sessao|face do encerramento', t):
+        return 'nao_apreciado'
+    if re.search(r'\badiad[ao]s?\b|\badiou\b', t):
+        return 'adiado'
+
+    # Votações de emendas/destaques/requerimentos isolados não são o resultado do item
+    obj_acessorio = r'(a|as|o|os)\s+(emenda|emendas|destaque|destaques|requerimento|requerimentos|subemenda)\b(?!\s+substitutiva)'
+    if rejeit and not re.search(r'rejeitad[ao]s?\s+' + obj_acessorio, t):
+        return 'rejeitado'
+    if aprov and not re.search(r'aprovad[ao]s?\s+' + obj_acessorio, t):
+        if re.search(r'primeiro turno|1o turno|1º turno', t) and not re.search(r'segundo turno|2o turno', t):
+            return 'aprovado_1turno'
+        if 'ressalvad' in t:
+            return 'aprovado_texto_base'
+        return 'aprovado'
+    if re.search(r'encerrada a discussao|discussao encerrada', t):
+        return 'discussao_encerrada'
+    return None
+
+
+def _extrair_placar(texto):
+    t = _norm_txt(texto)
+    m_sim = re.search(r'\bsim\s*[:=]?\s*(\d{1,3})\b', t)
+    m_nao = re.search(r'\bnao\s*[:=]?\s*(\d{1,3})\b', t)
+    if m_sim and m_nao:
+        plac = f"Sim {m_sim.group(1)} × Não {m_nao.group(1)}"
+        m_abs = re.search(r'\babst(?:encao|encoes|\.)?\s*[:=]?\s*(\d{1,3})\b', t)
+        if m_abs:
+            plac += f" · Abst. {m_abs.group(1)}"
+        return plac
+    return ''
+
+
+def _parse_dh(s):
+    try:
+        return datetime.strptime(str(s)[:16], '%Y-%m-%dT%H:%M')
+    except Exception:
+        return None
+
+
+def calcular_resultados_evento(evento_id, itens):
+    """Calcula o resultado de cada item da pauta de um evento. Retorna {id_prop: {...}}."""
+    from concurrent.futures import ThreadPoolExecutor
+    hdr = {'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 Chrome/124.0.0.0'}
+    base = 'https://dadosabertos.camara.leg.br/api/v2'
+
+    # Janela de tempo da sessão
+    ini = fim = None
+    try:
+        r = requests.get(f'{base}/eventos/{evento_id}', headers=hdr, timeout=10)
+        d = r.json().get('dados', {}) if r.ok else {}
+        ini = _parse_dh(d.get('dataHoraInicio'))
+        fim = _parse_dh(d.get('dataHoraFim'))
+    except Exception as e:
+        logger.warning(f'resultados: evento {evento_id}: {e}')
+    if not ini:
+        raise ValueError('Não foi possível obter a data da sessão na API da Câmara')
+    jan_ini = ini - timedelta(minutes=30)
+    jan_fim = (fim + timedelta(hours=2)) if fim else (ini.replace(hour=23, minute=59) + timedelta(hours=6))
+
+    # Fonte 1: situacaoItem da pauta do evento
+    sit_item = {}
+    try:
+        r = requests.get(f'{base}/eventos/{evento_id}/pauta', headers=hdr, timeout=12)
+        if r.ok:
+            for p in r.json().get('dados', []):
+                sit = (p.get('situacaoItem') or '').strip()
+                if not sit:
+                    continue
+                for chave in ('proposicao_', 'proposicaoRelacionada_'):
+                    pid = str((p.get(chave) or {}).get('id') or '')
+                    if pid:
+                        sit_item.setdefault(pid, sit)
+    except Exception as e:
+        logger.warning(f'resultados: pauta {evento_id}: {e}')
+
+    # Fonte 2: votações do evento (placar)
+    placar_por_prop = {}
+    try:
+        r = requests.get(f'{base}/votacoes', params={'idEvento': evento_id, 'itens': 100,
+                         'ordem': 'ASC', 'ordenarPor': 'dataHoraRegistro'}, headers=hdr, timeout=12)
+        if r.ok:
+            for v in r.json().get('dados', []):
+                m = re.search(r'/proposicoes/(\d+)', v.get('uriProposicaoObjeto') or '')
+                plac = _extrair_placar(v.get('descricao') or '')
+                if m and plac:
+                    placar_por_prop[m.group(1)] = plac  # fica a última votação nominal
+    except Exception as e:
+        logger.warning(f'resultados: votacoes {evento_id}: {e}')
+
+    # Fonte 3: tramitações de cada proposição no Plenário durante a sessão
+    def _tramitacoes(pid):
+        try:
+            r = requests.get(f'{base}/proposicoes/{pid}/tramitacoes', headers=hdr, timeout=12,
+                             params={'dataInicio': jan_ini.strftime('%Y-%m-%d'),
+                                     'dataFim': jan_fim.strftime('%Y-%m-%d')})
+            if not r.ok:
+                return []
+            out = []
+            for t in r.json().get('dados', []):
+                if (t.get('siglaOrgao') or '').upper() != 'PLEN':
+                    continue
+                dh = _parse_dh(t.get('dataHora'))
+                if dh and not (jan_ini <= dh <= jan_fim):
+                    continue
+                txt = ' — '.join(x for x in [(t.get('descricaoTramitacao') or '').strip(),
+                                             (t.get('despacho') or '').strip()] if x)
+                out.append((t.get('dataHora') or '', txt))
+            return out
+        except Exception as e:
+            logger.warning(f'resultados: tramitacoes {pid}: {e}')
+            return []
+
+    ids = []
+    for it in itens:
+        pid = str(it.get('id_principal') or '')
+        if pid and pid not in ids:
+            ids.append(pid)
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        trams = dict(zip(ids, ex.map(_tramitacoes, ids)))
+
+    resultados = {}
+    for it in itens:
+        pid = str(it.get('id_principal') or '')
+        if not pid or pid in resultados:
+            continue
+        proj = (it.get('projeto') or it.get('projeto_original') or '').upper()
+        eh_req = proj.startswith('REQ') or ' AO ' in proj
+
+        candidatos = []  # (categoria, data_hora, texto, fonte)
+        for dh, txt in trams.get(pid, []):
+            cat = _classificar_resultado(txt)
+            if cat:
+                candidatos.append((cat, dh, txt, 'tramitação'))
+        if pid in sit_item:
+            cat = _classificar_resultado(sit_item[pid])
+            if cat:
+                candidatos.append((cat, '', sit_item[pid], 'pauta da sessão'))
+
+        if eh_req:
+            # Para requerimento (ex.: urgência), o resultado do item é o do requerimento
+            urg = [c for c in candidatos if c[0].startswith('urgencia')]
+            if urg:
+                candidatos = urg
+        else:
+            # Para a própria proposição, aprovação de urgência pesa menos que o mérito
+            pass
+
+        if candidatos:
+            def _peso(c):
+                return (_RESULTADO_INFO[c[0]][2], c[1] or '')
+            cat, dh, txt, fonte = max(candidatos, key=_peso)
+            if eh_req and cat == 'urgencia_aprovada':
+                rotulo, cor = 'Aprovado (urgência)', 'success'
+            elif eh_req and cat == 'urgencia_rejeitada':
+                rotulo, cor = 'Rejeitado (urgência)', 'danger'
+            else:
+                rotulo, cor = _RESULTADO_INFO[cat][0], _RESULTADO_INFO[cat][1]
+            placar = _extrair_placar(txt) or (placar_por_prop.get(pid, '') if cat in
+                     ('aprovado', 'rejeitado', 'aprovado_1turno', 'aprovado_texto_base') else '')
+        else:
+            cat, dh, txt, fonte = 'sem_registro', '', '', ''
+            rotulo, cor = _RESULTADO_INFO[cat][0], _RESULTADO_INFO[cat][1]
+            placar = ''
+
+        resultados[pid] = {
+            'categoria': cat, 'rotulo': rotulo, 'cor': cor,
+            'detalhe': re.sub(r'\s+', ' ', txt or '').strip()[:600],
+            'placar': placar, 'fonte': fonte, 'data_hora': dh or '',
+        }
+    return resultados
+
+
+def salvar_resultados_evento(evento_id, resultados):
+    _garantir_tabela_resultados()
+    agora = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        for pid, r in resultados.items():
+            c.execute('DELETE FROM resultados_pauta WHERE evento_id=? AND id_proposicao=?', (evento_id, pid))
+            c.execute('''INSERT INTO resultados_pauta (evento_id, id_proposicao, categoria, rotulo, cor,
+                         detalhe, placar, fonte, data_hora, atualizado_em) VALUES (?,?,?,?,?,?,?,?,?,?)''',
+                      (evento_id, pid, r['categoria'], r['rotulo'], r['cor'], r['detalhe'],
+                       r['placar'], r['fonte'], r['data_hora'], agora))
+        conn.commit()
+    finally:
+        conn.close()
+    return agora
+
+
+def carregar_resultados_evento(evento_id):
+    """Retorna ({id_prop: {...}}, atualizado_em mais recente ou None)."""
+    try:
+        _garantir_tabela_resultados()
+        conn = get_conn()
+        try:
+            c = conn.cursor()
+            c.execute('''SELECT id_proposicao, categoria, rotulo, cor, detalhe, placar, fonte, data_hora,
+                         atualizado_em FROM resultados_pauta WHERE evento_id=?''', (evento_id,))
+            rows = c.fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f'carregar_resultados_evento: {e}')
+        return {}, None
+    res, ultimo = {}, None
+    for r in rows:
+        res[str(r[0])] = {'categoria': r[1], 'rotulo': r[2], 'cor': r[3], 'detalhe': r[4] or '',
+                          'placar': r[5] or '', 'fonte': r[6] or '', 'data_hora': r[7] or ''}
+        if r[8] and (ultimo is None or str(r[8]) > ultimo):
+            ultimo = str(r[8])
+    return res, ultimo
+
+
+@app.route('/atualizar_resultados/<int:evento_id>', methods=['POST'])
+@login_required
+def atualizar_resultados(evento_id):
+    itens, _ = fetch_pauta(evento_id)
+    if not itens:
+        return jsonify({'ok': False, 'erro': 'Pauta sem itens'}), 404
+    try:
+        resultados = calcular_resultados_evento(evento_id, itens)
+    except Exception as e:
+        logger.warning(f'atualizar_resultados {evento_id}: {e}')
+        return jsonify({'ok': False, 'erro': str(e)}), 502
+    atualizado_em = salvar_resultados_evento(evento_id, resultados)
+    return jsonify({'ok': True, 'resultados': resultados, 'atualizado_em': atualizado_em})
+
+
+@app.route('/resultados/<int:evento_id>')
+@login_required
+def obter_resultados(evento_id):
+    res, ultimo = carregar_resultados_evento(evento_id)
+    return jsonify({'resultados': res, 'atualizado_em': ultimo})
+
 
 @app.route('/debug_destaque', methods=['POST'])
 @login_required

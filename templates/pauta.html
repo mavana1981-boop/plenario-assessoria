@@ -150,6 +150,15 @@
         <span id="ultimo-usuario" class="text-muted">
           {% if last_saved_user %} — por <strong>{{ last_saved_user }}</strong>{% endif %}
         </span>
+        <br><strong><i class="fas fa-gavel me-1"></i>Resultados:</strong>
+        <span id="resultados-status" class="text-muted">
+          {% if resultados_atualizados_em %}atualizados em {{ resultados_atualizados_em | datetimeformat('%d/%m/%Y %H:%M') }}
+          {% elif evento_passado %}ainda não levantados{% else %}disponíveis após a sessão{% endif %}
+        </span>
+        <button type="button" id="btn-atualizar-resultados" class="btn btn-outline-primary btn-sm py-0 px-2 ms-1"
+                onclick="atualizarResultados(false)" title="Consulta a Câmara e marca cada item como aprovado, rejeitado, retirado, adiado...">
+          <i class="fas fa-sync-alt me-1"></i>Atualizar resultados
+        </button>
       </div>
     </div>
 
@@ -266,6 +275,7 @@
             <span class="badge bg-secondary" style="min-width:28px;text-align:center;">{{ item.ordem }}</span>
             <div style="flex:1;">
               <strong>{{ item.projeto }}</strong>
+              <span class="resultado-item" data-resultado-id="{{ item.id_principal }}">{% if item.resultado %}{% set r = item.resultado %}<span class="badge bg-{{ r.cor }}{{ ' text-dark' if r.cor in ['warning','light','info'] else '' }} ms-1" title="{{ r.detalhe }}"><i class="fas fa-gavel me-1"></i>{{ r.rotulo }}{% if r.placar %} — {{ r.placar }}{% endif %}</span>{% endif %}</span>
               <div class="text-muted" style="font-size:0.82rem;">
                 {% if item.relator and item.relator != 'Não atribuído' %}
                   <span><strong>Relator:</strong> {{ item.relator }}</span> &nbsp;
@@ -301,6 +311,7 @@
                    'bg-secondary' }}">
                 {{ item.status | default('N/D') }}
               </span>
+              <span class="resultado-item" data-resultado-id="{{ item.id_principal }}">{% if item.resultado %}{% set r = item.resultado %}<span class="badge bg-{{ r.cor }}{{ ' text-dark' if r.cor in ['warning','light','info'] else '' }} ms-1" title="{{ r.detalhe }}"><i class="fas fa-gavel me-1"></i>{{ r.rotulo }}{% if r.placar %} — {{ r.placar }}{% endif %}</span>{% endif %}</span>
               <div class="item-info mt-1">
                 <strong>Situação:</strong> {{ item.situacao | default('N/D') }} &nbsp;&nbsp;
                 <strong>Relator:</strong>
@@ -4778,5 +4789,42 @@ function gerarBannerBP(){
     }
   </script>
 {% include '_aviso_painel.html' %}
+
+<script>
+// ── Resultados dos itens (aprovado / rejeitado / retirado / adiado...) ──
+function _escRes(t){ const d=document.createElement('div'); d.textContent=t||''; return d.innerHTML; }
+function _badgeResultado(r){
+  if(!r) return '';
+  const escuro = ['warning','light','info'].includes(r.cor) ? ' text-dark' : '';
+  const placar = r.placar ? ' — ' + _escRes(r.placar) : '';
+  return `<span class="badge bg-${r.cor}${escuro} ms-1" title="${_escRes(r.detalhe).replace(/"/g,'&quot;')}"><i class="fas fa-gavel me-1"></i>${_escRes(r.rotulo)}${placar}</span>`;
+}
+async function atualizarResultados(auto){
+  const btn = document.getElementById('btn-atualizar-resultados');
+  const st  = document.getElementById('resultados-status');
+  if(btn){ btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Consultando…'; }
+  if(st) st.textContent = 'consultando a Câmara…';
+  try{
+    const resp = await fetch('/atualizar_resultados/{{ evento_id }}', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    const j = await resp.json();
+    if(!j.ok) throw new Error(j.erro || 'falha');
+    let n = 0;
+    document.querySelectorAll('.resultado-item[data-resultado-id]').forEach(el => {
+      const r = j.resultados[el.dataset.resultadoId];
+      el.innerHTML = _badgeResultado(r);
+      if(r && r.categoria !== 'sem_registro') n++;
+    });
+    const quando = (j.atualizado_em||'').replace(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2}).*/, '$3/$2/$1 $4');
+    if(st) st.textContent = `atualizados em ${quando} — ${n} item(ns) com deliberação registrada`;
+  }catch(e){
+    if(st) st.textContent = 'não foi possível consultar a Câmara agora' + (auto ? '' : ' (' + e.message + ')');
+  }finally{
+    if(btn){ btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt me-1"></i>Atualizar resultados'; }
+  }
+}
+{% if auto_atualizar_resultados %}
+document.addEventListener('DOMContentLoaded', () => setTimeout(() => atualizarResultados(true), 800));
+{% endif %}
+</script>
 </body>
 </html>
