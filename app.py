@@ -94,21 +94,74 @@ def gemini_post(key, prompt, max_tokens=1500, temperatura=0.3, tentativas=3):
     raise Exception("Gemini indisponível após retries.")
 
 
+_GROQ_MODELOS_TENTATIVA = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-70b-versatile",
+    "llama-3.1-8b-instant",
+    "llama3-70b-8192",
+    "llama3-8b-8192",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it",
+]
+_groq_modelo_cache = {"modelo": None}
+
+
 def groq_post(prompt, max_tokens=1500, temperatura=0.3):
-    """Chama Groq como fallback. Retorna texto ou lança exceção."""
+    """Chama Groq como fallback. Tenta uma lista de modelos; se o atual der
+    404 (deprecado/renomeado), passa para o próximo e cacheia o que funcionou.
+    Retorna texto ou lança exceção."""
     groq_key = os.environ.get('GROQ_API_KEY', '')
     if not groq_key:
         raise Exception("GROQ_API_KEY não configurada.")
-    r = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-        json={"model": "llama-3.3-70b-versatile",
-              "messages": [{"role": "user", "content": prompt}],
-              "max_tokens": max_tokens, "temperature": temperatura},
-        timeout=30
-    )
-    r.raise_for_status()
-    return r.json()['choices'][0]['message']['content']
+
+    # Ordem de tentativa: modelo do cache primeiro, depois os demais
+    modelos = list(_GROQ_MODELOS_TENTATIVA)
+    if _groq_modelo_cache["modelo"] and _groq_modelo_cache["modelo"] in modelos:
+        modelos.remove(_groq_modelo_cache["modelo"])
+        modelos.insert(0, _groq_modelo_cache["modelo"])
+
+    ultimo_erro = None
+    for modelo in modelos:
+        try:
+            r = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
+                json={"model": modelo,
+                      "messages": [{"role": "user", "content": prompt}],
+                      "max_tokens": max_tokens, "temperature": temperatura},
+                timeout=30
+            )
+            if r.status_code == 404:
+                logger.warning(f"Groq 404: modelo '{modelo}' deprecado/inexistente, tentando próximo")
+                ultimo_erro = f"404 modelo {modelo} não existe"
+                continue
+            if r.status_code == 400:
+                # 400 pode ser "model not found" também em algumas versões — tenta próximo
+                body = ''
+                try: body = r.text[:200]
+                except Exception: pass
+                if 'model' in body.lower() and ('not found' in body.lower() or 'invalid' in body.lower() or 'decommissioned' in body.lower()):
+                    logger.warning(f"Groq 400 model-issue: '{modelo}' — {body[:100]}")
+                    ultimo_erro = f"400 {body[:100]}"
+                    continue
+            r.raise_for_status()
+            texto = r.json()['choices'][0]['message']['content']
+            if _groq_modelo_cache["modelo"] != modelo:
+                logger.info(f"Groq: modelo ativo = '{modelo}' (cacheado)")
+                _groq_modelo_cache["modelo"] = modelo
+            return texto
+        except requests.exceptions.HTTPError as e:
+            # Rate limit (429) é problema real, não tenta próximo modelo — devolve o erro
+            if e.response is not None and e.response.status_code == 429:
+                raise
+            ultimo_erro = str(e)
+            logger.warning(f"Groq HTTP erro com '{modelo}': {e}")
+        except Exception as e:
+            ultimo_erro = str(e)
+            logger.warning(f"Groq erro com '{modelo}': {e}")
+
+    _groq_modelo_cache["modelo"] = None  # limpa cache para re-detectar na próxima
+    raise Exception(f"Groq: nenhum modelo da lista funcionou. Último erro: {ultimo_erro}")
 
 
 def cloudflare_post(prompt, max_tokens=1500, temperatura=0.3):
@@ -4756,7 +4809,8 @@ Responda APENAS com o resumo em uma linha, sem introdução, sem aspas, terminan
             txt = groq_post(prompt, max_tokens=400, temperatura=0.4)
             ms = int((_time.time() - t0) * 1000)
             resultado['providers']['groq'] = {
-                'configurado': True, 'modelo': 'llama-3.3-70b-versatile',
+                'configurado': True,
+                'modelo': _groq_modelo_cache.get('modelo') or 'auto-detect',
                 'ok': True, 'tempo_ms': ms,
                 'texto': (txt or '').strip(),
                 'tamanho': len((txt or '').strip()),
@@ -4765,7 +4819,8 @@ Responda APENAS com o resumo em uma linha, sem introdução, sem aspas, terminan
             }
         except Exception as e:
             resultado['providers']['groq'] = {
-                'configurado': True, 'modelo': 'llama-3.3-70b-versatile',
+                'configurado': True,
+                'modelo': _groq_modelo_cache.get('modelo') or 'nenhum funcionou',
                 'ok': False, 'erro': f'{type(e).__name__}: {e}',
             }
     else:
@@ -5088,20 +5143,11 @@ def buscar_imagem_item():
         except Exception as e:
             logger.warning(f"Erro keywords imagem (Gemini): {e}")
 
-    # Tenta Groq
+    # Tenta Groq (usa groq_post que tem fallback automático de modelo)
     if groq_key and not keywords:
         try:
-            r = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": "Bearer " + groq_key, "Content-Type": "application/json"},
-                json={"model": "llama-3.3-70b-versatile",
-                      "messages": [{"role": "user", "content": prompt_kw}],
-                      "max_tokens": 20, "temperature": 0.1},
-                timeout=8
-            )
-            if r.ok:
-                keywords = r.json()['choices'][0]['message']['content'].strip()
-                keywords = re.sub(r'[^\w\s]', '', keywords).strip()
+            keywords = groq_post(prompt_kw, max_tokens=20, temperatura=0.1).strip()
+            keywords = re.sub(r'[^\w\s]', '', keywords).strip()
         except Exception as e:
             logger.warning(f"Erro keywords imagem (Groq): {e}")
 
@@ -5345,13 +5391,14 @@ Responda APENAS com o resumo em uma linha, sem introdução, sem aspas, terminan
     #    somente quem passar no validador. max_tokens=400 dá folga tripla
     #    (antes 220 travou em respostas longas em pt-BR). ──
     try:
-        # Ordem explícita conforme preferência do usuário: Cloudflare → Gemini → Groq
-        # (Cloudflare tem 500 RPM — raramente estoura; Gemini como qualidade; Groq por último)
+        # Ordem explícita conforme preferência do usuário: Groq → Cloudflare → Gemini
+        # Groq: rápido e bom em primeiro; Cloudflare: safety net (500 RPM mas quota diária em neurons);
+        # Gemini: por último porque tem o rate limit mais restritivo (10 RPM, 250 RPD no 2.5-flash).
         texto, fonte = ia_chain_validado(
             prompt, _validar_resumo,
             max_tokens=400, temperatura=0.4,
             contexto=f"resumo_ementa({'REQ' if eh_req else 'PL'}{'+pl' if contexto_pl else ''})",
-            ordem_providers=('cloudflare', 'gemini', 'groq')
+            ordem_providers=('groq', 'cloudflare', 'gemini')
         )
         texto = _normalizar_resposta(texto)
         logger.info(f"resumo_ementa OK via {fonte}: {len(texto)} chars, {len(texto.split())} palavras")
@@ -5510,15 +5557,8 @@ Ementa: {ementa}
 Responda APENAS com a frase descritiva, sem introdução, sem aspas."""
 
     try:
-        r = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-            json={"model": "llama-3.3-70b-versatile", "messages": [{"role": "user", "content": prompt}],
-                  "max_tokens": 80, "temperature": 0.2},
-            timeout=10
-        )
-        if r.ok:
-            complemento = r.json()['choices'][0]['message']['content'].strip()
+        complemento = groq_post(prompt, max_tokens=80, temperatura=0.2).strip()
+        if complemento:
             return jsonify({'complemento': complemento})
     except Exception as e:
         logger.warning(f"Erro ao complementar ementa: {e}")
