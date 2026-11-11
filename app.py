@@ -6,6 +6,7 @@ import sqlite3
 import requests
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 
 # Fuso horário de Brasília (UTC-3)
@@ -5156,10 +5157,176 @@ def limpar_resumos_ruins_global():
     finally:
         conn.close()
 
+# ─── Resumo de ementa: gerado UMA vez por (evento, proposição) ───────────────
+# O servidor é quem decide se chama a IA. Antes de gerar, consulta resumos_ia;
+# se já existe, devolve o salvo sem gastar tokens. Casos em que a IA devolveu
+# algo ruim ficam marcados em resumos_ia_status ('falhou') para não serem
+# re-tentados automaticamente a cada abertura da pauta — só pelo botão ↻.
+# O status 'gerando' funciona como reserva: se dois usuários abrirem a pauta
+# ao mesmo tempo, só um gera; o outro recebe {pendente: true} e tenta de novo.
+_RESUMO_RESERVA_SEG = 150
+_tabela_status_ok = {'ok': False}
+
+
+def _garantir_tabela_status_resumo():
+    if _tabela_status_ok['ok']:
+        return
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('''CREATE TABLE IF NOT EXISTS resumos_ia_status (
+            evento_id INTEGER, id_proposicao TEXT, status TEXT, atualizado_em BIGINT,
+            PRIMARY KEY (evento_id, id_proposicao))''')
+        conn.commit()
+        _tabela_status_ok['ok'] = True
+    finally:
+        conn.close()
+
+
+def _resumo_aceitavel(txt, ementa=''):
+    """Mesmo critério do _resumoEhRuim + 'muito similar à ementa' do pauta.html."""
+    t = (txt or '').strip()
+    if not t:
+        return False
+    palavras = t.split()
+    if len(palavras) < 4 or len(t) < 20:
+        return False
+    if t[-1] not in '.!?)"\'»”' and len(t) > 50 and len(palavras[-1]) <= 2:
+        return False
+    e = (ementa or '').strip()
+    if len(t) > 20 and e and (t == e or e.startswith(t[:min(80, len(t))]) or t.startswith(e[:min(80, len(e))])):
+        return False
+    return True
+
+
+def _ler_resumo_salvo(evento_id, id_prop):
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('SELECT resumo FROM resumos_ia WHERE evento_id=? AND id_proposicao=?', (evento_id, str(id_prop)))
+        row = c.fetchone()
+        return (row[0] or '').strip() if row else ''
+    finally:
+        conn.close()
+
+
+def _gravar_resumo(evento_id, id_prop, resumo):
+    """Upsert em resumos_ia que funciona no SQLite e no PostgreSQL, e limpa o status."""
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('''INSERT INTO resumos_ia (evento_id, id_proposicao, resumo) VALUES (?,?,?)
+                     ON CONFLICT (evento_id, id_proposicao) DO UPDATE SET resumo=EXCLUDED.resumo''',
+                  (evento_id, str(id_prop), resumo))
+        c.execute('DELETE FROM resumos_ia_status WHERE evento_id=? AND id_proposicao=?', (evento_id, str(id_prop)))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _status_resumo(evento_id, id_prop):
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('SELECT status, atualizado_em FROM resumos_ia_status WHERE evento_id=? AND id_proposicao=?',
+                  (evento_id, str(id_prop)))
+        row = c.fetchone()
+        return (row[0], int(row[1] or 0)) if row else (None, 0)
+    finally:
+        conn.close()
+
+
+def _marcar_status_resumo(evento_id, id_prop, status):
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('''INSERT INTO resumos_ia_status (evento_id, id_proposicao, status, atualizado_em) VALUES (?,?,?,?)
+                     ON CONFLICT (evento_id, id_proposicao) DO UPDATE SET status=EXCLUDED.status,
+                     atualizado_em=EXCLUDED.atualizado_em''',
+                  (evento_id, str(id_prop), status, int(time.time())))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _reservar_geracao_resumo(evento_id, id_prop):
+    """Tenta reservar a geração. True = este pedido deve gerar; False = outro já está gerando."""
+    agora = int(time.time())
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('''INSERT INTO resumos_ia_status (evento_id, id_proposicao, status, atualizado_em)
+                     VALUES (?,?,'gerando',?) ON CONFLICT (evento_id, id_proposicao) DO NOTHING''',
+                  (evento_id, str(id_prop), agora))
+        ok = c.rowcount == 1
+        if not ok:
+            # Reserva antiga (worker caiu no meio da geração) pode ser retomada
+            c.execute('''UPDATE resumos_ia_status SET atualizado_em=?
+                         WHERE evento_id=? AND id_proposicao=? AND status='gerando' AND atualizado_em<?''',
+                      (agora, evento_id, str(id_prop), agora - _RESUMO_RESERVA_SEG))
+            ok = c.rowcount == 1
+        conn.commit()
+        return ok
+    finally:
+        conn.close()
+
+
+def _corpo_json(resp):
+    try:
+        return resp.get_json() or {}
+    except Exception:
+        return {}
+
+
 @app.route('/resumo_ementa', methods=['POST'])
 @login_required
 def resumo_ementa():
-    return resumo_ementa_impl(request.get_json())
+    data = request.get_json() or {}
+    evento_id = data.get('evento_id')
+    id_prop = str(data.get('id_principal') or '').strip()
+    ementa = data.get('ementa', '')
+
+    # Sem evento (chamadas avulsas): comportamento antigo, sem cache
+    if not evento_id or not id_prop:
+        return resumo_ementa_impl(data)
+
+    try:
+        _garantir_tabela_status_resumo()
+        salvo = _ler_resumo_salvo(evento_id, id_prop)
+        if salvo and _resumo_aceitavel(salvo, ementa):
+            return jsonify({'resumo': salvo, 'fonte': 'cache', 'salvo': True})
+
+        status, quando = _status_resumo(evento_id, id_prop)
+        if status == 'falhou':
+            return jsonify({'resumo': '', 'salvo': True,
+                            'motivo': 'resumo automático não ficou bom'})
+        if not _reservar_geracao_resumo(evento_id, id_prop):
+            return jsonify({'resumo': '', 'pendente': True})
+    except Exception as e:
+        # Se o controle no banco falhar, não bloqueia o usuário: gera como antes
+        logger.warning(f"resumo_ementa: controle de cache falhou ({e}) — gerando sem cache")
+        return resumo_ementa_impl(data)
+
+    resp = None
+    try:
+        resp = resumo_ementa_impl(data)
+        corpo = _corpo_json(resp)
+        texto = (corpo.get('resumo') or '').strip()
+        if _resumo_aceitavel(texto, ementa):
+            _gravar_resumo(evento_id, id_prop, texto)
+            logger.info(f"resumo_ementa: gerado e salvo {id_prop}@{evento_id} via {corpo.get('fonte')}")
+            return jsonify({'resumo': texto, 'fonte': corpo.get('fonte', ''), 'salvo': True})
+        _marcar_status_resumo(evento_id, id_prop, 'falhou')
+        logger.info(f"resumo_ementa: {id_prop}@{evento_id} reprovado — marcado para não re-gerar automaticamente")
+        return jsonify({'resumo': '', 'salvo': True,
+                        'motivo': corpo.get('motivo') or 'resumo automático não ficou bom'})
+    except Exception as e:
+        logger.warning(f"resumo_ementa: erro ao gerar {id_prop}@{evento_id}: {e}")
+        try:
+            _marcar_status_resumo(evento_id, id_prop, 'falhou')
+        except Exception:
+            pass
+        return jsonify({'resumo': '', 'motivo': 'erro ao gerar resumo'})
 
 @app.route('/resumos_evento/<int:evento_id>')
 @login_required
@@ -5225,32 +5392,18 @@ def regenerar_resumo_ia():
         'autor':        data.get('autor', ''),
         'id_principal': id_prop,
     })
-    # 3. Se vier um resumo bom, salva no banco já corrigido
-    try:
-        import json as _json
-        body = gerado.get_json() if hasattr(gerado, 'get_json') else _json.loads(gerado.data)
-    except Exception:
-        body = {}
+    # 3. Se vier um resumo bom, salva; se não, marca para não re-gerar sozinho
     novo = (body.get('resumo') or '').strip()
-    if novo and len(novo.split()) >= 4 and len(novo) >= 20:
-        try:
-            conn2 = get_conn()
-            c2 = conn2.cursor()
-            c2.execute('''CREATE TABLE IF NOT EXISTS resumos_ia (
-                evento_id INTEGER, id_proposicao TEXT, resumo TEXT,
-                PRIMARY KEY (evento_id, id_proposicao))''')
-            if USE_POSTGRES:
-                c2.execute('''INSERT INTO resumos_ia (evento_id, id_proposicao, resumo) VALUES (%s,%s,%s)
-                              ON CONFLICT (evento_id, id_proposicao) DO UPDATE SET resumo=EXCLUDED.resumo''',
-                           (evento_id, id_prop, novo))
-            else:
-                c2.execute('INSERT OR REPLACE INTO resumos_ia (evento_id, id_proposicao, resumo) VALUES (?,?,?)',
-                           (evento_id, id_prop, novo))
-            conn2.commit()
-            conn2.close()
+    try:
+        _garantir_tabela_status_resumo()
+        if _resumo_aceitavel(novo, data.get('ementa', '')):
+            _gravar_resumo(evento_id, id_prop, novo)
             logger.info(f"regenerar_resumo_ia: novo resumo salvo para {id_prop} ({len(novo)} chars)")
-        except Exception as e:
-            logger.warning(f"regenerar_resumo_ia save falhou: {e}")
+        else:
+            novo = ''
+            _marcar_status_resumo(evento_id, id_prop, 'falhou')
+    except Exception as e:
+        logger.warning(f"regenerar_resumo_ia save falhou: {e}")
 
     return jsonify({
         'ok': bool(novo),
@@ -5262,26 +5415,18 @@ def regenerar_resumo_ia():
 @app.route('/salvar_resumo_ia', methods=['POST'])
 @login_required
 def salvar_resumo_ia():
-    data      = request.get_json()
+    data      = request.get_json() or {}
     evento_id = data.get('evento_id')
     id_prop   = data.get('id_principal')
-    resumo    = data.get('resumo', '')
+    resumo    = (data.get('resumo') or '').strip()
     if not evento_id or not id_prop or not resumo:
         return jsonify({'ok': False})
-    conn = get_conn()
-    c = conn.cursor()
     try:
-        c.execute('''CREATE TABLE IF NOT EXISTS resumos_ia (
-            evento_id INTEGER, id_proposicao TEXT, resumo TEXT,
-            PRIMARY KEY (evento_id, id_proposicao))''')
-        c.execute('INSERT OR REPLACE INTO resumos_ia (evento_id, id_proposicao, resumo) VALUES (?,?,?)',
-                  (evento_id, str(id_prop), resumo))
-        conn.commit()
+        _garantir_tabela_status_resumo()
+        _gravar_resumo(evento_id, id_prop, resumo)
         return jsonify({'ok': True})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)})
-    finally:
-        conn.close()
 
 @app.route('/buscar_imagem_item', methods=['POST'])
 @login_required
