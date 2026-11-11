@@ -2398,9 +2398,23 @@ def save_item():
         prop_key = f"PROP_{id_principal}"
         now_str  = now_brasilia().strftime('%Y-%m-%d %H:%M:%S')
         saved_by = current_user.display_name()
+        # Nota que estava salva antes (vira a 1ª versão do histórico, se ainda não houver)
+        nota_anterior = None
+        try:
+            c.execute('SELECT resumo_materia, orientacao, saved_by, saved_at, evento_id FROM notas WHERE item_key=?', (prop_key,))
+            nota_anterior = c.fetchone()
+        except Exception as e:
+            logger.warning(f"save_item: não leu nota anterior de {prop_key}: {e}")
         c.execute('INSERT OR REPLACE INTO notas (item_key, evento_id, ordem, resumo_materia, orientacao, resumo_parecer, saved_by, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                   (prop_key, evento_id, ordem, data.get('resumo_materia', ''), orientacao, data.get('resumo_parecer', ''), saved_by, now_str))
         conn.commit()
+
+        # Histórico de versões da nota (falha aqui não impede o salvamento)
+        try:
+            _registrar_versao_nota(prop_key, id_principal, evento_id, data.get('resumo_materia', ''),
+                                   orientacao, saved_by, now_str, nota_anterior)
+        except Exception as e:
+            logger.warning(f"save_item: versão da nota {prop_key} não registrada: {e}")
 
         # Exporta orientação para o quadro da bancada
         if orientacao:
@@ -2472,6 +2486,123 @@ def save_item():
         return jsonify({'message': f'Erro ao salvar: {e}'})
     finally:
         conn.close()
+
+# ─── Histórico de versões das notas técnicas ──────────────────────────────────
+# Cada salvamento em /save_item grava uma linha em notas_versoes (por proposição,
+# item_key = PROP_<id>). Salvamentos idênticos ao último não geram nova versão.
+_notas_versoes_ok = {'ok': False}
+
+
+def _garantir_tabela_versoes():
+    if _notas_versoes_ok['ok']:
+        return
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        id_col = 'id SERIAL PRIMARY KEY' if USE_POSTGRES else 'id INTEGER PRIMARY KEY AUTOINCREMENT'
+        c.execute(f'''CREATE TABLE IF NOT EXISTS notas_versoes (
+            {id_col},
+            item_key TEXT NOT NULL,
+            id_principal TEXT,
+            evento_id INTEGER,
+            resumo_materia TEXT,
+            orientacao TEXT,
+            saved_by TEXT,
+            saved_at TEXT)''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_notas_versoes_item ON notas_versoes (item_key, saved_at)')
+        conn.commit()
+        _notas_versoes_ok['ok'] = True
+    finally:
+        conn.close()
+
+
+def _nota_tem_conteudo(html_txt):
+    """Ignora o modelo vazio (só os títulos das seções)."""
+    t = _clean_html(html_txt or '')
+    for titulo in ('📘 Resumo Técnico', '🟢 Pontos Positivos', '🔴 Pontos Negativos',
+                   '⚖️ Riscos Políticos e de Imagem', '↔️ Orientação Sugerida'):
+        t = t.replace(titulo, '')
+    return bool(t.strip())
+
+
+def _registrar_versao_nota(item_key, id_principal, evento_id, resumo, orientacao, saved_by, saved_at, anterior=None):
+    _garantir_tabela_versoes()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('SELECT resumo_materia, orientacao FROM notas_versoes WHERE item_key=? ORDER BY id DESC LIMIT 1',
+                  (item_key,))
+        ultima = c.fetchone()
+        # Primeira versão: preserva a nota que já existia antes do histórico
+        if not ultima and anterior and _nota_tem_conteudo(anterior[0]):
+            c.execute('''INSERT INTO notas_versoes (item_key, id_principal, evento_id, resumo_materia, orientacao, saved_by, saved_at)
+                         VALUES (?,?,?,?,?,?,?)''',
+                      (item_key, str(id_principal), anterior[4], anterior[0], anterior[1] or '',
+                       anterior[2] or '—', anterior[3] or ''))
+            ultima = (anterior[0], anterior[1] or '')
+        if ultima and (ultima[0] or '') == (resumo or '') and (ultima[1] or '') == (orientacao or ''):
+            conn.commit()
+            return False
+        if not _nota_tem_conteudo(resumo) and not orientacao and not ultima:
+            conn.commit()
+            return False
+        c.execute('''INSERT INTO notas_versoes (item_key, id_principal, evento_id, resumo_materia, orientacao, saved_by, saved_at)
+                     VALUES (?,?,?,?,?,?,?)''',
+                  (item_key, str(id_principal), evento_id, resumo or '', orientacao or '', saved_by, saved_at))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+@app.route('/notas_versoes/<id_principal>')
+@login_required
+def notas_versoes(id_principal):
+    """Lista as versões salvas da nota de uma proposição (mais recente primeiro)."""
+    if current_user.categoria == 'restrito':
+        return jsonify({'error': 'Sem permissão'}), 403
+    try:
+        _garantir_tabela_versoes()
+        conn = get_conn()
+        try:
+            c = conn.cursor()
+            c.execute('''SELECT id, evento_id, orientacao, saved_by, saved_at, resumo_materia
+                         FROM notas_versoes WHERE item_key=? ORDER BY id DESC LIMIT 200''',
+                      (f"PROP_{id_principal}",))
+            rows = c.fetchall()
+        finally:
+            conn.close()
+        versoes = []
+        for vid, ev, ori, por, em, html_txt in rows:
+            texto = _clean_html(html_txt or '')
+            versoes.append({'id': vid, 'evento_id': ev, 'orientacao': ori or '', 'saved_by': por or '—',
+                            'saved_at': em or '', 'texto': texto[:4000]})
+        return jsonify({'versoes': versoes})
+    except Exception as e:
+        logger.error(f"notas_versoes {id_principal}: {e}")
+        return jsonify({'versoes': [], 'error': str(e)}), 500
+
+
+@app.route('/notas_versao/<int:versao_id>')
+@login_required
+def notas_versao(versao_id):
+    """Conteúdo completo (HTML) de uma versão, para visualizar ou restaurar."""
+    if current_user.categoria == 'restrito':
+        return jsonify({'error': 'Sem permissão'}), 403
+    _garantir_tabela_versoes()
+    conn = get_conn()
+    try:
+        c = conn.cursor()
+        c.execute('SELECT id, item_key, resumo_materia, orientacao, saved_by, saved_at FROM notas_versoes WHERE id=?',
+                  (versao_id,))
+        r = c.fetchone()
+    finally:
+        conn.close()
+    if not r:
+        return jsonify({'error': 'Versão não encontrada'}), 404
+    return jsonify({'id': r[0], 'item_key': r[1], 'resumo_materia': r[2] or '', 'orientacao': r[3] or '',
+                    'saved_by': r[4] or '—', 'saved_at': r[5] or ''})
+
 
 def _clean_html(raw):
     if raw is None:

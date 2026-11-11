@@ -505,7 +505,17 @@
               </div>
 
               <div class="mt-2 position-relative" style="width:100%;">
-                <label class="form-label small"><strong>Resumo/Nota Técnica:</strong></label>
+                <div class="d-flex justify-content-between align-items-end mb-1">
+                  <label class="form-label small mb-0"><strong>Resumo/Nota Técnica:</strong></label>
+                  <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2"
+                          style="font-size:0.75rem;"
+                          data-id-principal="{{ item.id_principal }}" data-ordem="{{ item.ordem }}"
+                          data-projeto="{{ item.projeto | replace('"','&quot;') }}"
+                          onclick="abrirVersoesNota(this)"
+                          title="Versões salvas desta nota (data e usuário)">
+                    <i class="fas fa-history me-1"></i>Versões
+                  </button>
+                </div>
                 <textarea id="editor-resumo-materia-{{ item.ordem }}" class="d-none">{% if item.resumo_materia %}{{ item.resumo_materia | safe }}{% endif %}</textarea>
                 <div id="quill-editor-{{ item.ordem }}" data-ordem="{{ item.ordem }}" style="width:100%; background:#fff; min-height:500px;"></div>
                 <div id="overlay-{{ item.ordem }}" class="editor-overlay" style="display:none;">
@@ -644,7 +654,7 @@
 
   <script>
     console.log('[PautaBanner] Template v3 carregado - 2026-06-26');
-    const quillInstances = {};
+    const quillInstances = window.quillInstances = {};
 
     // Inicializa Quill quando collapse abre
     document.addEventListener('DOMContentLoaded', () => {
@@ -1411,6 +1421,136 @@
       }
     }
   </script>
+
+<!-- ═══ MODAL VERSÕES DA NOTA TÉCNICA ═══════════════════════════════════ -->
+<div class="modal fade" id="modalVersoesNota" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="fas fa-history me-2"></i>Versões da nota — <span id="versoes-titulo"></span></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+      </div>
+      <div class="modal-body">
+        <input type="search" id="versoes-busca" class="form-control form-control-sm mb-2"
+               placeholder="Pesquisar por data (ex: 11/11), usuário, orientação ou texto da nota…">
+        <div class="row g-2">
+          <div class="col-md-4">
+            <div id="versoes-lista" class="list-group small" style="max-height:60vh;overflow-y:auto;"></div>
+          </div>
+          <div class="col-md-8">
+            <div id="versoes-cabecalho" class="small text-muted mb-1"></div>
+            <div id="versoes-preview" class="border rounded p-2 bg-light"
+                 style="max-height:55vh;overflow-y:auto;font-size:0.85rem;">
+              <span class="text-muted">Selecione uma versão à esquerda.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer py-2">
+        <small class="text-muted me-auto">Restaurar coloca o texto no editor; a nota só é gravada quando você clicar em Salvar.</small>
+        <button type="button" class="btn btn-sm btn-primary" id="versoes-restaurar" disabled>
+          <i class="fas fa-undo me-1"></i>Restaurar no editor</button>
+        <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  let versoesAtuais = [], ordemAtual = null, versaoSel = null;
+  const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+  const fmtData = s => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(s || '');
+    return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}` : (s || '—');
+  };
+  const semAcento = t => (t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+  function renderLista() {
+    const termo = semAcento(document.getElementById('versoes-busca').value.trim());
+    const lista = document.getElementById('versoes-lista');
+    const filtradas = versoesAtuais.filter(v => !termo ||
+      semAcento([fmtData(v.saved_at), v.saved_by, v.orientacao, v.texto].join(' ')).includes(termo));
+    if (!versoesAtuais.length) {
+      lista.innerHTML = '<div class="text-muted p-2">Nenhuma versão salva ainda. As versões passam a ser registradas a cada clique em Salvar.</div>';
+      return;
+    }
+    if (!filtradas.length) {
+      lista.innerHTML = '<div class="text-muted p-2">Nenhuma versão encontrada para essa pesquisa.</div>';
+      return;
+    }
+    lista.innerHTML = filtradas.map((v, i) => `
+      <button type="button" class="list-group-item list-group-item-action ${versaoSel === v.id ? 'active' : ''}" data-vid="${v.id}">
+        <div class="d-flex justify-content-between">
+          <strong>${esc(fmtData(v.saved_at))}</strong>
+          ${versoesAtuais[0].id === v.id ? '<span class="badge bg-success">atual</span>' : ''}
+        </div>
+        <div><i class="fas fa-user me-1"></i>${esc(v.saved_by)}</div>
+        ${v.orientacao ? `<div><span class="badge bg-secondary">${esc(v.orientacao)}</span></div>` : ''}
+        <div class="text-truncate opacity-75">${esc((v.texto || '').slice(0, 90))}</div>
+      </button>`).join('');
+    lista.querySelectorAll('[data-vid]').forEach(b => b.onclick = () => abrirVersao(Number(b.dataset.vid)));
+  }
+
+  async function abrirVersao(vid) {
+    versaoSel = vid;
+    renderLista();
+    const prev = document.getElementById('versoes-preview');
+    const btn = document.getElementById('versoes-restaurar');
+    prev.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    btn.disabled = true;
+    try {
+      const r = await fetch('/notas_versao/' + vid);
+      const v = await r.json();
+      if (!r.ok) throw new Error(v.error || r.status);
+      document.getElementById('versoes-cabecalho').innerHTML =
+        `Salva em <strong>${esc(fmtData(v.saved_at))}</strong> por <strong>${esc(v.saved_by)}</strong>` +
+        (v.orientacao ? ` — Orientação: <strong>${esc(v.orientacao)}</strong>` : '');
+      prev.innerHTML = v.resumo_materia || '<span class="text-muted">(nota vazia)</span>';
+      btn.disabled = false;
+      btn.onclick = () => restaurar(v);
+    } catch (e) {
+      prev.innerHTML = '<span class="text-danger">Erro ao abrir a versão: ' + esc(e.message) + '</span>';
+    }
+  }
+
+  function restaurar(v) {
+    const quill = (window.quillInstances || {})[ordemAtual] || (typeof quillInstances !== 'undefined' ? quillInstances[ordemAtual] : null);
+    if (!quill) { alert('Abra o item para carregar o editor antes de restaurar.'); return; }
+    if (!confirm('Substituir o texto atual do editor por esta versão? (só será gravada ao clicar em Salvar)')) return;
+    quill.setContents([]);
+    quill.clipboard.dangerouslyPasteHTML(v.resumo_materia || '');
+    const sel = document.querySelector(`.orientacao[data-ordem="${ordemAtual}"]`);
+    if (sel && v.orientacao) sel.value = v.orientacao;
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalVersoesNota')).hide();
+    const info = document.getElementById('info-salvo-' + ordemAtual);
+    if (info) info.innerHTML = `<i class="fas fa-undo text-warning me-1"></i>Versão de ${esc(fmtData(v.saved_at))} restaurada no editor — clique em <strong>Salvar</strong> para gravar.`;
+  }
+
+  window.abrirVersoesNota = async function (btn) {
+    ordemAtual = btn.dataset.ordem;
+    versaoSel = null;
+    versoesAtuais = [];
+    document.getElementById('versoes-titulo').textContent = btn.dataset.projeto || '';
+    document.getElementById('versoes-busca').value = '';
+    document.getElementById('versoes-cabecalho').innerHTML = '';
+    document.getElementById('versoes-preview').innerHTML = '<span class="text-muted">Selecione uma versão à esquerda.</span>';
+    document.getElementById('versoes-restaurar').disabled = true;
+    document.getElementById('versoes-lista').innerHTML = '<div class="p-2"><i class="fas fa-spinner fa-spin"></i> Carregando…</div>';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalVersoesNota')).show();
+    try {
+      const r = await fetch('/notas_versoes/' + encodeURIComponent(btn.dataset.idPrincipal));
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.status);
+      versoesAtuais = j.versoes || [];
+      renderLista();
+      if (versoesAtuais.length) abrirVersao(versoesAtuais[0].id);
+    } catch (e) {
+      document.getElementById('versoes-lista').innerHTML = '<div class="text-danger p-2">Erro ao carregar versões: ' + esc(e.message) + '</div>';
+    }
+  };
+  document.getElementById('versoes-busca').addEventListener('input', renderLista);
+})();
+</script>
 
 <!-- MODAL MENSAGENS PLENÁRIO -->
 <div class="modal fade" id="modalMensagens" tabindex="-1" aria-hidden="true">
