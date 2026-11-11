@@ -5293,10 +5293,12 @@ def resumo_ementa():
     try:
         _garantir_tabela_status_resumo()
         salvo = _ler_resumo_salvo(evento_id, id_prop)
+        status, quando = _status_resumo(evento_id, id_prop)
+        if salvo and status == 'editado':
+            return jsonify({'resumo': salvo, 'fonte': 'editado', 'salvo': True, 'editado': True})
         if salvo and _resumo_aceitavel(salvo, ementa):
             return jsonify({'resumo': salvo, 'fonte': 'cache', 'salvo': True})
 
-        status, quando = _status_resumo(evento_id, id_prop)
         if status == 'falhou':
             return jsonify({'resumo': '', 'salvo': True,
                             'motivo': 'resumo automático não ficou bom'})
@@ -5339,17 +5341,28 @@ def resumos_evento(evento_id):
     try:
         c.execute('SELECT id_proposicao, resumo FROM resumos_ia WHERE evento_id=?', (evento_id,))
         rows = c.fetchall()
+        editados = set()
+        try:
+            _garantir_tabela_status_resumo()
+            c.execute("SELECT id_proposicao FROM resumos_ia_status WHERE evento_id=? AND status='editado'", (evento_id,))
+            editados = {str(r[0]) for r in c.fetchall()}
+        except Exception as e:
+            logger.warning(f"resumos_evento: não leu editados: {e}")
         bons = {}
         descartados = 0
         for id_p, resumo in rows:
             r = (resumo or '').strip()
             qtd_palavras = len(r.split())
-            if qtd_palavras >= 4 and len(r) >= 20:
+            if r and str(id_p) in editados:
+                bons[str(id_p)] = r
+            elif qtd_palavras >= 4 and len(r) >= 20:
                 bons[str(id_p)] = r
             else:
                 descartados += 1
         if descartados:
             logger.info(f"resumos_evento {evento_id}: {descartados} resumo(s) ruim(s) ignorado(s), {len(bons)} válido(s) retornado(s)")
+        if editados:
+            bons['_editados'] = sorted(editados & set(bons))
         return jsonify(bons)
     except Exception as e:
         logger.warning(f"resumos_evento erro: {e}")
@@ -5418,12 +5431,19 @@ def salvar_resumo_ia():
     data      = request.get_json() or {}
     evento_id = data.get('evento_id')
     id_prop   = data.get('id_principal')
-    resumo    = (data.get('resumo') or '').strip()
+    resumo    = re.sub(r'\s+', ' ', data.get('resumo') or '').strip()
+    editado   = bool(data.get('editado'))
+    if editado and current_user.categoria == 'restrito':
+        return jsonify({'ok': False, 'error': 'Sem permissão para editar'}), 403
     if not evento_id or not id_prop or not resumo:
-        return jsonify({'ok': False})
+        return jsonify({'ok': False, 'error': 'Resumo vazio'})
     try:
         _garantir_tabela_status_resumo()
         _gravar_resumo(evento_id, id_prop, resumo)
+        if editado:
+            # Marca como escrito pelo usuário: nunca é descartado nem re-gerado automaticamente
+            _marcar_status_resumo(evento_id, id_prop, 'editado')
+            logger.info(f"salvar_resumo_ia: resumo de {id_prop}@{evento_id} editado por {current_user.username}")
         return jsonify({'ok': True})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)})

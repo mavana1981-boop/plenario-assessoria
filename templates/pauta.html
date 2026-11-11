@@ -876,7 +876,7 @@
       const proj   = el.dataset.projeto;
       const ementa = el.dataset.ementa;
       const autor  = el.dataset.autor;
-      if (!forceRegen && resumoCache[id] && !_resumoEhRuim(resumoCache[id])) {
+      if (!forceRegen && resumoCache[id] && (resumoEditado[id] || !_resumoEhRuim(resumoCache[id]))) {
         _renderResumoIA(el, resumoCache[id], id);
         return;
       }
@@ -903,6 +903,13 @@
             await new Promise(res => setTimeout(res, 5000));
             return carregarResumoIA(el, false, tentativa + 1);
           }
+          return;
+        }
+        if (j.resumo && j.editado) {
+          // Texto escrito pelo usuário: exibe como está, sem validação de qualidade
+          resumoEditado[id] = true;
+          resumoCache[id] = j.resumo.trim();
+          _renderResumoIA(el, resumoCache[id], id);
           return;
         }
         if (j.resumo) {
@@ -939,12 +946,20 @@
       } catch(e) { /* silencioso */ }
     }
 
+    // Resumos escritos à mão pelo usuário (não passam pelo filtro de qualidade)
+    const resumoEditado = window.resumoEditado = window.resumoEditado || {};
+    const PODE_EDITAR_RESUMO = "{{ user_categoria }}" !== 'restrito';
+
     function _renderResumoIA(el, texto, id) {
-      // Renderiza o resumo + um botãozinho discreto de regenerar
-      el.innerHTML = `<span class="resumo-ia-texto">${(texto || '').replace(/</g,'&lt;')}</span>
+      // Renderiza o resumo + botões discretos de regenerar (↻) e editar (lápis)
+      const botoes = PODE_EDITAR_RESUMO ? `
         <a href="#" class="ms-1" style="font-size:0.7rem;color:#999;text-decoration:none;"
            onclick="regenerarResumoIA('${id}');return false;"
-           title="Regenerar este resumo (ex: se vier curto demais)">↻</a>`;
+           title="Regenerar este resumo (ex: se vier curto demais)">↻</a>
+        <a href="#" class="ms-1" style="font-size:0.7rem;color:#999;text-decoration:none;"
+           onclick="editarResumoIA('${id}');return false;"
+           title="Editar este resumo"><i class="fas fa-pencil-alt"></i></a>` : '';
+      el.innerHTML = `<span class="resumo-ia-texto">${(texto || '').replace(/</g,'&lt;')}</span>${botoes}`;
       el.style.display = 'block';
       if (window.ITENS_DATA) {
         const item = window.ITENS_DATA.find(i => String(i.id_principal) === String(id));
@@ -952,10 +967,59 @@
       }
     }
 
+    // Lápis: troca o resumo por uma caixa de texto com Salvar / Cancelar
+    window.editarResumoIA = function(id) {
+      const el = document.getElementById('resumo-ia-' + id);
+      if (!el || el.querySelector('textarea')) return;
+      const atual = resumoCache[id] || '';
+      el.innerHTML = `
+        <textarea class="form-control form-control-sm" rows="3"
+                  style="font-size:0.82rem;color:#1A6B3A;font-weight:500;"></textarea>
+        <div class="mt-1 d-flex gap-1 align-items-center">
+          <button type="button" class="btn btn-success btn-sm py-0 px-2" data-acao="salvar">
+            <i class="fas fa-check me-1"></i>Salvar</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2" data-acao="cancelar">Cancelar</button>
+          <span class="small text-danger ms-1" data-msg></span>
+        </div>`;
+      el.style.display = 'block';
+      const ta = el.querySelector('textarea');
+      ta.value = atual;
+      ta.focus();
+      const msg = el.querySelector('[data-msg]');
+      const cancelar = () => {
+        if (atual) _renderResumoIA(el, atual, id); else { el.innerHTML = ''; el.style.display = 'none'; }
+      };
+      el.querySelector('[data-acao="cancelar"]').onclick = cancelar;
+      ta.addEventListener('keydown', ev => { if (ev.key === 'Escape') cancelar(); });
+      el.querySelector('[data-acao="salvar"]').onclick = async (ev) => {
+        const novo = ta.value.replace(/\s+/g, ' ').trim();
+        if (!novo) { msg.textContent = 'O resumo não pode ficar vazio.'; return; }
+        const btn = ev.currentTarget;
+        btn.disabled = true;
+        msg.textContent = '';
+        try {
+          const r = await fetch('/salvar_resumo_ia', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({evento_id: window.EVENTO_ID, id_principal: id, resumo: novo, editado: true})
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+          resumoCache[id] = novo;
+          resumoEditado[id] = true;
+          _renderResumoIA(el, novo, id);
+        } catch (e) {
+          msg.textContent = 'Não foi possível salvar: ' + e.message;
+          btn.disabled = false;
+        }
+      };
+    };
+
     // Função global para o botão "↻" ao lado do resumo
     window.regenerarResumoIA = async function(id) {
       const el = document.getElementById('resumo-ia-' + id);
       if (!el) return;
+      delete resumoEditado[id];
       el.innerHTML = '<span class="text-muted small"><i class="fas fa-spinner fa-spin me-1"></i>Regenerando resumo…</span>';
       el.style.display = 'block';
       await carregarResumoIA(el, true);
@@ -971,8 +1035,11 @@
         const rCache = await fetch('/resumos_evento/' + window.EVENTO_ID);
         if (rCache.ok) {
           const cached = await rCache.json();
+          const editados = cached._editados || [];
+          delete cached._editados;
+          editados.forEach(id => { resumoEditado[String(id)] = true; });
           Object.entries(cached).forEach(([id, resumo]) => {
-            if (resumo && !_resumoEhRuim(resumo)) {
+            if (resumo && (resumoEditado[id] || !_resumoEhRuim(resumo))) {
               resumoCache[id] = resumo;
               const el = document.getElementById('resumo-ia-' + id);
               if (el) _renderResumoIA(el, resumo, id);
