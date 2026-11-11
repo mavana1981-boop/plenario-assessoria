@@ -778,6 +778,26 @@ _EVENTOS_CACHE_TTL = 600  # 10 minutos
 _ULTIMO_ERRO_FETCH = {'data': None, 'erro': None, 'timestamp': None}
 
 
+def _eh_sessao_de_votacao(tipo, descricao=''):
+    """True só para sessões plenárias de discussão/votação de matérias
+    ("Sessão Deliberativa", "Sessão Deliberativa Extraordinária/Ordinária").
+    Descarta "Sessão Não Deliberativa Solene" (homenagens), "Não Deliberativa
+    de Debates", Comissão Geral etc. — antes passavam porque o tipo contém
+    a palavra "deliberativa"."""
+    import unicodedata
+    def _norm(t):
+        t = unicodedata.normalize('NFKD', (t or '').lower())
+        return ''.join(ch for ch in t if not unicodedata.combining(ch))
+    t, d = _norm(tipo), _norm(descricao)
+    if 'deliberativa' not in t:
+        return False
+    if 'nao deliberativa' in t or 'nao-deliberativa' in t:
+        return False
+    if any(p in t or p in d for p in ('solene', 'homenagem', 'comissao geral')):
+        return False
+    return True
+
+
 def fetch_eventos_por_data(data):
     """Busca sessões deliberativas do Plenário na data informada.
 
@@ -788,9 +808,10 @@ def fetch_eventos_por_data(data):
         quando a API falhar depois
       - Registra último erro em _ULTIMO_ERRO_FETCH para a view exibir ao usuário
 
-    Filtro: aceita qualquer descricaoTipo que contenha "deliberativa"
-    (case-insensitive) — pega "Sessão Deliberativa Extraordinária",
-    "Sessão Deliberativa Ordinária", "Sessão Deliberativa Solene" etc.
+    Filtro (_eh_sessao_de_votacao): só sessões deliberativas de discussão de
+    matérias — "Sessão Deliberativa Extraordinária", "Sessão Deliberativa
+    Ordinária". Ficam de fora as solenes/homenagens ("Sessão Não Deliberativa
+    Solene"), as de debates e a Comissão Geral.
     """
     import time as _time
     global _ULTIMO_ERRO_FETCH
@@ -822,7 +843,7 @@ def fetch_eventos_por_data(data):
             descartados = []
             for e in dados:
                 tipo = (e.get('descricaoTipo', '') or '').strip()
-                if 'deliberativa' in tipo.lower():
+                if _eh_sessao_de_votacao(tipo, e.get('descricao', '')):
                     resultado.append({
                         'id': str(e.get('id')),
                         'descricao': e.get('descricao', 'Sem descrição'),
@@ -841,7 +862,7 @@ def fetch_eventos_por_data(data):
                 else:
                     logger.warning(
                         f"fetch_eventos_por_data({data}): API OK em {dur_ms}ms, {len(dados)} evento(s), "
-                        f"mas NENHUM é 'deliberativa'. Tipos descartados: {descartados}"
+                        f"mas NENHUM é sessão de votação. Tipos descartados: {descartados}"
                     )
             else:
                 logger.info(f"fetch_eventos_por_data({data}): API OK em {dur_ms}ms, {len(resultado)} sessão(ões) deliberativa(s) encontrada(s) (tentativa {tentativa}/{tentativas})")
