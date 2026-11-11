@@ -16,6 +16,21 @@ GEMINI_MODEL = "gemini-2.0-flash"  # fallback fixo
 _gemini_modelo_cache = {"modelo": None}  # cache em memória
 
 GEMINI_PREFERENCIA = [
+    # Aliases "latest" primeiro — sempre apontam para o modelo mais recente,
+    # com rate limits melhores que versões específicas antigas
+    "gemini-flash-latest",
+    "gemini-pro-latest",
+    # Modelos nominais mais novos (2026) — maior quota por serem recentes
+    "gemini-4-argon",
+    "gemini-4-carbon",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
+    # Clássicos 2.5 / 2.0 / 1.5 como fallback — têm rate limit mais apertado
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
     "gemini-2.0-flash",
@@ -94,74 +109,131 @@ def gemini_post(key, prompt, max_tokens=1500, temperatura=0.3, tentativas=3):
     raise Exception("Gemini indisponível após retries.")
 
 
-_GROQ_MODELOS_TENTATIVA = [
-    "llama-3.3-70b-versatile",
-    "llama-3.1-70b-versatile",
-    "llama-3.1-8b-instant",
-    "llama3-70b-8192",
-    "llama3-8b-8192",
-    "mixtral-8x7b-32768",
-    "gemma2-9b-it",
+# ── Groq: detecção DINÂMICA de modelos via GET /v1/models ─────────────────
+# Em novembro/2026 a Groq deprecou todos os modelos clássicos (llama-3.x, mixtral,
+# gemma2). Em vez de manter lista hardcoded (que vai estar sempre quebrada),
+# consultamos a API para saber quais modelos existem AGORA e usamos o melhor.
+# Preferência: llama-4 > llama-3.3 > gpt-oss > qualquer outro que suporte chat.
+
+_GROQ_PREFERENCIA_SUBSTRINGS = [
+    # Ordem de preferência por SUBSTRING no nome do modelo. O primeiro modelo
+    # cujo nome contenha uma dessas strings é escolhido.
+    "llama-4-scout",     # Llama 4 Scout
+    "llama-4",           # Llama 4 variants
+    "llama-3.3-70b",     # ainda pode voltar
+    "gpt-oss-120b",      # OpenAI GPT-OSS 120B
+    "gpt-oss",           # outras variantes GPT-OSS
+    "mixtral",
+    "qwen",
+    "deepseek",
+    "llama",             # último recurso: qualquer llama
 ]
-_groq_modelo_cache = {"modelo": None}
+_groq_modelo_cache = {"modelo": None, "lista": None}
+
+
+def _groq_listar_modelos():
+    """Consulta GET /v1/models da Groq e retorna lista de modelos ATIVOS.
+    Cacheia na primeira chamada. Retorna [] em caso de erro (chamador usa fallback)."""
+    if _groq_modelo_cache["lista"] is not None:
+        return _groq_modelo_cache["lista"]
+    groq_key = os.environ.get('GROQ_API_KEY', '')
+    if not groq_key:
+        return []
+    try:
+        r = requests.get(
+            "https://api.groq.com/openai/v1/models",
+            headers={"Authorization": f"Bearer {groq_key}"},
+            timeout=10
+        )
+        if not r.ok:
+            logger.warning(f"Groq /v1/models: HTTP {r.status_code}")
+            return []
+        dados = r.json().get("data", [])
+        # Filtra só modelos de chat/text (exclui whisper/tts/audio/embeddings)
+        modelos = []
+        for m in dados:
+            mid = m.get("id", "")
+            if not mid: continue
+            if any(x in mid.lower() for x in ("whisper", "tts", "audio", "embed", "guard", "vision")):
+                continue
+            modelos.append(mid)
+        _groq_modelo_cache["lista"] = modelos
+        logger.info(f"Groq modelos disponíveis ({len(modelos)}): {modelos[:10]}{'...' if len(modelos)>10 else ''}")
+        return modelos
+    except Exception as e:
+        logger.warning(f"_groq_listar_modelos falhou: {e}")
+        return []
+
+
+def _groq_escolher_modelo(modelos_disponiveis):
+    """Dado o catálogo da API, retorna o modelo preferido conforme substring."""
+    if not modelos_disponiveis:
+        return None
+    for sub in _GROQ_PREFERENCIA_SUBSTRINGS:
+        for m in modelos_disponiveis:
+            if sub.lower() in m.lower():
+                return m
+    # Nenhum bateu → usa o primeiro da lista
+    return modelos_disponiveis[0]
 
 
 def groq_post(prompt, max_tokens=1500, temperatura=0.3):
-    """Chama Groq como fallback. Tenta uma lista de modelos; se o atual der
-    404 (deprecado/renomeado), passa para o próximo e cacheia o que funcionou.
-    Retorna texto ou lança exceção."""
+    """Chama Groq. Se o modelo cacheado falhar por decomissionamento,
+    consulta /v1/models e escolhe outro. Retorna texto ou lança exceção."""
     groq_key = os.environ.get('GROQ_API_KEY', '')
     if not groq_key:
         raise Exception("GROQ_API_KEY não configurada.")
 
-    # Ordem de tentativa: modelo do cache primeiro, depois os demais
-    modelos = list(_GROQ_MODELOS_TENTATIVA)
-    if _groq_modelo_cache["modelo"] and _groq_modelo_cache["modelo"] in modelos:
-        modelos.remove(_groq_modelo_cache["modelo"])
-        modelos.insert(0, _groq_modelo_cache["modelo"])
+    # 1. Tenta o modelo cacheado primeiro (sem consultar /v1/models)
+    modelo_cached = _groq_modelo_cache.get("modelo")
 
-    ultimo_erro = None
-    for modelo in modelos:
+    # 2. Se não há cache, consulta catálogo
+    if not modelo_cached:
+        disponiveis = _groq_listar_modelos()
+        modelo_cached = _groq_escolher_modelo(disponiveis)
+        if not modelo_cached:
+            raise Exception("Groq: /v1/models não retornou nenhum modelo utilizável")
+        logger.info(f"Groq: modelo escolhido = '{modelo_cached}'")
+        _groq_modelo_cache["modelo"] = modelo_cached
+
+    # 3. Chama o modelo. Se falhar por decomissionamento, invalida cache e tenta outro UMA vez
+    for _tentativa in range(2):
         try:
             r = requests.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {groq_key}", "Content-Type": "application/json"},
-                json={"model": modelo,
+                json={"model": modelo_cached,
                       "messages": [{"role": "user", "content": prompt}],
                       "max_tokens": max_tokens, "temperature": temperatura},
                 timeout=30
             )
-            if r.status_code == 404:
-                logger.warning(f"Groq 404: modelo '{modelo}' deprecado/inexistente, tentando próximo")
-                ultimo_erro = f"404 modelo {modelo} não existe"
-                continue
-            if r.status_code == 400:
-                # 400 pode ser "model not found" também em algumas versões — tenta próximo
-                body = ''
-                try: body = r.text[:200]
-                except Exception: pass
-                if 'model' in body.lower() and ('not found' in body.lower() or 'invalid' in body.lower() or 'decommissioned' in body.lower()):
-                    logger.warning(f"Groq 400 model-issue: '{modelo}' — {body[:100]}")
-                    ultimo_erro = f"400 {body[:100]}"
-                    continue
-            r.raise_for_status()
-            texto = r.json()['choices'][0]['message']['content']
-            if _groq_modelo_cache["modelo"] != modelo:
-                logger.info(f"Groq: modelo ativo = '{modelo}' (cacheado)")
-                _groq_modelo_cache["modelo"] = modelo
-            return texto
-        except requests.exceptions.HTTPError as e:
-            # Rate limit (429) é problema real, não tenta próximo modelo — devolve o erro
-            if e.response is not None and e.response.status_code == 429:
-                raise
-            ultimo_erro = str(e)
-            logger.warning(f"Groq HTTP erro com '{modelo}': {e}")
-        except Exception as e:
-            ultimo_erro = str(e)
-            logger.warning(f"Groq erro com '{modelo}': {e}")
+            if r.status_code == 404 or (
+                r.status_code == 400 and 'decommissioned' in (r.text or '').lower()
+            ) or (
+                r.status_code == 400 and 'not found' in (r.text or '').lower()
+            ):
+                # Modelo decomissionado — re-consulta catálogo e tenta de novo (1 vez só)
+                logger.warning(f"Groq: modelo '{modelo_cached}' decomissionado — re-consultando catálogo")
+                _groq_modelo_cache["modelo"] = None
+                _groq_modelo_cache["lista"] = None   # força nova listagem
+                if _tentativa == 0:
+                    disponiveis = _groq_listar_modelos()
+                    # Remove o que acabou de falhar
+                    disponiveis = [m for m in disponiveis if m != modelo_cached]
+                    modelo_cached = _groq_escolher_modelo(disponiveis)
+                    if modelo_cached:
+                        _groq_modelo_cache["modelo"] = modelo_cached
+                        logger.info(f"Groq: tentando novo modelo = '{modelo_cached}'")
+                        continue
+                raise Exception(f"Groq: nenhum modelo disponível no catálogo funciona. Resposta: {r.text[:200]}")
 
-    _groq_modelo_cache["modelo"] = None  # limpa cache para re-detectar na próxima
-    raise Exception(f"Groq: nenhum modelo da lista funcionou. Último erro: {ultimo_erro}")
+            r.raise_for_status()
+            return r.json()['choices'][0]['message']['content']
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 429:
+                raise  # rate limit — propaga
+            raise
+    raise Exception("Groq: todos os modelos falharam")
 
 
 def cloudflare_post(prompt, max_tokens=1500, temperatura=0.3):
@@ -4745,6 +4817,24 @@ def limpar_resumos_ia(evento_id):
         return jsonify({'error': str(e)}), 500
     finally:
         conn.close()
+
+
+@app.route('/debug_groq_models', methods=['GET'])
+@login_required
+def debug_groq_models():
+    """Lista os modelos ATUALMENTE disponíveis na sua conta Groq
+    (consulta /v1/models). Mostra qual seria escolhido pelo groq_post."""
+    # Invalida cache para forçar nova consulta
+    _groq_modelo_cache["lista"] = None
+    disponiveis = _groq_listar_modelos()
+    escolhido = _groq_escolher_modelo(disponiveis)
+    return jsonify({
+        'total_modelos': len(disponiveis),
+        'modelos_disponiveis': disponiveis,
+        'modelo_escolhido_pelo_app': escolhido,
+        'preferencia_substrings': _GROQ_PREFERENCIA_SUBSTRINGS,
+        'explicacao': f"O groq_post usa o primeiro modelo cujo nome contém uma das substrings de preferência. Escolhido agora: {escolhido}",
+    })
 
 
 @app.route('/debug_resumo_providers', methods=['GET'])
