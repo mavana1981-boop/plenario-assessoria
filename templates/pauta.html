@@ -78,6 +78,10 @@
     .ql-editor { min-height: 550px; }
     .ql-toolbar.ql-snow, .ql-container.ql-snow { width: 100%; box-sizing: border-box; }
     .logo-header { width: 80px; height: 50px; object-fit: contain; background: transparent; }
+
+    /* Filtro por responsável */
+    .filtro-responsavel-wrap select { max-width: 200px; }
+    .item-card.filtrado-oculto { display: none !important; }
   </style>
 </head>
 
@@ -249,6 +253,24 @@
         <i class="fas fa-vote-yea me-2"></i>Orientações
       </button>
 
+      {% if eh_responsavel_pauta and user_categoria != 'restrito' %}
+      <div class="filtro-responsavel-wrap d-flex align-items-center gap-2 mb-3 ms-2">
+        <label for="filtro-responsavel-select" class="small text-muted mb-0" style="white-space:nowrap;">
+          <i class="fas fa-filter me-1"></i>Responsável:
+        </label>
+        <select class="form-select form-select-sm" id="filtro-responsavel-select" onchange="filtrarPorResponsavel(this.value)" style="max-width:200px;">
+          <option value="">— Todos —</option>
+          <option value="__sem__">Sem responsável</option>
+          {% for a in assessores %}
+            {% if a.username not in ['admin','PL','NOVO'] %}
+              <option value="{{ a.username }}">{{ a.nome }}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+        <small id="filtro-responsavel-contagem" class="text-muted" style="white-space:nowrap;"></small>
+      </div>
+      {% endif %}
+
       {% if last_updated and user_categoria != 'restrito' %}
       <small class="last-updated mb-3">Atualizado em {{ last_updated | datetimeformat('%d/%m/%Y %H:%M') }}</small>
       {% endif %}
@@ -296,7 +318,7 @@
     {% else %}
     {% if itens %}
       {% for item in itens %}
-      <div class="item-card mb-3">
+      <div class="item-card mb-3" data-id-principal="{{ item.id_principal }}" data-responsavel="{{ item.responsavel_username or '' }}">
         <div class="card-body">
           <div class="item-header" data-bs-toggle="collapse" data-bs-target="#col-{{ item.ordem }}-{{ item.id_principal }}" aria-expanded="false">
             <div>
@@ -977,6 +999,22 @@
       await carregarResumoIA(el, true);
     };
 
+    // ── Filtro por responsável ───────────────────────────────────────────────
+    window.filtrarPorResponsavel = function(valor) {
+      const cards = document.querySelectorAll('.item-card[data-id-principal]');
+      let visiveis = 0;
+      cards.forEach(card => {
+        const resp = card.dataset.responsavel || '';
+        let mostra = true;
+        if (valor === '__sem__') mostra = !resp;
+        else if (valor) mostra = (resp === valor);
+        card.classList.toggle('filtrado-oculto', !mostra);
+        if (mostra) visiveis++;
+      });
+      const contagem = document.getElementById('filtro-responsavel-contagem');
+      if (contagem) contagem.textContent = valor ? `${visiveis} de ${cards.length} itens` : '';
+    };
+
     // Carrega resumos e popula ITENS_DATA com resumo_ia
     async function carregarTodosResumos() {
       // 1. Pré-carrega resumos já salvos no banco (evita chamadas IA desnecessárias)
@@ -1149,6 +1187,13 @@
           }
           const j = await r.json();
           if (j.error) { alert(j.error); return; }
+          // Atualiza data-responsavel do card para o filtro refletir sem reload
+          const cardEl = sel.closest('.item-card');
+          if (cardEl) {
+            cardEl.dataset.responsavel = username || '';
+            const filtroSel = document.getElementById('filtro-responsavel-select');
+            if (filtroSel && filtroSel.value) filtrarPorResponsavel(filtroSel.value);
+          }
           // Atualiza container com logo + foto + nome
           const container = sel.closest('[id^="resp-container-"]');
           if (container) {
@@ -1339,11 +1384,28 @@
         const mContent = document.createElement('div'); mContent.className = 'modal-content';
         const mHeader  = document.createElement('div'); mHeader.className = 'modal-header bg-primary text-white';
         const mTitle   = document.createElement('h6');  mTitle.className = 'modal-title';
-        mTitle.textContent = 'Selecione o documento para análise IA';
+        mTitle.textContent = 'Gerar análise IA';
         const mClose = document.createElement('button'); mClose.type='button'; mClose.className='btn-close btn-close-white'; mClose.setAttribute('data-bs-dismiss','modal');
         mHeader.appendChild(mTitle); mHeader.appendChild(mClose);
 
         const mBody = document.createElement('div'); mBody.className = 'modal-body';
+
+        // Posicionamento da análise: neutra, favorável ou contrária
+        const posWrap = document.createElement('div'); posWrap.className = 'mb-3';
+        posWrap.innerHTML = `
+          <div class="small fw-bold mb-1">Tipo de análise</div>
+          <div class="btn-group w-100" role="group" aria-label="Posicionamento da análise">
+            <input type="radio" class="btn-check" name="pos_analise" id="pos_neutra" value="neutra" checked>
+            <label class="btn btn-outline-secondary btn-sm" for="pos_neutra"><i class="fas fa-balance-scale me-1"></i>Neutra</label>
+            <input type="radio" class="btn-check" name="pos_analise" id="pos_favoravel" value="favoravel">
+            <label class="btn btn-outline-success btn-sm" for="pos_favoravel"><i class="fas fa-thumbs-up me-1"></i>Favorável</label>
+            <input type="radio" class="btn-check" name="pos_analise" id="pos_contraria" value="contraria">
+            <label class="btn btn-outline-danger btn-sm" for="pos_contraria"><i class="fas fa-thumbs-down me-1"></i>Contrária</label>
+          </div>`;
+        mBody.appendChild(posWrap);
+
+        const mDocTit = document.createElement('div'); mDocTit.className = 'small fw-bold mb-1'; mDocTit.textContent = 'Documento base';
+        mBody.appendChild(mDocTit);
         const mInfo = document.createElement('p'); mInfo.className = 'small text-muted mb-2';
         mInfo.textContent = docs.length > 0
           ? 'A IA usará o documento selecionado como base. A linha "Análise baseada em" será atualizada.'
@@ -1378,6 +1440,8 @@
         btnOk.addEventListener('click', async () => {
           const sel = mBody.querySelector('input[name="doc_analise"]:checked');
           const docSel = sel && docs.length > 0 ? docs[parseInt(sel.value)] : null;
+          const posSel = mBody.querySelector('input[name="pos_analise"]:checked');
+          const posicionamento = posSel ? posSel.value : 'neutra';
           modal.hide();
 
           // Gera análise IA com o documento selecionado
@@ -1386,7 +1450,7 @@
           if (overlay) overlay.style.display = "flex";
 
           try {
-            const body = { projeto, ementa, autor, relator, id_principal };
+            const body = { projeto, ementa, autor, relator, id_principal, posicionamento };
             if (docSel) { body.url_documento = docSel.url; body.label_documento = docSel.label; }
             const r = await fetch('/analisar_ia', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
             if (!r.ok) { alert('Erro do servidor: ' + await r.text()); return; }

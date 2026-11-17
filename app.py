@@ -3071,6 +3071,9 @@ def analisar_ia():
     id_principal = data.get('id_principal', '')
     url_doc_sel  = data.get('url_documento', '')
     label_doc    = data.get('label_documento', '')
+    posicionamento = (data.get('posicionamento') or 'neutra').strip().lower()
+    if posicionamento not in ('neutra', 'favoravel', 'contraria'):
+        posicionamento = 'neutra'
 
     gemini_key = os.environ.get('GEMINI_API_KEY', '')
     groq_key   = os.environ.get('GROQ_API_KEY', '')
@@ -3162,12 +3165,37 @@ def analisar_ia():
     eh_esquerda = tem_partido_esquerda(autor) or tem_partido_esquerda(relator)
 
     secao_criticas = ""
-    if eh_esquerda:
+    if eh_esquerda and posicionamento == 'contraria':
         secao_criticas = "\n\nCRITICAS E PONTOS DE COMBATE (autoria ou relatoria de partido de esquerda/governo):\n- Criticas ao merito: principais criticas tecnicas, contradicoes, falhas, impactos negativos\n- Contradicoes com o discurso da esquerda: onde o projeto contradiz posicoes historicas do PT/PSOL/PCdoB\n- Discurso de combate para o Plenario: argumento direto e combativo para pronunciamento\n- Questionamentos ao relator: perguntas incisivas para fazer ao relator no plenario\n"
 
-    estrutura = "📘 Resumo tecnico\n\ntexto do resumo\n\n🟢 Pontos positivos\n\ntexto dos pontos positivos\n\n🔴 Pontos negativos\n\ntexto dos pontos negativos\n\n⚖️ Riscos politicos e de imagem\n\ntexto dos riscos\n\n↔️ Orientacao sugerida\n\ntexto da orientacao\n\n"
+    # ── Estrutura e tom conforme o posicionamento escolhido ──────────────
+    if posicionamento == 'favoravel':
+        cabecalho = ("Voce e um assessor legislativo da Camara dos Deputados, trabalhando para a Oposicao e Minoria. "
+                     "A bancada decidiu APOIAR esta proposicao. Produza uma nota tecnica FAVORAVEL, que fundamente o voto SIM "
+                     "e prepare os parlamentares para defende-la em Plenario, sem esconder fragilidades relevantes.\n\n")
+        estrutura = ("📘 Resumo tecnico\n\ntexto do resumo\n\n"
+                     "🟢 Argumentos favoraveis\n\nprincipais argumentos de merito, beneficios e impactos positivos\n\n"
+                     "🔴 Criticas previsiveis e como rebate-las\n\ncada critica provavel seguida da resposta\n\n"
+                     "⚖️ Riscos politicos e de imagem\n\ntexto dos riscos de apoiar\n\n"
+                     "↔️ Orientacao sugerida\n\nSIM, com justificativa e um paragrafo de discurso de defesa para o Plenario\n\n")
+    elif posicionamento == 'contraria':
+        cabecalho = ("Voce e um assessor legislativo da Camara dos Deputados, trabalhando para a Oposicao e Minoria. "
+                     "A bancada decidiu se OPOR a esta proposicao. Produza uma nota tecnica CONTRARIA, que fundamente o voto NAO "
+                     "e prepare os parlamentares para combate-la em Plenario, com argumentos tecnicos solidos.\n\n")
+        estrutura = ("📘 Resumo tecnico\n\ntexto do resumo\n\n"
+                     "🟢 Argumentos que os defensores vao usar\n\no que o governo/relator deve alegar a favor\n\n"
+                     "🔴 Argumentos contrarios\n\nprincipais criticas de merito, falhas, custos e impactos negativos\n\n"
+                     "⚖️ Riscos politicos e de imagem\n\ntexto dos riscos de votar contra e como mitiga-los\n\n"
+                     "↔️ Orientacao sugerida\n\nNAO, com justificativa e um paragrafo de discurso de combate para o Plenario\n\n")
+    else:
+        cabecalho = ("Voce e um assessor legislativo da Camara dos Deputados. Produza uma nota tecnica NEUTRA e equilibrada, "
+                     "apresentando de forma imparcial os argumentos a favor e contra, sem recomendar voto.\n\n")
+        estrutura = ("📘 Resumo tecnico\n\ntexto do resumo\n\n"
+                     "🟢 Pontos positivos\n\ntexto dos pontos positivos\n\n"
+                     "🔴 Pontos negativos\n\ntexto dos pontos negativos\n\n"
+                     "⚖️ Impactos e riscos\n\nimpactos fiscais, juridicos, sociais e politicos\n\n"
+                     "↔️ Consideracoes para a votacao\n\npontos de atencao para a decisao, sem recomendar SIM ou NAO\n\n")
 
-    cabecalho = "Voce e um assessor legislativo da Camara dos Deputados, trabalhando para a Oposicao e Minoria.\n\n"
     dados = "Proposicao: %s\nAutores: %s\nRelator: %s\nEmenta: %s\n%s\n\n" % (str(projeto), str(autor), str(relator), str(ementa), str(contexto_doc))
     instrucao = "Gere uma nota tecnica em texto puro com esta estrutura. Cada titulo com emoji deve estar sozinho na linha, seguido de linha em branco.\n\n"
     regras = "Regras: sem HTML, sem asteriscos, sem markdown. Seja completo e nao corte a analise.\n"
@@ -3267,6 +3295,16 @@ def analisar_ia():
         '↔️': ('↔️ Orientação Sugerida',           '#0D2B5E'),
         '⚠️': ('⚠️ Críticas e Pontos de Combate', '#8B0000'),
     }
+    if posicionamento == 'favoravel':
+        TITULOS_MAP['🟢'] = ('🟢 Argumentos Favoráveis', '#1A6B3A')
+        TITULOS_MAP['🔴'] = ('🔴 Críticas Previsíveis e Como Rebatê-las', '#8B0000')
+    elif posicionamento == 'contraria':
+        TITULOS_MAP['🟢'] = ('🟢 Argumentos que os Defensores Vão Usar', '#1A6B3A')
+        TITULOS_MAP['🔴'] = ('🔴 Argumentos Contrários', '#8B0000')
+    else:
+        TITULOS_MAP['⚖️'] = ('⚖️ Impactos e Riscos', '#7B5C00')
+        TITULOS_MAP['↔️'] = ('↔️ Considerações para a Votação', '#0D2B5E')
+    ROTULO_POS = {'neutra': ('Neutra', '#555555'), 'favoravel': ('Favorável', '#1A6B3A'), 'contraria': ('Contrária', '#8B0000')}
     html_linhas = []
     for linha in texto.split('\n'):
         emoji_enc = next((e for e in TITULOS_MAP if linha.strip().startswith(e)), None)
@@ -3279,9 +3317,11 @@ def analisar_ia():
             html_linhas.append('<p><br></p>')
 
     html_final = '\n'.join(html_linhas)
+    _rot, _cor = ROTULO_POS[posicionamento]
+    html_final = f'<p><strong><span style="color:{_cor};">Posicionamento da análise: {_rot}</span></strong></p>\n' + html_final
     if nota_req:
         html_final = nota_req + html_final
-    return jsonify({'resumo': html_final, 'fonte': fonte, 'parecer': parecer_info})
+    return jsonify({'resumo': html_final, 'fonte': fonte, 'parecer': parecer_info, 'posicionamento': posicionamento})
 
 @app.route('/infografico/<int:evento_id>')
 @login_required
