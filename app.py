@@ -1751,6 +1751,10 @@ def fetch_pauta(evento_id, force_reload=False):
     cache_key = str(evento_id)
     notas = load_notas()
 
+    # descarta da memória as pautas vencidas (o banco já guarda tudo em pauta_cache_db)
+    for _k in [k for k, v in list(pauta_cache.items()) if now - v['timestamp'] >= CACHE_DURATION]:
+        pauta_cache.pop(_k, None)
+
     if not force_reload and cache_key in pauta_cache:
         cached = pauta_cache[cache_key]
         if now - cached['timestamp'] < CACHE_DURATION:
