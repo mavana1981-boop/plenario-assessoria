@@ -798,6 +798,78 @@ def _eh_sessao_de_votacao(tipo, descricao=''):
     return True
 
 
+def _fetch_eventos_agenda_congresso(data):
+    """Fonte reserva: lê a agenda pública do Congresso
+    (congressonacional.leg.br/.../agenda/YYYY-MM-DD) e extrai as sessões do
+    Plenário da Câmara a partir dos links camara.leg.br/evento-legislativo/{id}.
+    Retorna eventos no mesmo formato de fetch_eventos_por_data, já filtrados
+    por _eh_sessao_de_votacao. Nunca levanta exceção — devolve [] se falhar."""
+    import re
+    from bs4 import BeautifulSoup
+    url = f"https://www.congressonacional.leg.br/pt_BR/sessoes/agenda-do-congresso-senado-e-camara/-/agenda/{data}"
+    try:
+        r = requests.get(url, timeout=20, headers={
+            'User-Agent': 'Mozilla/5.0 (PautaPlenario/1.0; Liderança da Oposição - Câmara dos Deputados)',
+        })
+        r.raise_for_status()
+    except Exception as e:
+        logger.warning(f"_fetch_eventos_agenda_congresso({data}): falhou — {type(e).__name__}: {e}")
+        return []
+
+    soup = BeautifulSoup(r.text, 'html.parser')
+    rx_id = re.compile(r'camara\.leg\.br/evento-legislativo/(\d+)')
+    rx_hora = re.compile(r'^(\d{1,2})h(\d{2})$')
+    resultado, vistos = [], set()
+
+    for a in soup.find_all('a', href=rx_id):
+        ev_id = rx_id.search(a['href']).group(1)
+        if ev_id in vistos:
+            continue
+        titulo = a.get_text(' ', strip=True)
+
+        # Sobe até o menor bloco que contém o horário do item (sem englobar outros eventos)
+        bloco, linhas = a, []
+        for _ in range(8):
+            if bloco.parent is None:
+                break
+            bloco = bloco.parent
+            if len({m.group(1) for m in (rx_id.search(x['href']) for x in bloco.find_all('a', href=rx_id))}) > 1:
+                break
+            linhas = [l.strip() for l in bloco.get_text('\n').split('\n') if l.strip()]
+            if any(rx_hora.match(l) for l in linhas):
+                break
+
+        texto = ' '.join(linhas)
+        # Só o Plenário da Câmara (comissões aparecem como "Anexo II, Plenário NN (Câmara dos Deputados)")
+        if 'Plenário da Câmara dos Deputados' not in texto or not titulo.lower().startswith('sess'):
+            continue
+
+        descricao = ''
+        for l in linhas:
+            if l not in (titulo, 'PLEN', 'Plenário da Câmara dos Deputados') and not rx_hora.match(l) \
+                    and l.lower() not in ('convocada', 'agendada', 'encerrada', 'cancelada', 'em andamento', 'realizada'):
+                descricao = l
+                break
+        if not _eh_sessao_de_votacao(titulo, descricao):
+            continue
+
+        hora = next((rx_hora.match(l) for l in linhas if rx_hora.match(l)), None)
+        situacao = next((l for l in linhas if l.lower() in ('convocada', 'agendada', 'encerrada', 'cancelada', 'em andamento', 'realizada')), 'N/D')
+        vistos.add(ev_id)
+        resultado.append({
+            'id': ev_id,
+            'descricao': descricao or titulo,
+            'tipo': titulo,
+            'dataHoraInicio': f"{data}T{int(hora.group(1)):02d}:{hora.group(2)}" if hora else 'N/D',
+            'local': 'Plenário da Câmara dos Deputados',
+            'situacao': situacao,
+            'fonte': 'agenda_congresso',
+        })
+
+    logger.info(f"_fetch_eventos_agenda_congresso({data}): {len(resultado)} sessão(ões) de votação encontrada(s)")
+    return resultado
+
+
 def fetch_eventos_por_data(data):
     """Busca sessões deliberativas do Plenário na data informada.
 
@@ -903,6 +975,19 @@ def fetch_eventos_por_data(data):
             'cache_stale': True,
         }
         return cached['eventos']
+
+    # Fonte reserva: agenda do congressonacional.leg.br (usada SÓ quando a API
+    # da Câmara está fora e não há cache algum para a data).
+    reserva = _fetch_eventos_agenda_congresso(data)
+    if reserva:
+        logger.warning(f"fetch_eventos_por_data({data}): API fora — {len(reserva)} sessão(ões) obtida(s) da agenda do Congresso (fonte reserva)")
+        _ULTIMO_ERRO_FETCH = {
+            'data': data,
+            'erro': "API da Câmara indisponível. Sessões obtidas da agenda do Congresso Nacional (fonte reserva) — detalhes podem estar incompletos.",
+            'timestamp': _time.time(),
+            'cache_stale': True,
+        }
+        return reserva
 
     logger.error(f"fetch_eventos_por_data({data}): FALHA DEFINITIVA após {tentativas} tentativas — {ultimo_erro}")
     _ULTIMO_ERRO_FETCH = {
