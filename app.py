@@ -817,7 +817,7 @@ def _fetch_eventos_agenda_congresso(data):
         return []
 
     soup = BeautifulSoup(r.text, 'html.parser')
-    rx_id = re.compile(r'camara\.leg\.br/evento-legislativo/(\d+)')
+    rx_id = re.compile(r'evento-legislativo/(\d+)')
     rx_hora = re.compile(r'^(\d{1,2})h(\d{2})$')
     resultado, vistos = [], set()
 
@@ -866,6 +866,20 @@ def _fetch_eventos_agenda_congresso(data):
             'fonte': 'agenda_congresso',
         })
 
+    if not resultado:
+        # Diagnóstico: mostra o que o servidor devolveu, para ajustar o parser
+        corpo = ' '.join(soup.get_text(' ').split())
+        titulo_pag = soup.title.get_text(strip=True) if soup.title else '(sem <title>)'
+        logger.warning(
+            f"_fetch_eventos_agenda_congresso({data}) DIAG: HTTP {r.status_code}, url_final={r.url}, "
+            f"{len(r.text)} chars, title={titulo_pag!r}, "
+            f"links evento-legislativo={len(rx_id.findall(r.text))}, "
+            f"'Plenário da Câmara'={r.text.count('Plenário da Câmara')}, "
+            f"'18h00'={r.text.count('h00')}, inicio_texto={corpo[:400]!r}"
+        )
+        for m in list(rx_id.finditer(r.text))[:5]:
+            trecho = r.text[max(0, m.start() - 600): m.end() + 400].replace('\n', ' ')
+            logger.warning(f"_fetch_eventos_agenda_congresso DIAG trecho: {trecho!r}")
     logger.info(f"_fetch_eventos_agenda_congresso({data}): {len(resultado)} sessão(ões) de votação encontrada(s)")
     return resultado
 
