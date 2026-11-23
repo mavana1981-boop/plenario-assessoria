@@ -971,6 +971,13 @@ def fetch_eventos_por_data(data):
 
     # Todas as tentativas falharam. Tenta servir do cache mesmo expirado como último recurso.
     _API_FORA_DESDE = _time.time()
+    # Avisa o scraper: pula as buscas de detalhes das proposições em vez de
+    # esperar o timeout de cada uma.
+    try:
+        from scraper_camara import _marcar_api_fora
+        _marcar_api_fora('eventos indisponível')
+    except Exception:
+        pass
     if cached:
         idade_min = int((_time.time() - cached['timestamp']) / 60)
         logger.warning(f"fetch_eventos_por_data({data}): todas as {tentativas} tentativas falharam — servindo cache expirado ({idade_min} min antigo)")

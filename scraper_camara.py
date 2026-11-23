@@ -3,12 +3,48 @@ from bs4 import BeautifulSoup
 import re
 import logging
 import sys
+import time
 
 # -----------------------------------------------------------------------------
 # LOGGING
 # -----------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+# -----------------------------------------------------------------------------
+# DISJUNTOR DA API DE DADOS ABERTOS
+# Quando a API falha (timeout, conexão, 5xx), marca como fora por alguns
+# minutos e pula as chamadas seguintes, em vez de esperar 8s em cada uma.
+# -----------------------------------------------------------------------------
+_API_PAUSA_SEG = 120
+_api_fora_ate = 0.0
+
+
+def api_disponivel():
+    return time.time() >= _api_fora_ate
+
+
+def _marcar_api_fora(motivo):
+    global _api_fora_ate
+    if api_disponivel():
+        logger.warning(f"⛔ API de Dados Abertos fora ({motivo}) — pulando chamadas por {_API_PAUSA_SEG}s")
+    _api_fora_ate = time.time() + _API_PAUSA_SEG
+
+
+def _api_get(url, timeout=8):
+    """GET na API com disjuntor. Retorna Response ou None se a API estiver fora."""
+    if not api_disponivel():
+        return None
+    try:
+        r = requests.get(url, timeout=timeout)
+    except (requests.Timeout, requests.ConnectionError) as e:
+        _marcar_api_fora(type(e).__name__)
+        return None
+    if r.status_code >= 500:
+        _marcar_api_fora(f"HTTP {r.status_code}")
+        return None
+    return r
+
 
 # -----------------------------------------------------------------------------
 # FUNÇÃO AUXILIAR PARA DETALHES DE PROPOSIÇÃO
@@ -24,17 +60,19 @@ def obter_detalhes_proposicao(id_prop):
         "urlInteiroTeor": "",
         "tem_mais_autores": False
     }
+    if not api_disponivel():
+        return detalhes
     try:
-        r = requests.get(base, timeout=8)
-        if r.ok:
+        r = _api_get(base, timeout=8)
+        if r is not None and r.ok:
             j = r.json().get("dados", {})
             detalhes["situacao"] = j.get("statusProposicao", {}).get("descricaoSituacao", "")
             detalhes["ementa"] = j.get("ementa", "")
             detalhes["urlInteiroTeor"] = j.get("urlInteiroTeor", "")
 
         # Autores
-        r_autores = requests.get(base + "/autores", timeout=8)
-        if r_autores.ok:
+        r_autores = _api_get(base + "/autores", timeout=8)
+        if r_autores is not None and r_autores.ok:
             autores_dados = r_autores.json().get("dados", [])
             autores = [f"{a['nome']}" for a in autores_dados if "nome" in a]
             # Limitar a 3 autores, com "e outros" se houver mais
@@ -62,7 +100,9 @@ def buscar_id_proposicao_por_codigo(codigo):
             return None
         sigla_tipo, numero, ano = match.groups()
         url = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes?siglaTipo={sigla_tipo}&numero={numero}&ano={ano}"
-        r = requests.get(url, timeout=8)
+        r = _api_get(url, timeout=8)
+        if r is None:
+            return None
         if r.ok:
             dados = r.json().get("dados", [])
             if dados:
