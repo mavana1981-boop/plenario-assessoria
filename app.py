@@ -3471,6 +3471,9 @@ def export_resumo(evento_id):
 from exportar_pauta import exportar_bp
 app.register_blueprint(exportar_bp)
 
+from avisos_infoleg import init_avisos
+init_avisos(app, get_conn, USE_POSTGRES)
+
 
 # ─── Aviso de solicitações do Painel da Câmara ──────────────────────────────
 # O Painel da Câmara (painel-camara) expõe /api/tarefas protegido por uma chave compartilhada. Este app consulta
@@ -7296,7 +7299,7 @@ def pwa_manifest():
 @app.route('/sw.js')
 def pwa_sw():
     sw_code = """
-const CACHE = 'pauta-v3';
+const CACHE = 'pauta-v4';
 const OFFLINE_URL = '/offline.html';
 
 self.addEventListener('install', e => {
@@ -7313,6 +7316,31 @@ self.addEventListener('activate', e => {
     )
   );
   self.clients.claim();
+});
+
+// ── Notificações push (avisos do Infoleg) ──
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) { d = {body: e.data ? e.data.text() : ''}; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Infoleg', {
+    body: d.body || '',
+    tag: d.tag || 'infoleg',
+    renotify: true,
+    requireInteraction: false,
+    vibrate: [200, 100, 200],
+    icon: '/static/icon-192.png',
+    badge: '/static/icon-192.png',
+    data: {url: d.url || '/avisos'}
+  }));
+});
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || '/avisos';
+  e.waitUntil(clients.matchAll({type: 'window', includeUncontrolled: true}).then(lista => {
+    for (const c of lista) { if (c.url.includes(url) && 'focus' in c) return c.focus(); }
+    return clients.openWindow(url);
+  }));
 });
 
 self.addEventListener('fetch', e => {

@@ -34,3 +34,6 @@ pdfminer.six==20231228
 # ─── Geração de PDF/infográfico ──────────────────────────────────────────────
 reportlab==4.2.5
 Pillow>=10.3.0
+
+# ─── Notificações push (avisos do Infoleg) ───────────────────────────────────
+pywebpush==2.0.3

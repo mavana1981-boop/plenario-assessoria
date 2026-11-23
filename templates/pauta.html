@@ -113,6 +113,9 @@
         </a>
         <a href="/trocar-senha" class="btn btn-outline-secondary btn-sm mb-1 ms-1">
           <i class="fas fa-key me-1"></i>Senha
+        </a>
+        <a href="/avisos" class="btn btn-outline-warning btn-sm mb-1 ms-1" title="Avisos do plenário em tempo real (Infoleg)">
+          <i class="fas fa-bell me-1"></i>Avisos
         </a><br>
         <small style="color:#444;">{{ current_user.username }}</small>
         {% if current_user.is_authenticated and current_user.role == 'Admin' %}
@@ -4840,11 +4843,10 @@ function gerarBannerBP(){
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', async () => {
         try {
-          // Remove SWs antigos primeiro
-          const regs = await navigator.serviceWorker.getRegistrations();
-          for (const reg of regs) await reg.unregister();
-          // Registra novo
+          // Não desregistra o SW: isso apagaria a inscrição das notificações push (avisos do Infoleg).
+          // O /sw.js é servido sem cache e com skipWaiting, então reg.update() já pega a versão nova.
           const reg = await navigator.serviceWorker.register('/sw.js', {scope: '/'});
+          reg.update().catch(() => {});
           console.log('[PWA] SW registrado:', reg.scope);
         } catch(e) {
           console.warn('[PWA] SW falhou:', e);
@@ -4853,6 +4855,7 @@ function gerarBannerBP(){
     }
   </script>
 {% include '_aviso_painel.html' %}
+{% include '_aviso_infoleg.html' %}
 
 <script>
 // ── Resultados dos itens (aprovado / rejeitado / retirado / adiado...) ──
