@@ -230,7 +230,10 @@ def receber_aviso():
         return jsonify({'ok': False, 'erro': 'chave inválida'}), 403
     titulo, texto = _ler_campos()
     if not (titulo or texto):
-        return jsonify({'ok': False, 'erro': 'aviso vazio'}), 400
+        # Chega vazio quando a ação é testada à mão no MacroDroid (sem notificação real, o texto mágico fica vazio).
+        # Registra mesmo assim, para confirmar que a ligação celular → app está funcionando.
+        logger.info(f'[avisos] aviso vazio recebido ({request.method}, {request.content_type})')
+        titulo, texto = 'Conexão com o celular OK', '(chegou sem texto — normal ao testar a ação à mão no MacroDroid)'
     novo_id = registrar_aviso(titulo, texto)
     return jsonify({'ok': True, 'id': novo_id, 'duplicado': novo_id is None})
 
