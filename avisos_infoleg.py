@@ -190,6 +190,20 @@ def _ler_campos():
             texto = str(dados.get('texto') or dados.get('text') or '')
         elif request.data:
             texto = request.data.decode('utf-8', 'replace')
+    # Campos extras (ex.: texto grande, subtexto, ticker da notificação): junta os que vierem preenchidos.
+    # Assim dá para mandar vários "textos mágicos" do MacroDroid sem precisar mexer no app.
+    partes = [texto.strip()] if texto.strip() else []
+    for k in request.values.keys():
+        if k.lower() in ('chave', 'titulo', 'title', 'texto', 'text'):
+            continue
+        for v in request.values.getlist(k):
+            v = (v or '').strip()
+            if v and v != titulo.strip() and not v.startswith('{') and all(v not in p for p in partes):
+                partes = [p for p in partes if p not in v]  # se o novo contém um anterior, fica só o maior
+                partes.append(v)
+    if not titulo.strip() and len(partes) > 1:
+        titulo = partes.pop(0)
+    texto = '\n'.join(partes)
     return titulo.strip()[:300], texto.strip()[:4000]
 
 
@@ -229,6 +243,8 @@ def receber_aviso():
     if not hmac.compare_digest(chave, chave_webhook()):
         return jsonify({'ok': False, 'erro': 'chave inválida'}), 403
     titulo, texto = _ler_campos()
+    logger.info(f'[avisos] recebido: campos={[k for k in request.values.keys() if k != "chave"]} '
+                f'titulo={len(titulo)}c texto={len(texto)}c corpo={len(request.data or b"")}b')
     if not (titulo or texto):
         # Chega vazio quando a ação é testada à mão no MacroDroid (sem notificação real, o texto mágico fica vazio).
         # Registra mesmo assim, para confirmar que a ligação celular → app está funcionando.
